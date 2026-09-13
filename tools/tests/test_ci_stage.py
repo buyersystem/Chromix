@@ -1,3 +1,5 @@
+import ast
+import inspect
 import json
 import os
 import re
@@ -81,8 +83,9 @@ class InvokeTrackedRegressionTest(unittest.TestCase):
             r'Start-TrackedProcess -File \$env:COMSPEC\s+`\n'
             r'\s+-Arguments "/d /s /c `"`"\$wrapper`"`""',
         )
-        self.assertNotIn("-RedirectStandardOutput", source)
-        self.assertNotIn("-RedirectStandardError", source)
+        self.assertIn('-RedirectStandardOutput $killOut -RedirectStandardError $killErr', source)
+        self.assertIn('taskkill exit code: $displayCode', source)
+        self.assertIn('Get-Content -LiteralPath $path -Tail 200', source)
 
     def test_waits_before_strictly_parsing_status_file(self):
         source = invoke_tracked_source()
@@ -116,6 +119,27 @@ class InvokeTrackedRegressionTest(unittest.TestCase):
             r'\$process\.WaitForExit\(10000\).*?& \$writeFailureOutput.*?return 124',
         )
 
+    def test_job_assignment_precedes_any_user_code_and_disallows_breakaway(self):
+        stage = CI_STAGE.read_text(encoding="utf-8")
+        helper = stage[stage.index("using System;"):stage.index("function Wait-TrackedDrain")]
+        constructor = helper[helper.index("public TrackedProcess("):helper.index("public uint GetActiveProcesses")]
+        self.assertLess(constructor.index("CREATE_SUSPENDED | CREATE_NO_WINDOW"),
+                        constructor.index("AssignProcessToJobObject(job, native.Process)"))
+        self.assertLess(constructor.index("AssignProcessToJobObject(job, native.Process)"),
+                        constructor.index("ResumeThread(native.Thread)"))
+        self.assertIn("limits.Basic.Flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;", constructor)
+        self.assertIn("CreateJobObject(IntPtr.Zero, null)", constructor)
+        self.assertNotIn("BREAKAWAY_OK", helper)
+        self.assertIn("TerminateProcess(native.Process, 1)", constructor)
+        self.assertIn("QueryInformationJobObject(job, 1", helper)
+        source = invoke_tracked_source()
+        self.assertIn("while (-not $process.HasExited -or $tracked.GetActiveProcesses() -ne 0)", source)
+        self.assertLess(source.index("$tracked.TerminateTree(10000)"),
+                        source.index("Write-OutVar snapshot_safe true"))
+        normal = source[source.index('throw "tracked process exit wait timed out'):]
+        self.assertLess(normal.index("$tracked.WaitForTreeExit(10000)"),
+                        normal.index("Write-OutVar snapshot_safe true"))
+
     def test_failure_output_keeps_long_stdout_tail_and_full_stderr(self):
         source = invoke_tracked_source()
         stdout_tails = re.findall(r"Get-Content \$log -Tail (\d+)", source)
@@ -137,7 +161,7 @@ class InvokeTrackedRegressionTest(unittest.TestCase):
 
 class InvokeTrackedPowerShellTest(unittest.TestCase):
     def setUp(self):
-        self.powershell = shutil.which("pwsh") or "/opt/pwsh/pwsh"
+        self.powershell = (shutil.which("powershell") if os.name == "nt" else None) or shutil.which("pwsh") or "/opt/pwsh/pwsh"
         if not Path(self.powershell).is_file():
             self.skipTest("pwsh is unavailable")
         self.temp = tempfile.TemporaryDirectory(prefix="tracked process ")
@@ -149,8 +173,8 @@ class InvokeTrackedPowerShellTest(unittest.TestCase):
         script.write_text('$ErrorActionPreference = "Stop"\n' + code, encoding="utf-8")
         return subprocess.run(
             [self.powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(script)],
-            env={**os.environ, "TEMP": str(self.root), "SystemRoot": str(self.root),
-                 "COMSPEC": "fixture-cmd.exe", "TEST_PYTHON": sys.executable,
+            env={**os.environ, "TEMP": str(self.root), "SystemRoot": os.environ.get("SystemRoot", str(self.root)),
+                 "COMSPEC": os.environ.get("COMSPEC", "fixture-cmd.exe"), "TEST_PYTHON": sys.executable,
                  "GITHUB_OUTPUT": str(self.root / "github-output"), **env},
             capture_output=True, text=True, timeout=20,
         )
@@ -159,7 +183,10 @@ class InvokeTrackedPowerShellTest(unittest.TestCase):
         env = {"TEST_MODE": "normal", "TEST_STATUS": "7", "TEST_TREE_WAIT": "1",
                "TEST_TREE_EXIT": "0", "TEST_PROCESS_WAIT": "1", "TEST_DRAIN": "1",
                "TEST_TREE_START_FAIL": "0", "TEST_FULL": "0", "TEST_QUIET": "0",
-               "TEST_LOG_FAILURE": "0", **options}
+               "TEST_LOG_FAILURE": "0", "TEST_JOB_WAIT": "1", "TEST_JOB_FAIL": "0",
+               "TEST_JOB_ACTIVE": "0", "TEST_TREE_NULL_EXIT": "0", "TEST_TREE_STOP_WAIT": "1",
+               "TEST_TREE_KILL_FAIL": "0", "TEST_TREE_WAIT_FAIL": "0", "TEST_TREE_STOP_WAIT_FAIL": "0",
+               **options}
         stage = CI_STAGE.read_text(encoding="utf-8")
         output_helper = stage[stage.index("function Write-OutVar("):stage.index("function Get-RemainingMin {")]
         (self.root / "github-output").unlink(missing_ok=True)
@@ -180,13 +207,24 @@ function Start-Process {
   if ($FilePath -like "*taskkill.exe") {
     $script:events.Add("taskkill:$ArgumentList")
     if ($env:TEST_TREE_START_FAIL -eq "1") { throw "taskkill startup failed" }
-    $killer = [pscustomobject]@{ Handle = [IntPtr]43; ExitCode = [int]$env:TEST_TREE_EXIT }
+    Set-Content -LiteralPath $RedirectStandardOutput -Value "fixture taskkill stdout"
+    Set-Content -LiteralPath $RedirectStandardError -Value "fixture taskkill stderr: access denied"
+    $code = if ($env:TEST_TREE_NULL_EXIT -eq "1") { $null } else { [int]$env:TEST_TREE_EXIT }
+    $killer = [pscustomobject]@{ Handle = [IntPtr]43; ExitCode = $code }
     $killer | Add-Member ScriptMethod WaitForExit {
       if ($args.Count -ne 1 -or $args[0] -le 0 -or $args[0] -gt 10000) { throw "unbounded killer wait" }
       $script:events.Add("tree-wait:" + $args[0])
+      if ($args[0] -eq 2000) {
+        if ($env:TEST_TREE_STOP_WAIT_FAIL -eq "1") { throw "taskkill stop wait failed" }
+        return $env:TEST_TREE_STOP_WAIT -eq "1"
+      }
+      if ($env:TEST_TREE_WAIT_FAIL -eq "1") { throw "taskkill initial wait failed" }
       return $env:TEST_TREE_WAIT -eq "1"
     }
-    $killer | Add-Member ScriptMethod Kill { $script:events.Add("kill-killer") }
+    $killer | Add-Member ScriptMethod Kill {
+      $script:events.Add("kill-killer")
+      if ($env:TEST_TREE_KILL_FAIL -eq "1") { throw "taskkill Kill failed" }
+    }
     $killer | Add-Member ScriptMethod Dispose { $script:events.Add("dispose-killer") }
     return $killer
   }
@@ -202,7 +240,7 @@ function Start-TrackedProcess {
   $script:events.Add("start")
   $process = [pscustomobject]@{ Id = 4242 }
   $process | Add-Member ScriptProperty HasExited {
-    return $env:TEST_MODE -eq "normal" -or ($env:TEST_MODE -eq "heartbeat" -and $script:sleeps -ge 18)
+    return $env:TEST_MODE -in @("normal", "orphan") -or ($env:TEST_MODE -eq "heartbeat" -and $script:sleeps -ge 18)
   }
   $process | Add-Member ScriptProperty ExitCode { throw "must use wrapper status, not Process.ExitCode" }
   $process | Add-Member ScriptMethod WaitForExit {
@@ -211,6 +249,19 @@ function Start-TrackedProcess {
     return $env:TEST_PROCESS_WAIT -eq "1"
   }
   $tracked = [pscustomobject]@{ Process = $process }
+  $tracked | Add-Member ScriptMethod GetActiveProcesses { return [int]$env:TEST_JOB_ACTIVE }
+  $tracked | Add-Member ScriptMethod WaitForTreeExit {
+    if ($args.Count -ne 1 -or $args[0] -ne 10000) { throw "unbounded job wait" }
+    $script:events.Add("job-wait:" + $args[0])
+    if ($env:TEST_JOB_FAIL -eq "1") { throw "QueryInformationJobObject failed (Win32 6)" }
+    return $env:TEST_JOB_WAIT -eq "1"
+  }
+  $tracked | Add-Member ScriptMethod TerminateTree {
+    if ($args.Count -ne 1 -or $args[0] -ne 10000) { throw "unbounded job termination" }
+    $script:events.Add("job-terminate:" + $args[0])
+    if ($env:TEST_JOB_FAIL -eq "1") { throw "TerminateJobObject failed (Win32 5)" }
+    return $env:TEST_JOB_WAIT -eq "1"
+  }
   $tracked | Add-Member ScriptMethod Dispose { $script:events.Add("dispose-process") }
   return $tracked
 }
@@ -224,7 +275,7 @@ function Wait-TrackedDrain {
   return $env:TEST_DRAIN -eq "1"
 }
 try {
-  $timeout = if ($env:TEST_MODE -eq "timeout") { -1 } else { 30 }
+  $timeout = if ($env:TEST_MODE -in @("timeout", "orphan")) { -1 } else { 30 }
   $rc = Invoke-Tracked -File "fixture program.exe" -ArgList "argument" -Cwd $env:TEMP `
     -TimeoutSec $timeout -FullFailureOutput:($env:TEST_FULL -eq "1") -Quiet:($env:TEST_QUIET -eq "1")
   Write-Host "RETURN:$rc"
@@ -278,7 +329,104 @@ function Write-Host {
             self.assertLess(output.index(line), output.index("RETURN:124"))
         self.assertIn("x" * 2000, output)
         self.assertEqual(events, ["start", "taskkill:/PID 4242 /T /F", "tree-wait:10000",
-                                  "process-wait:10000", "drain:10000", "dispose-killer", "dispose-process"])
+                                  "dispose-killer", "job-terminate:10000", "process-wait:10000",
+                                  "drain:10000", "dispose-process"])
+        self.assertIn("taskkill exit code: 0", output)
+        self.assertIn("fixture taskkill stdout", output)
+        self.assertIn("fixture taskkill stderr: access denied", output)
+
+    def test_nonzero_taskkill_requires_independent_job_empty_proof(self):
+        for code in (1, 5, 128):
+            with self.subTest(code=code):
+                output, events = self.tracked(TEST_MODE="timeout", TEST_TREE_EXIT=str(code))
+                self.assertIn(f"taskkill exit code: {code}", output)
+                self.assertIn("fixture taskkill stdout", output)
+                self.assertIn("fixture taskkill stderr: access denied", output)
+                self.assertIn("tracked job active processes: 0", output)
+                self.assertIn("RETURN:124", output)
+                self.assertLess(events.index("job-terminate:10000"), events.index("drain:10000"))
+                self.assert_workflow_snapshot(True)
+                output, _ = self.tracked(TEST_MODE="timeout", TEST_TREE_EXIT=str(code), TEST_JOB_WAIT="0")
+                self.assertIn("refusing safe snapshot", output)
+                self.assertNotIn("RETURN:", output)
+                self.assert_workflow_snapshot(False)
+
+    def test_taskkill_startup_null_and_stopped_timeout_require_independent_proof(self):
+        cases = [({"TEST_TREE_START_FAIL": "1"}, "start-failed", "unavailable"),
+                 ({"TEST_TREE_NULL_EXIT": "1"}, "exited", "unavailable"),
+                 ({"TEST_TREE_WAIT": "0", "TEST_TREE_EXIT": "137"}, "timed-out", "137")]
+        failures = [({}, None), ({"TEST_JOB_WAIT": "0"}, "job still has active processes"),
+                    ({"TEST_JOB_FAIL": "1"}, "job cleanup failed"),
+                    ({"TEST_PROCESS_WAIT": "0"}, "still running after job termination"),
+                    ({"TEST_DRAIN": "0"}, "log drain timed out after job termination")]
+        for options, status, code in cases:
+            for failure, message in failures:
+                with self.subTest(options=options, failure=failure):
+                    output, events = self.tracked(TEST_MODE="timeout", **options, **failure)
+                    self.assertIn(f"taskkill status: {status}; helper stopped: True", output)
+                    self.assertIn(f"taskkill exit code: {code};", output)
+                    self.assertIn("job-terminate:10000", events)
+                    if status == "timed-out":
+                        self.assertLess(events.index("kill-killer"), events.index("tree-wait:2000"))
+                        self.assertLess(events.index("tree-wait:2000"), events.index("job-terminate:10000"))
+                    if message is None:
+                        self.assertIn("tracked job active processes: 0 (independently verified)", output)
+                        self.assertIn("RETURN:124", output)
+                        self.assertLess(events.index("job-terminate:10000"), events.index("process-wait:10000"))
+                        self.assertLess(events.index("process-wait:10000"), events.index("drain:10000"))
+                        self.assertLess(output.index(f"taskkill exit code: {code};"),
+                                        output.index("tracked job active processes: 0"))
+                        self.assertEqual((self.root / "github-output").read_text().splitlines(),
+                                         ["snapshot_safe=false", "snapshot_safe=true"])
+                    else:
+                        self.assertIn("THROW:", output)
+                        self.assertIn(message, output)
+                        self.assertNotIn("RETURN:", output)
+                    self.assert_workflow_snapshot(message is None)
+
+    def test_unconfirmed_taskkill_stop_still_cleans_job_but_refuses_snapshot(self):
+        for failure in ({"TEST_TREE_STOP_WAIT": "0"},
+                        {"TEST_TREE_STOP_WAIT": "0", "TEST_TREE_KILL_FAIL": "1"},
+                        {"TEST_TREE_STOP_WAIT_FAIL": "1"}):
+            with self.subTest(failure=failure):
+                output, events = self.tracked(TEST_MODE="timeout", TEST_TREE_WAIT="0", **failure)
+                self.assertIn("taskkill status: timed-out; helper stopped: False", output)
+                self.assertIn("taskkill exit code: unavailable;", output)
+                self.assertIn("tracked job active processes: 0 (independently verified)", output)
+                self.assertIn("taskkill helper exit could not be confirmed", output)
+                self.assertIn("THROW:", output)
+                self.assertNotIn("RETURN:", output)
+                self.assertEqual(events, ["start", "taskkill:/PID 4242 /T /F", "tree-wait:10000",
+                                          "kill-killer", "tree-wait:2000", "dispose-killer",
+                                          "job-terminate:10000", "process-wait:10000", "drain:10000",
+                                          "dispose-process"])
+                self.assert_workflow_snapshot(False)
+
+    def test_taskkill_wait_and_kill_errors_recover_only_after_stop_confirmation(self):
+        for options, status in (({"TEST_TREE_WAIT_FAIL": "1"}, "wait-failed"),
+                                ({"TEST_TREE_WAIT": "0", "TEST_TREE_KILL_FAIL": "1"}, "timed-out")):
+            with self.subTest(options=options):
+                output, events = self.tracked(TEST_MODE="timeout", **options)
+                self.assertIn(f"taskkill status: {status}; helper stopped: True", output)
+                self.assertIn("RETURN:124", output)
+                self.assertIn("tree-wait:2000", events)
+                self.assertIn("job-terminate:10000", events)
+                self.assert_workflow_snapshot(True)
+
+    def test_live_job_after_root_exit_uses_timeout_cleanup_instead_of_normal_success(self):
+        output, events = self.tracked(TEST_MODE="orphan", TEST_JOB_ACTIVE="1", TEST_TREE_EXIT="128")
+        self.assertIn("RETURN:124", output)
+        self.assertIn("job-terminate:10000", events)
+        self.assertIn("taskkill exit code: 128", output)
+        self.assert_workflow_snapshot(True)
+
+    def test_exited_root_and_drained_pipes_do_not_override_job_failure(self):
+        for options in ({"TEST_JOB_WAIT": "0"}, {"TEST_JOB_FAIL": "1"}):
+            with self.subTest(options=options):
+                output, events = self.tracked(TEST_STATUS="0", TEST_DRAIN="1", **options)
+                self.assertIn("THROW:", output)
+                self.assertNotIn("drain:10000", events)
+                self.assert_workflow_snapshot(False)
 
     def test_full_failure_output_also_applies_to_timeout(self):
         output, _ = self.tracked(TEST_MODE="timeout", TEST_FULL="1")
@@ -287,11 +435,10 @@ function Write-Host {
         self.assertIn("RETURN:124", output)
 
     def test_failed_cleanup_or_drain_throws_instead_of_safe_timeout(self):
-        cases = [({"TEST_PROCESS_WAIT": "0"}, "still running after taskkill"),
-                 ({"TEST_TREE_WAIT": "0"}, "tree cleanup timed out"),
-                 ({"TEST_TREE_EXIT": "1"}, "tree cleanup failed"),
-                 ({"TEST_TREE_START_FAIL": "1"}, "taskkill startup failed"),
-                 ({"TEST_DRAIN": "0"}, "log drain timed out after taskkill")]
+        cases = [({"TEST_PROCESS_WAIT": "0"}, "still running after job termination"),
+                 ({"TEST_JOB_WAIT": "0"}, "job still has active processes"),
+                 ({"TEST_JOB_FAIL": "1"}, "job cleanup failed"),
+                 ({"TEST_DRAIN": "0"}, "log drain timed out after job termination")]
         for options, message in cases:
             with self.subTest(options=options):
                 output, events = self.tracked(TEST_MODE="timeout", **options)
@@ -301,8 +448,6 @@ function Write-Host {
                 self.assertIn("stdout-line-250", output)
                 self.assertIn("stderr-first", output)
                 self.assertEqual(events[-1], "dispose-process")
-                if "TEST_TREE_WAIT" in options:
-                    self.assertIn("kill-killer", events)
                 if "TEST_DRAIN" not in options:
                     self.assertNotIn("drain:10000", events)
 
@@ -311,7 +456,7 @@ function Write-Host {
         self.assertIn("RETURN:7", output)
         self.assertIn("stdout-drained", output)
         self.assertIn("stderr-drained", output)
-        self.assertEqual(events, ["start", "process-wait:10000", "drain:10000", "dispose-process"])
+        self.assertEqual(events, ["start", "process-wait:10000", "job-wait:10000", "drain:10000", "dispose-process"])
         output, _ = self.tracked(TEST_STATUS="0", TEST_DRAIN="0")
         self.assertIn("log drain timed out", output)
         self.assertNotIn("RETURN:", output)
@@ -342,8 +487,11 @@ function Write-Host {
                 self.assertEqual(eval(expression, {"__builtins__": {}}), safe, step["name"])
 
     def test_kill_or_drain_failure_disables_all_workflow_snapshots_and_tree_uploads(self):
-        for options in ({"TEST_TREE_WAIT": "0"}, {"TEST_TREE_EXIT": "1"},
-                        {"TEST_TREE_START_FAIL": "1"}, {"TEST_PROCESS_WAIT": "0"}, {"TEST_DRAIN": "0"}):
+        for options in ({"TEST_TREE_WAIT": "0", "TEST_TREE_STOP_WAIT": "0"},
+                        {"TEST_JOB_WAIT": "0"}, {"TEST_JOB_FAIL": "1"},
+                        {"TEST_TREE_START_FAIL": "1", "TEST_JOB_WAIT": "0"},
+                        {"TEST_PROCESS_WAIT": "0"}, {"TEST_DRAIN": "0"},
+                        {"TEST_TREE_EXIT": "128", "TEST_JOB_WAIT": "0"}):
             with self.subTest(options=options):
                 output, _ = self.tracked(TEST_MODE="timeout", **options)
                 self.assertIn("THROW:", output)
@@ -390,6 +538,218 @@ function Write-Host {
         self.assertNotIn("heartbeat:", quiet)
         self.assertNotIn("stderr |", quiet)
 
+    def test_native_fixture_scripts_parse_even_without_windows(self):
+        fixtures = []
+        module = ast.parse(inspect.getsource(sys.modules[__name__]))
+        for node in ast.walk(module):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "run_ps":
+                fixtures.extend(part.value for part in ast.walk(node)
+                                if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                                and len(part.value) > 100 and "\n" in part.value)
+        stage = CI_STAGE.read_text(encoding="utf-8")
+        fixtures.append(stage)
+        (self.root / "parse-inputs.json").write_text(json.dumps(fixtures), encoding="utf-8")
+        result = self.run_ps(r'''
+$inputs = Get-Content (Join-Path $env:TEMP "parse-inputs.json") -Raw | ConvertFrom-Json
+foreach ($source in $inputs) {
+  $tokens = $null
+  $errors = $null
+  $null = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+  if ($errors.Count) { throw ($errors | Out-String) }
+}
+Write-Host "native-fixtures-parse-ok"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("native-fixtures-parse-ok", result.stdout)
+
+    def test_embedded_csharp_compiles_with_csharp5_and_expected_native_layouts(self):
+        stage = CI_STAGE.read_text(encoding="utf-8")
+        csharp = stage.split("-TypeDefinition @'\n", 1)[1].split("\n'@", 1)[0]
+        result = self.run_ps("$definition = @'\n" + csharp + "\n'@\n" + r'''
+if ($PSVersionTable.PSEdition -eq "Desktop") {
+  Add-Type -TypeDefinition $definition -ReferencedAssemblies System.dll, System.Core.dll
+} else {
+  Add-Type -TypeDefinition $definition -CompilerOptions /langversion:5
+}
+$type = [Chromix.TrackedProcess]
+$expected = if ([IntPtr]::Size -eq 8) { @{ StartupInfo = 104; ExtendedLimits = 144; Accounting = 48 } } else {
+  @{ StartupInfo = 68; ExtendedLimits = 112; Accounting = 48 }
+}
+foreach ($name in $expected.Keys) {
+  $layout = $type.GetNestedType($name, [Reflection.BindingFlags]::NonPublic)
+  $size = [Runtime.InteropServices.Marshal]::SizeOf([Activator]::CreateInstance($layout))
+  if ($size -ne $expected[$name]) { throw "wrong native layout: $name size=$size" }
+}
+Write-Host "csharp5-layout-ok"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("csharp5-layout-ok", result.stdout)
+
+    def windows_orphan_fixture(self, hold_root=False):
+        if os.name != "nt":
+            self.skipTest("Windows Job Object API required")
+        # The middle process exits; its child owns no tracked pipe but keeps writing.
+        (self.root / "writer.py").write_text(
+            'import os, pathlib, sys, time\n'
+            'root = pathlib.Path(sys.argv[1])\n'
+            'with (root / "writes").open("ab", buffering=0) as stream:\n'
+            '    stream.write(b"x")\n'
+            '    (root / "writer.pid").write_text(str(os.getpid()))\n'
+            '    while True:\n'
+            '        stream.write(b"x")\n'
+            '        time.sleep(0.01)\n', encoding="utf-8")
+        (self.root / "middle.py").write_text(
+            'import pathlib, subprocess, sys, time\n'
+            'root = pathlib.Path(sys.argv[1])\n'
+            'subprocess.Popen([sys.executable, str(root / "writer.py"), str(root)], '
+            'stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)\n'
+            'while not (root / "writer.pid").exists():\n'
+            '    time.sleep(0.01)\n', encoding="utf-8")
+        (self.root / "parent.py").write_text(
+            'import pathlib, subprocess, sys, time\n'
+            'root = pathlib.Path(__file__).parent\n'
+            'subprocess.run([sys.executable, str(root / "middle.py"), str(root)], check=True)\n'
+            'print("parent ready", flush=True)\n' +
+            ('time.sleep(60)\n' if hold_root else ''), encoding="utf-8")
+        stage = CI_STAGE.read_text(encoding="utf-8")
+        return stage[stage.index("function Write-OutVar("):stage.index("function Get-FreeGB")]
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object API required")
+    def test_real_assignment_failure_never_resumes_child(self):
+        stage = CI_STAGE.read_text(encoding="utf-8")
+        helper = stage[stage.index("function Start-TrackedProcess {"):stage.index("function Get-UpstreamTimeoutSummary {")]
+        helper = helper.replace("AssignProcessToJobObject(job, native.Process)",
+                                "AssignProcessToJobObject(IntPtr.Zero, native.Process)")
+        (self.root / "marker.py").write_text(
+            'import pathlib\npathlib.Path("must-not-run").write_text("ran")\n', encoding="utf-8")
+        result = self.run_ps(helper + r'''
+try {
+  $null = Start-TrackedProcess -File $env:TEST_PYTHON `
+    -Arguments ('"' + (Join-Path $env:TEMP "marker.py") + '"') -Cwd $env:TEMP `
+    -Stdout (Join-Path $env:TEMP "tiny.out") -Stderr (Join-Path $env:TEMP "tiny.err")
+  throw "invalid job assignment succeeded"
+} catch {
+  if ($_.Exception.Message -notmatch "AssignProcessToJobObject") { throw }
+}
+Start-Sleep -Milliseconds 100
+if (Test-Path (Join-Path $env:TEMP "must-not-run")) { throw "unassigned root executed user code" }
+Write-Host "assignment-failure-no-user-code-ok"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("assignment-failure-no-user-code-ok", result.stdout)
+        self.assertNotIn("startup cleanup could not confirm", result.stderr)
+
+    def test_real_orphan_writer_survives_root_and_eof_but_not_job_termination(self):
+        helpers = self.windows_orphan_fixture()
+        result = self.run_ps(helpers + r'''
+$tracked = Start-TrackedProcess -File $env:TEST_PYTHON `
+  -Arguments ('"' + (Join-Path $env:TEMP "parent.py") + '"') -Cwd $env:TEMP `
+  -Stdout (Join-Path $env:TEMP "tiny.out") -Stderr (Join-Path $env:TEMP "tiny.err")
+try {
+  if (-not $tracked.Process.WaitForExit(5000)) { throw "parent did not exit" }
+  if (-not $tracked.Drain(5000)) { throw "redirect-free descendant should permit EOF" }
+  if ($tracked.WaitForTreeExit(20)) { throw "root exit and EOF falsely proved tree exit" }
+  $writerId = [int](Get-Content (Join-Path $env:TEMP "writer.pid"))
+  $writer = Get-Process -Id $writerId -ErrorAction Stop
+  $null = $writer.Handle
+  try {
+    $writes = Join-Path $env:TEMP "writes"
+    $before = (Get-Item $writes).Length
+    Start-Sleep -Milliseconds 100
+    if ((Get-Item $writes).Length -le $before) { throw "counterexample writer was not active" }
+    if (-not $tracked.TerminateTree(5000)) { throw "job termination failed" }
+    if (-not $writer.WaitForExit(5000)) { throw "orphan survived job termination" }
+    $after = (Get-Item $writes).Length
+    Start-Sleep -Milliseconds 100
+    if ((Get-Item $writes).Length -ne $after) { throw "writes continued after empty job" }
+    Write-Host "real-orphan-counterexample-and-cleanup-ok"
+  } finally { $writer.Dispose() }
+} finally { $tracked.Dispose() }
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("real-orphan-counterexample-and-cleanup-ok", result.stdout)
+
+    def test_real_timeout_with_nonzero_taskkill_cleans_orphan_before_snapshot(self):
+        helpers = self.windows_orphan_fixture(hold_root=True)
+        result = self.run_ps(helpers + r'''
+# Kill only the wrapper, then run real taskkill against that exited PID.
+function Start-Process {
+  param($FilePath, $ArgumentList, [switch]$PassThru, $WindowStyle,
+        $RedirectStandardOutput, $RedirectStandardError)
+  if ($FilePath -notlike "*taskkill.exe") { throw "unexpected helper" }
+  $process.Kill()
+  if (-not $process.WaitForExit(5000)) { throw "fixture wrapper survived" }
+  Microsoft.PowerShell.Management\Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
+    -PassThru -WindowStyle Hidden -RedirectStandardOutput $RedirectStandardOutput `
+    -RedirectStandardError $RedirectStandardError
+}
+function Start-Sleep { param($Seconds); Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds 20 }
+$rc = Invoke-Tracked -File $env:TEST_PYTHON `
+  -ArgList ('"' + (Join-Path $env:TEMP "parent.py") + '"') -Cwd $env:TEMP -TimeoutSec 2
+if ($rc -ne 124) { throw "expected timeout 124" }
+$writerId = [int](Get-Content (Join-Path $env:TEMP "writer.pid"))
+if (Get-Process -Id $writerId -ErrorAction SilentlyContinue) { throw "writer survived safe timeout" }
+Write-Host "real-nonzero-timeout-ok"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("real-nonzero-timeout-ok", result.stdout)
+        self.assertRegex(result.stdout, r"taskkill exit code: [1-9][0-9]*;")
+        self.assertIn("tracked job active processes: 0", result.stdout)
+        self.assert_workflow_snapshot(True)
+
+    def test_real_timeout_with_successful_taskkill_confirms_empty_job(self):
+        helpers = self.windows_orphan_fixture(hold_root=True)
+        result = self.run_ps(helpers + r'''
+function Start-Sleep { param($Seconds); Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds 20 }
+$rc = Invoke-Tracked -File $env:TEST_PYTHON -ArgList '-c "import time; time.sleep(60)"' `
+  -Cwd $env:TEMP -TimeoutSec 1
+if ($rc -ne 124) { throw "expected timeout 124" }
+Write-Host "real-successful-taskkill-timeout-ok"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("real-successful-taskkill-timeout-ok", result.stdout)
+        self.assertIn("taskkill exit code: 0;", result.stdout)
+        self.assertIn("tracked job active processes: 0", result.stdout)
+        self.assert_workflow_snapshot(True)
+
+    def test_real_job_query_failure_refuses_snapshot_with_root_exited_and_eof(self):
+        helpers = self.windows_orphan_fixture()
+        helpers = helpers.replace("function Start-TrackedProcess {", "function Start-FixtureProcess {")
+        result = self.run_ps(helpers + r'''
+function Start-TrackedProcess {
+  param($File, $Arguments, $Cwd, $Stdout, $Stderr)
+  $tracked = Start-FixtureProcess -File $env:TEST_PYTHON `
+    -Arguments ('"' + (Join-Path $env:TEMP "parent.py") + '"') -Cwd $Cwd -Stdout $Stdout -Stderr $Stderr
+  if (-not $tracked.Process.WaitForExit(5000) -or -not $tracked.Drain(5000)) { throw "fixture not ready" }
+  # Inject an invalid job handle, retaining the owning handle solely for final cleanup.
+  $field = [Chromix.TrackedProcess].GetField("job", [Reflection.BindingFlags]"Instance,NonPublic")
+  $script:ownedJob = $field.GetValue($tracked)
+  $script:realTracked = $tracked
+  $script:jobField = $field
+  $field.SetValue($tracked, [IntPtr](-1))
+  return $tracked
+}
+try {
+  try {
+    $null = Invoke-Tracked -File "fixture.exe" -ArgList "" -Cwd $env:TEMP -TimeoutSec 1
+    throw "unsafe fixture returned"
+  } catch {
+    if ($_.Exception.Message -notmatch "QueryInformationJobObject") { throw }
+    Write-Host "real-query-failure-refused"
+  }
+} finally {
+  if ($null -ne $script:realTracked) {
+    $script:jobField.SetValue($script:realTracked, $script:ownedJob)
+    $null = $script:realTracked.TerminateTree(5000)
+    $script:realTracked.Dispose()
+  }
+}
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("real-query-failure-refused", result.stdout)
+        self.assert_workflow_snapshot(False)
+
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object API required")
     def test_real_async_redirect_drain_is_bounded_and_flushes_tiny_process(self):
         stage = CI_STAGE.read_text(encoding="utf-8")
         helper = stage[stage.index("function Start-TrackedProcess {"):stage.index("function Get-UpstreamTimeoutSummary {")]
@@ -416,6 +776,7 @@ try {
         self.assertIn("tiny-drain-ok", result.stdout)
 
 
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object API required")
     def test_real_exited_parent_with_inherited_redirects_cannot_block_drain(self):
         stage = CI_STAGE.read_text(encoding="utf-8")
         helper = stage[stage.index("function Start-TrackedProcess {"):stage.index("function Get-UpstreamTimeoutSummary {")]
@@ -434,8 +795,7 @@ try {
   $watch = [Diagnostics.Stopwatch]::StartNew()
   if (Wait-TrackedDrain -Tracked $tracked -TimeoutMs 20) { throw "inherited redirects drained prematurely" }
   if ($watch.Elapsed.TotalSeconds -gt 2) { throw "exited-parent drain was unbounded" }
-  # Failure cleanup must not dispose writers that still have a live copy task.
-  $tracked.Dispose()
+  if (-not $tracked.WaitForTreeExit(5000)) { throw "child did not exit job" }
   if (-not (Wait-TrackedDrain -Tracked $tracked -TimeoutMs 5000)) { throw "child did not close redirects" }
   if ((Get-Content (Join-Path $env:TEMP "tiny.out") -Raw) -notmatch "child stdout" -or
       (Get-Content (Join-Path $env:TEMP "tiny.err") -Raw) -notmatch "child stderr") { throw "missing redirected tail" }
@@ -448,10 +808,11 @@ try {
         self.assertIn("inherited-drain-ok", result.stdout)
 
 
+    @unittest.skipUnless(os.name == "nt", "Windows Job Object API required")
     def test_real_tracking_keeps_inherited_logs_and_failed_compile_snapshot(self):
         stage = CI_STAGE.read_text(encoding="utf-8")
         helpers = stage[stage.index("function Write-OutVar("):stage.index("function Get-FreeGB")]
-        # Only the cmd.exe launch is adapted for the Linux fixture.
+        # Replace only the cmd wrapper; retain the native tracked process and job.
         helpers = helpers.replace("function Start-TrackedProcess {", "function Start-FixtureProcess {")
         child = self.root / "parent.py"
         child.write_text(

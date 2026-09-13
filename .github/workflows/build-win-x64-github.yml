@@ -164,6 +164,14 @@ jobs:
         shell: powershell
         run: Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "attempt=$env:GITHUB_RUN_ATTEMPT"
       - uses: actions/checkout@v4
+      - name: Verify native process-tree cleanup
+        shell: powershell
+        timeout-minutes: 5
+        run: |
+          python -m pip install --disable-pip-version-check PyYAML==6.0.2
+          if ($LASTEXITCODE -ne 0) { throw "process cleanup test dependency install failed" }
+          python -m unittest tools.tests.test_ci_stage.InvokeTrackedRegressionTest tools.tests.test_ci_stage.InvokeTrackedPowerShellTest -v
+          if ($LASTEXITCODE -ne 0) { throw "native process-tree cleanup regression failed" }
       - name: Select compile parallelism
         shell: powershell
         run: python tools/build_resources.py --github-env

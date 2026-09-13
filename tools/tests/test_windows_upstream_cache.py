@@ -260,7 +260,7 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
         runs = []
         for number in range(1, 13):
             runs.extend(workflow_runs(workflow_job(self.workflow, f"build-{number}")))
-        self.assertEqual(len(runs), 48)
+        self.assertEqual(len(runs), 49)
         for run in runs:
             self.assertNotIn("${{", run)
         self.assertIn("UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}", self.build_one)

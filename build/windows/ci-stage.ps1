@@ -48,13 +48,97 @@ function Test-LastStage { return $StageIndex -ge $MaxStages }
 function Start-TrackedProcess {
   param([string]$File, [string]$Arguments, [string]$Cwd, [string]$Stdout, [string]$Stderr)
   if (-not ("Chromix.TrackedProcess" -as [type])) {
-    Add-Type -TypeDefinition @'
-namespace Chromix {
-  public sealed class TrackedProcess : System.IDisposable {
-    public readonly System.Diagnostics.Process Process;
-    private readonly System.Threading.Tasks.Task logs;
+    $typeOptions = @{}
+    if ($PSVersionTable.PSEdition -eq "Desktop") {
+      $typeOptions.ReferencedAssemblies = @("System.dll", "System.Core.dll")
+    }
+    Add-Type @typeOptions -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Pipes;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
-    private static async System.Threading.Tasks.Task CopyLog(System.IO.Stream input, System.IO.Stream output) {
+namespace Chromix {
+  public sealed class TrackedProcess : IDisposable {
+    public readonly Process Process;
+    private readonly Task logs;
+    private IntPtr job;
+    private const uint CREATE_SUSPENDED = 0x00000004;
+    private const uint CREATE_NO_WINDOW = 0x08000000;
+    private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct StartupInfo {
+      public int Size;
+      public string Reserved, Desktop, Title;
+      public uint X, Y, XSize, YSize, XCountChars, YCountChars, FillAttribute, Flags;
+      public ushort ShowWindow, ReservedSize;
+      public IntPtr ReservedData, StdInput, StdOutput, StdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInfo {
+      public IntPtr Process, Thread;
+      public uint ProcessId, ThreadId;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicLimits {
+      public long ProcessUserTime, JobUserTime;
+      public uint Flags;
+      public UIntPtr MinWorkingSet, MaxWorkingSet;
+      public uint ActiveProcessLimit;
+      public UIntPtr Affinity;
+      public uint PriorityClass, SchedulingClass;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters {
+      public ulong ReadOperations, WriteOperations, OtherOperations, ReadBytes, WriteBytes, OtherBytes;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ExtendedLimits {
+      public BasicLimits Basic;
+      public IoCounters Io;
+      public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Accounting {
+      public long UserTime, KernelTime, PeriodUserTime, PeriodKernelTime;
+      public uint PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref ExtendedLimits info, uint length);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out Accounting info, uint length, IntPtr returnedLength);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateProcess(string application, StringBuilder commandLine, IntPtr processAttributes,
+      IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string cwd,
+      ref StartupInfo startup, out ProcessInfo process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(IntPtr process, uint exitCode);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint timeoutMs);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    private static Win32Exception NativeError(string operation) {
+      int code = Marshal.GetLastWin32Error();
+      return new Win32Exception(code, operation + " failed (Win32 " + code + "): " + new Win32Exception(code).Message);
+    }
+
+    private static async Task CopyLog(Stream input, Stream output) {
       // The copy task owns its streams until EOF, even if the parent exits first.
       using (input)
       using (output) {
@@ -68,37 +152,103 @@ namespace Chromix {
     }
 
     public TrackedProcess(string file, string arguments, string cwd, string stdout, string stderr) {
-      var info = new System.Diagnostics.ProcessStartInfo(file, arguments);
-      info.WorkingDirectory = cwd;
-      info.UseShellExecute = false;
-      info.CreateNoWindow = true;
-      info.RedirectStandardOutput = true;
-      info.RedirectStandardError = true;
-      Process = new System.Diagnostics.Process();
-      Process.StartInfo = info;
-      System.IO.FileStream output = null, error = null;
+      ProcessInfo native = new ProcessInfo();
+      FileStream output = null, error = null;
+      AnonymousPipeServerStream inputPipe = null, outputPipe = null, errorPipe = null;
       try {
-        output = new System.IO.FileStream(stdout, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.Read);
-        error = new System.IO.FileStream(stderr, System.IO.FileMode.Create, System.IO.FileAccess.Write, System.IO.FileShare.Read);
-        if (!Process.Start()) throw new System.InvalidOperationException("tracked process did not start");
+        // The unnamed, non-inheritable job permits neither explicit nor silent breakaway.
+        job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) throw NativeError("CreateJobObject");
+        ExtendedLimits limits = new ExtendedLimits();
+        limits.Basic.Flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(typeof(ExtendedLimits))))
+          throw NativeError("SetInformationJobObject");
+        output = new FileStream(stdout, FileMode.Create, FileAccess.Write, FileShare.Read);
+        error = new FileStream(stderr, FileMode.Create, FileAccess.Write, FileShare.Read);
+        inputPipe = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
+        outputPipe = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
+        errorPipe = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
+        StartupInfo startup = new StartupInfo();
+        startup.Size = Marshal.SizeOf(typeof(StartupInfo));
+        startup.Flags = 0x00000100; // STARTF_USESTDHANDLES
+        startup.StdInput = inputPipe.ClientSafePipeHandle.DangerousGetHandle();
+        startup.StdOutput = outputPipe.ClientSafePipeHandle.DangerousGetHandle();
+        startup.StdError = errorPipe.ClientSafePipeHandle.DangerousGetHandle();
+        if (!CreateProcess(file, new StringBuilder("\"" + file + "\" " + arguments), IntPtr.Zero, IntPtr.Zero,
+                           true, CREATE_SUSPENDED | CREATE_NO_WINDOW, IntPtr.Zero, cwd, ref startup, out native))
+          throw NativeError("CreateProcess");
+        // No user code (and therefore no descendant) runs before job assignment succeeds.
+        if (!AssignProcessToJobObject(job, native.Process)) throw NativeError("AssignProcessToJobObject");
+        Process = System.Diagnostics.Process.GetProcessById((int)native.ProcessId);
+        IntPtr retainedHandle = Process.Handle;
+        inputPipe.DisposeLocalCopyOfClientHandle();
+        outputPipe.DisposeLocalCopyOfClientHandle();
+        errorPipe.DisposeLocalCopyOfClientHandle();
+        Task outputLog = CopyLog(outputPipe, output);
+        outputPipe = null;
+        output = null;
+        Task errorLog = CopyLog(errorPipe, error);
+        errorPipe = null;
+        error = null;
+        logs = Task.WhenAll(outputLog, errorLog);
+        if (ResumeThread(native.Thread) == uint.MaxValue) throw NativeError("ResumeThread");
       } catch {
+        // Assignment failure leaves a suspended root, which still needs explicit termination.
+        if (native.Process != IntPtr.Zero) {
+          if (!TerminateProcess(native.Process, 1)) Console.Error.WriteLine(NativeError("TerminateProcess during startup cleanup"));
+          if (WaitForSingleObject(native.Process, 10000) != 0) Console.Error.WriteLine("tracked startup cleanup could not confirm root exit");
+        }
+        Dispose();
+        throw;
+      } finally {
+        if (native.Thread != IntPtr.Zero) CloseHandle(native.Thread);
+        if (native.Process != IntPtr.Zero) CloseHandle(native.Process);
+        if (inputPipe != null) inputPipe.Dispose();
+        if (outputPipe != null) outputPipe.Dispose();
+        if (errorPipe != null) errorPipe.Dispose();
         if (output != null) output.Dispose();
         if (error != null) error.Dispose();
-        Process.Dispose();
-        throw;
       }
-      logs = System.Threading.Tasks.Task.WhenAll(CopyLog(Process.StandardOutput.BaseStream, output),
-                                                CopyLog(Process.StandardError.BaseStream, error));
+    }
+
+    public uint GetActiveProcesses() {
+      if (job == IntPtr.Zero) throw new ObjectDisposedException("tracked job");
+      Accounting info;
+      if (!QueryInformationJobObject(job, 1, out info, (uint)Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero))
+        throw NativeError("QueryInformationJobObject");
+      return info.ActiveProcesses;
+    }
+
+    public bool WaitForTreeExit(int timeoutMs) {
+      if (timeoutMs < 0) throw new ArgumentOutOfRangeException("timeoutMs");
+      Stopwatch watch = Stopwatch.StartNew();
+      while (GetActiveProcesses() != 0) {
+        if (watch.ElapsedMilliseconds >= timeoutMs) return false;
+        Thread.Sleep((int)Math.Max(1, Math.Min(50, timeoutMs - watch.ElapsedMilliseconds)));
+      }
+      return true;
+    }
+
+    public bool TerminateTree(int timeoutMs) {
+      if (job == IntPtr.Zero) throw new ObjectDisposedException("tracked job");
+      if (!TerminateJobObject(job, 124)) throw NativeError("TerminateJobObject");
+      return WaitForTreeExit(timeoutMs);
     }
 
     public bool Drain(int timeoutMs) { return logs.Wait(timeoutMs); }
 
     public void Dispose() {
-      // Do not close a pipe or writer while a descendant still owns the other end.
-      logs.ContinueWith(task => {
-        if (task.IsFaulted) System.Console.Error.WriteLine("tracked log copy failed: " + task.Exception.GetBaseException().Message);
-        Process.Dispose();
-      }, System.Threading.Tasks.TaskScheduler.Default);
+      IntPtr handle = Interlocked.Exchange(ref job, IntPtr.Zero);
+      if (handle != IntPtr.Zero && !CloseHandle(handle)) Console.Error.WriteLine(NativeError("CloseHandle(job)"));
+      // Kill-on-close is a fallback, not proof of quiescence for a snapshot.
+      if (logs == null) {
+        if (Process != null) Process.Dispose();
+      } else {
+        logs.ContinueWith(task => {
+          if (task.IsFaulted) Console.Error.WriteLine("tracked log copy failed: " + task.Exception.GetBaseException().Message);
+          if (Process != null) Process.Dispose();
+        }, TaskScheduler.Default);
+      }
     }
   }
 }
@@ -217,29 +367,76 @@ function Invoke-Tracked {
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $tick = 0
     $lastTail = @{}
-    while (-not $process.HasExited) {
+    while (-not $process.HasExited -or $tracked.GetActiveProcesses() -ne 0) {
       if ($stopwatch.Elapsed.TotalSeconds -gt $TimeoutSec) {
         Write-Host "==> timeout after $([int]$stopwatch.Elapsed.TotalMinutes) min; killing process tree"
         $killer = $null
+        $killCode = $null
+        $killStatus = "not-started"
+        $killerStopped = $true
+        $killOut = Join-Path $env:TEMP "$wrapperName.taskkill.out"
+        $killErr = Join-Path $env:TEMP "$wrapperName.taskkill.err"
         try {
           $killer = Start-Process -FilePath (Join-Path $env:SystemRoot "System32\taskkill.exe") `
-            -ArgumentList "/PID $($process.Id) /T /F" -PassThru -WindowStyle Hidden
+            -ArgumentList "/PID $($process.Id) /T /F" -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput $killOut -RedirectStandardError $killErr
+          $killerStopped = $false
           $null = $killer.Handle
-          if (-not $killer.WaitForExit(10000)) {
-            try { $killer.Kill() } catch {}
-            throw "tracked process tree cleanup timed out; refusing safe snapshot"
-          }
-          if ($killer.ExitCode -ne 0) {
-            throw "tracked process tree cleanup failed; refusing safe snapshot"
-          }
-          if (-not $process.WaitForExit(10000)) {
-            throw "tracked process is still running after taskkill; refusing safe snapshot"
-          }
-          if (-not (Wait-TrackedDrain -Tracked $tracked -TimeoutMs 10000)) {
-            throw "tracked process log drain timed out after taskkill; refusing safe snapshot"
-          }
+          $killerStopped = $killer.WaitForExit(10000)
+          $killStatus = if ($killerStopped) { "exited" } else { "timed-out" }
+        } catch {
+          $killStatus = if ($null -eq $killer) { "start-failed" } else { "wait-failed" }
+          Write-Host "==> taskkill $killStatus`: $($_.Exception.Message)"
         } finally {
-          if ($null -ne $killer) { $killer.Dispose() }
+          if ($null -ne $killer -and -not $killerStopped) {
+            try { $killer.Kill() } catch {
+              Write-Host "==> taskkill termination failed: $($_.Exception.Message)"
+            }
+            # Kill may race with helper exit; the bounded wait, not Kill, confirms it stopped.
+            try { $killerStopped = $killer.WaitForExit(2000) } catch {
+              Write-Host "==> taskkill exit wait failed: $($_.Exception.Message)"
+            }
+          }
+          if ($null -ne $killer -and $killerStopped) {
+            try { $killCode = $killer.ExitCode } catch {
+              Write-Host "==> taskkill exit code read failed: $($_.Exception.Message)"
+            }
+          }
+          $displayCode = if ($null -eq $killCode) { "unavailable" } else { [string]$killCode }
+          Write-Host "==> taskkill status: $killStatus; helper stopped: $killerStopped"
+          Write-Host "==> taskkill exit code: $displayCode; stdout: $killOut; stderr: $killErr"
+          try {
+            foreach ($path in @($killOut, $killErr)) {
+              if (Test-Path -LiteralPath $path) {
+                Get-Content -LiteralPath $path -Tail 200 -ErrorAction SilentlyContinue |
+                  ForEach-Object { Write-Host "  taskkill | $_" }
+              }
+            }
+          } catch {
+            Write-Host "==> taskkill output unavailable: $($_.Exception.Message)"
+          }
+          if ($null -ne $killer) {
+            try { $killer.Dispose() } catch {
+              Write-Host "==> taskkill handle disposal failed: $($_.Exception.Message)"
+            }
+          }
+        }
+        # taskkill is diagnostic/best-effort; only the non-breakaway job proves tree exit.
+        try {
+          $treeEmpty = $tracked.TerminateTree(10000)
+        } catch {
+          throw "tracked job cleanup failed: $($_.Exception.Message); refusing safe snapshot"
+        }
+        if (-not $treeEmpty) { throw "tracked job still has active processes; refusing safe snapshot" }
+        Write-Host "==> tracked job active processes: 0 (independently verified)"
+        if (-not $process.WaitForExit(10000)) {
+          throw "tracked process is still running after job termination; refusing safe snapshot"
+        }
+        if (-not (Wait-TrackedDrain -Tracked $tracked -TimeoutMs 10000)) {
+          throw "tracked process log drain timed out after job termination; refusing safe snapshot"
+        }
+        if (-not $killerStopped) {
+          throw "taskkill helper exit could not be confirmed after bounded cleanup; refusing safe snapshot"
         }
         & $writeFailureOutput
         Write-OutVar snapshot_safe true
@@ -264,6 +461,9 @@ function Invoke-Tracked {
     }
     if (-not $process.WaitForExit(10000)) {
       throw "tracked process exit wait timed out; refusing safe snapshot"
+    }
+    if (-not $tracked.WaitForTreeExit(10000)) {
+      throw "tracked job still has active processes after root exit; refusing safe snapshot"
     }
     if (-not (Wait-TrackedDrain -Tracked $tracked -TimeoutMs 10000)) {
       throw "tracked process log drain timed out; refusing safe snapshot"
