@@ -23,6 +23,7 @@ import apply_restored_patches as arp  # noqa: E402
 REPO = Path(__file__).resolve().parents[2]
 PATCH_BIN = shutil.which("gpatch") or shutil.which("patch")
 PATCHES = {
+    "0005": "0005-content-browser-renderer_host-render_process_host_impl-cc.patch",
     "0018": "0018-third_party-blink-renderer-core-frame-screen-cc.patch",
     "0031": "0031-third_party-blink-renderer-platform-graphics-image_data_buffer-cc.patch",
     "0033": "0033-third_party-blink-renderer-core-html-canvas-text_metrics-cc.patch",
@@ -30,6 +31,7 @@ PATCHES = {
 }
 # Expected functional additions, excluding empty lines only; indentation is hashed.
 ADDITION_HASHES = {
+    "0005": "c310d23ab0812382abb6d442ab00b1796453087e0e7dabf28a2a565d5d730810",
     # Geometry getter substitutions moved to the actual ScreenMetricsEmulator.
     "0018": "58f8f2333f3c674126bccca5bdeb7eb0eafcc738554ce9e3f2d275b385ae0b8f",
     "0031": "f3e577877774fa2081480d96fb537a3cabf1e54e25045a140b58131ac47ae6f8",
@@ -39,6 +41,25 @@ ADDITION_HASHES = {
 
 # Line numbers and snippets come from pinned pre-Chromix sources, not the diffs.
 SOURCE_SECTIONS = {
+    "0005": [
+        (22, '''#include "base/clang_profiling_buildflags.h"
+#include "base/command_line.h"
+#include "base/containers/adapters.h"
+#include "base/containers/flat_map.h"
+#include "base/containers/map_util.h"
+#include "base/debug/alias.h"
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
+'''),
+        (2013, '''  uint64_t trace_id = base::Token::CreateRandom().high();
+  TRACE_EVENT("navigation", "RenderProcessHostImpl::Init",
+              perfetto::Flow::Global(trace_id));
+  GetRendererInterface()->InitializeRenderer(
+      GetContentClient()->browser()->GetUserAgent(),
+      GetContentClient()->browser()->GetUserAgentMetadata(),
+      storage_partition_impl_->cors_exempt_header_list(),
+'''),
+    ],
     "0018": [
         (29, '''#include "third_party/blink/renderer/core/frame/screen.h"
 
@@ -324,6 +345,7 @@ def test_actual_patch_applies_without_fuzz_and_reverses_exactly(tmp_path, number
 
 
 @pytest.mark.parametrize(("number", "required_context"), [
+    ("0005", b'#include "base/debug/crash_logging.h"'),
     ("0018", b'#include "third_party/blink/renderer/core/dom/document.h"'),
     ("0031", b'#include "third_party/blink/renderer/platform/runtime_enabled_features.h"'),
     ("0033", b"  baselines_->setIdeographic(baselines_->ideographic() * factor);"),
@@ -366,7 +388,7 @@ def test_small_domain_restored_series(tmp_path, platform):
         (root / "domain_substitution.list").write_text("\n".join(paths) + "\n")
     result = arp.run_apply(src, repo, core, tooling, platform, PATCH_BIN)
     assert result["status"] == "applied"
-    assert result["patch_count"] == 4
+    assert result["patch_count"] == len(PATCHES)
     assert result["changed_files"] == sorted(paths)
     assert all((src / target).read_bytes().endswith(b"// blocked.test\n") for target in paths)
     assert arp.run_apply(src, repo, core, tooling, platform, PATCH_BIN)["status"] == "skipped"

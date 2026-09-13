@@ -2,14 +2,14 @@ diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content
 index b15a2e90b1..79c9568633 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
-@@ -22,6 +22,7 @@
- #include "base/clang_profiling_buildflags.h"
+@@ -23,6 +23,7 @@
  #include "base/command_line.h"
  #include "base/containers/adapters.h"
  #include "base/containers/flat_map.h"
 +#include "base/uxr_config.h"
  #include "base/containers/map_util.h"
  #include "base/debug/alias.h"
+ #include "base/debug/crash_logging.h"
 @@ -2013,6 +2014,24 @@
    uint64_t trace_id = base::Token::CreateRandom().high();
    TRACE_EVENT("navigation", "RenderProcessHostImpl::Init",

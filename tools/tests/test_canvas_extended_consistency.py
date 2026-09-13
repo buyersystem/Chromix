@@ -94,6 +94,60 @@ def test_existing_noise_is_not_stacked(patched_sources):
     assert "read_pixels_successful &&" in guard
 
 
+def test_text_noise_policy_preserves_bridge_metrics(tmp_path):
+    original = '''  TextMetrics* text_metrics = MakeGarbageCollected<TextMetrics>(
+      font, direction, state.GetTextBaseline(), state.GetTextAlign(), text,
+      host->GetPlainTextPainter());
+
+  if (auto* bridge = canvas_bridge::CanvasBridgeClient::Get();
+      bridge && bridge->Connected()) {
+    const auto* execution_context =
+        GetCanvasRenderingContextHost()->GetTopExecutionContext();
+    const auto* origin =
+        execution_context ? execution_context->GetSecurityOrigin() : nullptr;
+    if (origin &&
+        bridge->BridgeEnabledForOrigin(origin->RegistrableDomain().Utf8())) {
+      EnsureBridgeCanvas(bridge, bridge_canvas_id_, Width(), Height());
+      auto bytes = bridge->RequestTextMetrics(bridge_canvas_id_, text.Utf8());
+      if (bytes && bytes->size() == 9 * sizeof(double)) {
+        double values[9];
+        std::memcpy(values, bytes->data(), sizeof(values));
+        text_metrics->OverrideFromBridge(
+            values[0], values[1], values[2], values[3], values[4], values[5],
+            values[6], values[7], values[8]);
+      }
+    }
+  }
+
+  // Scale text metrics if enabled
+  if (RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {
+    if (HostAsOffscreenCanvas()) {
+      if (auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext())) {
+        if (window->GetFrame() && window->GetFrame()->GetDocument())
+          text_metrics->Shuffle(window->GetFrame()->GetDocument()->GetNoiseFactorX());
+      }
+    } else if (canvas) {
+      text_metrics->Shuffle(canvas->GetDocument().GetNoiseFactorX());
+    }
+  }
+  return text_metrics;
+}
+'''
+    path = tmp_path / target_path("0146")
+    path.parent.mkdir(parents=True)
+    path.write_text(original)
+    apply_patch(tmp_path, "0146", offsets=True)
+    expected = original.replace(
+        '  if (RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {',
+        '  if (!base::UxrConfig::GetInstance().Has("uxr-disable-fingerprint-noise") &&\n'
+        '      RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {',
+        1,
+    )
+    assert path.read_text() == expected
+    apply_patch(tmp_path, "0146", reverse=True, offsets=True)
+    assert path.read_text() == original
+
+
 def test_uint64_seed_parsing_and_fold_match(patched_sources):
     readback = patched_sources["0020"]
     encode = patched_sources["0031"]
