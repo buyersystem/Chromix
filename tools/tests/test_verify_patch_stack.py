@@ -1,6 +1,7 @@
 """Source freshness checks never trust stamps and never mutate original files."""
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import sys
 import pytest
@@ -46,6 +47,62 @@ def test_reverse_forward_is_read_only_and_detects_old_source(tmp_path, newline):
     with pytest.raises(ValueError, match='stale/incompatible'):
         stack.verify(src, repo)
     assert before == (path.read_bytes(), path.stat().st_mtime_ns)
+
+
+def test_real_new_and_deleted_files_declare_mode():
+    repo = Path(__file__).resolve().parents[2]
+    _, patches = stack.load_stack(repo)
+    for name, _, entries in patches:
+        for target, action, mode in entries:
+            if action in ('create', 'delete'):
+                assert mode in (0o644, 0o755), (name, target, action)
+
+
+@pytest.mark.parametrize('newline', [b'\n', b'\r\n'])
+@pytest.mark.parametrize('substituted', [False, True])
+def test_real_consecutive_new_files_roundtrip(tmp_path, newline, substituted):
+    checkout = Path(__file__).resolve().parents[2]
+    repo, src = tmp_path / 'repo', tmp_path / 'source'
+    (repo / 'patches').mkdir(parents=True)
+    src.mkdir()
+    names = [next((checkout / 'patches').glob(f'{number:04d}-*.patch'))
+             for number in range(103, 107)]
+    (repo / 'patches/series').write_text(''.join(f'patches/{p.name}\n' for p in names))
+    patch_bin = shutil.which('gpatch') or shutil.which('patch')
+    if patch_bin is None:
+        pytest.skip('GNU patch is required')
+    for original in names:
+        patch = repo / 'patches' / original.name
+        shutil.copyfile(original, patch)
+        result = subprocess.run([patch_bin, *stack.arp.PATCH_OPTIONS, '--input', str(patch)],
+                                cwd=src, capture_output=True, timeout=15,
+                                env={**os.environ, 'LC_ALL': 'C', 'PATCH_GET': '0'})
+        assert result.returncode == 0, result.stdout + result.stderr
+    core = tmp_path / 'core'
+    core.mkdir()
+    (core / 'domain_regex.list').write_text('GpuInfo#SubstitutedGpuInfo\n')
+    targets = [p.relative_to(src).as_posix() for p in src.rglob('*') if p.is_file()]
+    (core / 'domain_substitution.list').write_text(''.join(f'{name}\n' for name in targets))
+    for name in targets:
+        path = src / name
+        data = path.read_bytes()
+        if substituted:
+            data = data.replace(b'GpuInfo', b'SubstitutedGpuInfo')
+        path.write_bytes(data.replace(b'\n', newline))
+    if substituted:
+        (src / '.chromix-domain-substituted').touch()
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+              for p in src.rglob('*') if p.is_file()}
+    result = stack.verify(src, repo, core=core, tooling=core, platform='linux')
+    assert result['patch_count'] == 4
+    assert result['domain_substituted'] == substituted
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == before
+    target = src / 'third_party/blink/renderer/modules/webgl/gpu_info.h'
+    target.write_bytes(target.read_bytes() + b'// unexpected tail\n')
+    damaged = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before}
+    with pytest.raises(ValueError, match='stale/incompatible|patch did not remove'):
+        stack.verify(src, repo, core=core, tooling=core, platform='linux')
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before} == damaged
 
 
 def test_new_file_must_match_completely(tmp_path):

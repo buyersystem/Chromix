@@ -1,4 +1,5 @@
 diff --git a/components/ungoogled/farble_seed.cc b/components/ungoogled/farble_seed.cc
+new file mode 100644
 --- /dev/null
 +++ b/components/ungoogled/farble_seed.cc
 @@ -0,0 +1,52 @@

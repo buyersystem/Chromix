@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import apply_restored_patches as arp  # noqa: E402
+import verify_patch_stack as stack  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 PATCH_BIN = shutil.which("gpatch") or shutil.which("patch")
@@ -496,6 +497,12 @@ def test_full_series_on_supplied_sparse_upstream(tmp_path, platform):
             text, encoding = arp._decode(data)
             data = arp._substitute(text, rules).encode(encoding)
         assert (restored / name).read_bytes() == data, name
+    (restored / '.chromix-domain-substituted').touch()
+    for source in (normal, restored):
+        verified = stack.verify(source, REPO, core=core, tooling=tooling, platform=platform)
+        assert verified['status'] == 'verified'
+        assert verified['patch_count'] == len(series)
+        assert verified['domain_substituted'] == (source == restored)
     for name, state in baseline_stats.items():
         path = baseline / name
         actual = (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None
