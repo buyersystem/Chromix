@@ -9,7 +9,12 @@ WORKFLOW = ROOT / ".github/workflows/build-win-x64-github.yml"
 
 
 def test_native_process_cleanup_regressions_gate_first_compile():
-    job = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["build-1"]
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    # PyYAML's YAML 1.1 loader interprets the workflow's "on" key as True.
+    triggers = workflow.get("on", workflow.get(True))
+    assert "tools/tests/test_ci_stage.py" in triggers["push"]["paths"]
+    assert "tools/tests/test_windows_cleanup_gate.py" in triggers["push"]["paths"]
+    job = workflow["jobs"]["build-1"]
     steps = job["steps"]
     check = next(step for step in steps if step.get("name") == "Verify native process-tree cleanup")
     compile_step = next(step for step in steps if step.get("id") == "stage")

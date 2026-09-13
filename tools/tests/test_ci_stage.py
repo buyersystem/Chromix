@@ -336,7 +336,7 @@ function Write-Host {
         self.assertIn("fixture taskkill stderr: access denied", output)
 
     def test_nonzero_taskkill_requires_independent_job_empty_proof(self):
-        for code in (1, 5, 128):
+        for code in (1, 5, 128, 255):
             with self.subTest(code=code):
                 output, events = self.tracked(TEST_MODE="timeout", TEST_TREE_EXIT=str(code))
                 self.assertIn(f"taskkill exit code: {code}", output)
@@ -697,20 +697,24 @@ Write-Host "real-nonzero-timeout-ok"
         self.assertIn("tracked job active processes: 0", result.stdout)
         self.assert_workflow_snapshot(True)
 
-    def test_real_timeout_with_successful_taskkill_confirms_empty_job(self):
+    def test_real_timeout_with_taskkill_confirms_empty_job(self):
         helpers = self.windows_orphan_fixture(hold_root=True)
         result = self.run_ps(helpers + r'''
 function Start-Sleep { param($Seconds); Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds 20 }
 $rc = Invoke-Tracked -File $env:TEST_PYTHON -ArgList '-c "import time; time.sleep(60)"' `
   -Cwd $env:TEMP -TimeoutSec 1
 if ($rc -ne 124) { throw "expected timeout 124" }
-Write-Host "real-successful-taskkill-timeout-ok"
+Write-Host "real-taskkill-timeout-ok"
 ''')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("real-successful-taskkill-timeout-ok", result.stdout)
-        self.assertIn("taskkill exit code: 0;", result.stdout)
-        self.assertIn("tracked job active processes: 0", result.stdout)
+        self.assertIn("real-taskkill-timeout-ok", result.stdout)
+        self.assertIn("taskkill status: exited; helper stopped: True", result.stdout)
+        # Killing the children can let cmd exit before taskkill reaches it (exit 255).
+        self.assertRegex(result.stdout, r"taskkill exit code: [0-9]+;")
+        self.assertIn("tracked job active processes: 0 (independently verified)", result.stdout)
         self.assert_workflow_snapshot(True)
+        self.assertEqual((self.root / "github-output").read_text().splitlines(),
+                         ["snapshot_safe=false", "snapshot_safe=true"])
 
     def test_real_job_query_failure_refuses_snapshot_with_root_exited_and_eof(self):
         helpers = self.windows_orphan_fixture()
