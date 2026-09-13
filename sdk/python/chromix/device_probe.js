@@ -47,7 +47,7 @@ globalThis.chromixDeviceProbe = async () => {
       return typeof SharedArrayBuffer === 'function' && memory.buffer instanceof SharedArrayBuffer;
     });
   }
-  const result = {probeVersion:2, execution, identity:await capture(async () => ({
+  const result = {probeVersion:3, execution, identity:await capture(async () => ({
     ua:n.userAgent, platform:n.platform, languages:Array.from(n.languages),
     timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
     locale:Intl.DateTimeFormat().resolvedOptions().locale,
@@ -153,6 +153,7 @@ globalThis.chromixDeviceProbe = async () => {
           backend:{shader:true, textureRGBA:Array.from(pixel), requestExtensions:true}};
       } finally { gl.getExtension('WEBGL_lose_context')?.loseContext(); }
     }) : absent('Canvas unavailable');
+  result.render = await capture(() => chromixPackedRenderProbe());
   if (typeof document === 'undefined') return result;
   const s = screen, v = visualViewport;
   result.display = {screen:{width:s.width, height:s.height, availWidth:s.availWidth,

@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import fingerprint_corpus_review as corpus
-from test_device_pool import bundle, seal
-from test_device_p0 import v2_observation
+from test_device_pool import seal
+from test_device_render import bundle, observation, refresh_render
 
 NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
 VERSION = '152.0.7977.82'
@@ -24,14 +24,15 @@ def dump(path, value):
 def sample_manifest(tmp_path):
     root = tmp_path / 'unit-fixture'
     record = bundle(root)
-    probe_hash = corpus.pool.file_hash(corpus.PROBE)
+    probe_hash = corpus.current_probe_hash()
     browser = corpus.pool.load_json(root / 'browser.json')
     browser.update(browser_versions=[VERSION] * 3, probe_sha256=probe_hash,
-                   observations=[v2_observation() for _ in range(3)])
+                   observations=[observation() for _ in range(3)])
     dump(root / 'browser.json', browser)
     record['device']['surfaces'] = corpus.pool.stable_observation(browser['observations'][0])
     record['provenance'].update(browser_version=VERSION, probe_sha256=probe_hash)
     record['evidence']['browser']['sha256'] = corpus.pool.file_hash(root / 'browser.json')
+    refresh_render(record, root, browser)
     seal(record); dump(root / 'record.json', record)
     manifest = {'schema_version': 1, 'browser_version': VERSION, 'probe_sha256': probe_hash,
                 'max_age_days': 30, 'cohorts': [{'id': 'test-cohort', 'os': 'fixture',

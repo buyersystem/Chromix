@@ -55,7 +55,8 @@ def bundle(root):
 
 
 def test_bundle_validates_and_selects_whole_copy(tmp_path):
-    record = pool.validate_record(bundle(tmp_path), tmp_path)
+    from test_device_render import bundle as current_bundle
+    record = pool.validate_record(current_bundle(tmp_path), tmp_path)
     result = pool.select_record([record], record, 2**64 - 1)
     assert result['status'] == 'compatible'
     assert result['record'] == record
@@ -145,7 +146,8 @@ def test_evidence_path_escape(tmp_path, path):
 
 
 def test_strict_json(tmp_path):
-    for value in ('{"seed":1,"seed":2}', '{"seed":NaN}', '{"seed":Infinity}'):
+    for value in ('{"seed":1,"seed":2}', '{"seed":NaN}', '{"seed":Infinity}',
+                  '{"seed":1e400}', '{"seed":-1e400}'):
         path = tmp_path / 'bad.json'
         path.write_text(value)
         with pytest.raises(ValueError):
@@ -275,7 +277,7 @@ def test_record_cli_and_existing_output_protection(tmp_path, capsys):
     assert pool.main(['validate', str(path)]) == 0
     assert json.loads(capsys.readouterr().out)['status'] == 'valid'
     assert pool.main(['select', '--host', str(path), '--seed', '0x100000001', str(path)]) == 0
-    assert json.loads(capsys.readouterr().out)['status'] == 'compatible'
+    assert json.loads(capsys.readouterr().out)['status'] == 'native'  # v1 is archive-only.
     assert collector.main(['--browser', 'missing.exe', '--output', str(tmp_path)]) == 1
     assert json.loads(path.read_text()) == record
 

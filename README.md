@@ -341,7 +341,7 @@ Chromix packages Windows x64, Linux x64/arm64, and macOS x64/arm64. The pinned l
 | ungoogled-chromium-windows | `152.0.7977.82-1.1` |
 | ungoogled-chromium-portablelinux | `152.0.7977.82-1` |
 | ungoogled-chromium-macos | `152.0.7977.82-1.1` |
-| Chromix | 146 patches listed in `patches/series` |
+| Chromix | 148 patches listed in `patches/series` |
 
 Requirements include Visual Studio 2022 with Desktop development with C++, the
 Windows 11 SDK 10.0.26100 Debugging Tools, Python 3, Git, PowerShell 7, 7-Zip,

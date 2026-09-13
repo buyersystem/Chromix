@@ -18,6 +18,9 @@ SCOPES = ('window', 'iframe', 'worker', 'shared_worker', 'service_worker')
 WIRE_PROTOCOLS = ('tls', 'http2', 'quic', 'dns', 'proxy', 'webrtc')
 QUALIFICATION = {'wire':{name:'not_collected' for name in WIRE_PROTOCOLS},
                  'physical_backend_equivalence':'not_verified'}
+RENDER_QUALIFICATION = {**QUALIFICATION, 'render_evidence':'independently_checked',
+                        'font_file_to_glyph_binding':'not_verified'}
+SCHEMA_VERSION = 2
 
 
 def canonical(value):
@@ -37,6 +40,8 @@ def file_hash(path):
 
 
 def load_json(path):
+    if Path(path).stat().st_size > 64 * 1024 * 1024:
+        raise ValueError('evidence exceeds 64 MiB')
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -46,7 +51,13 @@ def load_json(path):
         return result
     def invalid(value):
         raise ValueError(f'non-finite JSON number: {value}')
-    return json.loads(Path(path).read_text(encoding='utf-8'), object_pairs_hook=unique, parse_constant=invalid)
+    def finite_float(value):
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            invalid(value)
+        return parsed
+    return json.loads(Path(path).read_text(encoding='utf-8'), object_pairs_hook=unique,
+                      parse_constant=invalid, parse_float=finite_float)
 
 
 def finite(value, positive=False):
@@ -98,7 +109,7 @@ def capability_errors(value):
     return errors
 
 
-def observation_errors(observation):
+def observation_errors(observation, *, check_render=True):
     errors = []
     if not isinstance(observation, dict):
         return ['observation must be an object']
@@ -152,7 +163,10 @@ def observation_errors(observation):
                 errors.append(f'{scope}.{key}: {item.get("reason")}')
             if key in ('webgl', 'webgpu'):
                 native = baseline.get(key, {})
-                if item.get('status') == native.get('status') == 'observed' and item != native:
+                # v3 records each context's actual adapter. Hybrid systems may
+                # legitimately choose different GPUs; restart stability still
+                # compares each corresponding context, never mixes their fields.
+                if value.get('probeVersion', 1) < 3 and item.get('status') == native.get('status') == 'observed' and item != native:
                     errors.append(f'{scope}.{key}: identity or capabilities differ from window')
     display = baseline.get('display', {})
     screen, window = display.get('screen', {}), display.get('window', {})
@@ -177,6 +191,11 @@ def observation_errors(observation):
     viewport = display.get('viewport')
     if not isinstance(viewport, dict) or not all(finite(viewport.get(k), True) for k in ('width', 'height', 'scale')):
         errors.append('display: missing or invalid visualViewport')
+    if check_render and any(isinstance(v, dict) and v.get('probeVersion') == 3 for v in observation.values()):
+        from ._device_render import assess_observation
+        from ._device_fonts import font_errors
+        errors.extend(assess_observation(observation)['errors'])
+        errors.extend(font_errors(observation.get('window', {}).get('fontBackend')))
     return errors
 
 
@@ -187,6 +206,11 @@ def stable_observation(observation):
             continue
         value.pop('network', None)
         value.pop('http', None)
+        # Keep the hash/length of all raw render evidence in the device identity,
+        # not gzip bytes (different compressors may encode identical evidence).
+        render = value.get('render', {})
+        if isinstance(render, dict) and isinstance(render.get('value'), dict):
+            render['value'].pop('data', None)
         # IDs are origin/profile salted, but kinds and constraints stay together
         # with the device record. This does not prove capture capability.
         for device in value.get('media', {}).get('value', {}).get('devices', []):
@@ -201,12 +225,13 @@ def stable_observation(observation):
 def validate_record(record, root):
     if not isinstance(record, dict):
         raise ValueError('record must be an object')
-    if type(record.get('schema_version')) is not int or record.get('schema_version') != 1 or record.get('kind') != 'measured':
-        raise ValueError('only schema v1 measured records may enter the pool')
+    version = record.get('schema_version')
+    if type(version) is not int or version not in (1, SCHEMA_VERSION) or record.get('kind') != 'measured':
+        raise ValueError('only schema v1/v2 measured evidence is supported')
     if set(record) != {'schema_version', 'kind', 'provenance', 'device', 'evidence', 'qualification', 'record_id'}:
         raise ValueError('unknown or missing record fields')
-    if record['qualification'] != QUALIFICATION:
-        raise ValueError('v1 evidence cannot claim wire or physical-backend verification')
+    if record['qualification'] != (RENDER_QUALIFICATION if version == 2 else QUALIFICATION):
+        raise ValueError('evidence cannot claim unperformed wire, render or physical-backend verification')
     payload = {k: v for k, v in record.items() if k != 'record_id'}
     if record.get('record_id') != digest(payload):
         raise ValueError('record digest mismatch')
@@ -221,8 +246,8 @@ def validate_record(record, root):
     if not provenance.get('collector') or not isinstance(sha, str) or len(sha) != 64 or any(c not in '0123456789abcdef' for c in sha):
         raise ValueError('collector and executable hash are required')
     evidence = record.get('evidence', {})
-    if set(evidence) != {'browser', 'host'}:
-        raise ValueError('browser and host evidence are required')
+    if set(evidence) != ({'browser', 'host', 'render'} if version == 2 else {'browser', 'host'}):
+        raise ValueError('browser, host and schema-v2 render evidence are required')
     root = Path(root).resolve()
     loaded = {}
     for name, item in evidence.items():
@@ -239,7 +264,11 @@ def validate_record(record, root):
     observations = browser.get('observations', [])
     if len(observations) != 3:
         raise ValueError('initial, restart, and isolated-profile observations required')
-    errors = [f'run {i}: {e}' for i, observation in enumerate(observations) for e in observation_errors(observation)]
+    errors = [f'run {i}: {e}' for i, observation in enumerate(observations)
+              for e in observation_errors(observation, check_render=False)]
+    if version == 1 and any(value.get('probeVersion', 1) not in (1, 2) or 'render' in value
+                            for observation in observations for value in observation.values()):
+        raise ValueError('render observations cannot be downgraded into schema v1')
     from ._device_headers import header_errors
     for i, observation in enumerate(observations):
         for scope in SCOPES:
@@ -249,6 +278,15 @@ def validate_record(record, root):
                     value, require_hints=scope in ('window', 'iframe')))
     if errors:
         raise ValueError('; '.join(errors))
+    if version == 2:
+        from ._device_render import build_evidence
+        if provenance.get('probe_sha256') != browser.get('probe_sha256'):
+            raise ValueError('complete probe-bundle provenance mismatch')
+        if (not provenance.get('browser_version') or
+                browser.get('browser_versions') != [provenance['browser_version']] * 3):
+            raise ValueError('three matching browser versions are required')
+        if loaded['render'] != build_evidence(loaded['host'], browser):
+            raise ValueError('render evidence does not match independently checked browser/host evidence')
     stable = [stable_observation(o) for o in observations]
     if stable[0] != stable[1] or stable[0] != stable[2]:
         raise ValueError('stable device observations differ across restart/profiles')
@@ -264,6 +302,8 @@ def validate_record(record, root):
 def backend_gaps(record):
     host = record['device']['host']
     gaps = []
+    if record.get('schema_version') != SCHEMA_VERSION or record.get('qualification') != RENDER_QUALIFICATION:
+        gaps.append('legacy record lacks render admission evidence; collect schema v2 with probe v3')
     if not all(host.get('os', {}).get(key) for key in ('system', 'release', 'version', 'architecture')):
         gaps.append('OS/build/architecture inventory missing')
     cores = host.get('cpu', {}).get('logical_cores')
@@ -298,7 +338,7 @@ def select_record(records, host_record, seed):
         if rid in seen:
             raise ValueError('duplicate pool record')
         seen.add(rid)
-        reasons = backend_gaps(record) + backend_gaps(host_record)
+        reasons = list(dict.fromkeys(backend_gaps(record) + backend_gaps(host_record)))
         if record['provenance']['browser_sha256'] != host_record['provenance']['browser_sha256']:
             reasons.append('browser executable differs')
         if record['device'] != host_record['device']:
@@ -307,6 +347,7 @@ def select_record(records, host_record, seed):
             rejected.append({'record_id':rid, 'reasons':reasons})
         else:
             candidates.append(record)
+    rejected.sort(key=lambda row: row['record_id'])
     if not candidates:
         return {'status':'native', 'record':None, 'rejected':rejected, 'overrides':[]}
     selected = max(candidates, key=lambda r: digest({'seed':str(seed), 'record_id':r['record_id']}))

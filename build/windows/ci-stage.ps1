@@ -618,7 +618,8 @@ if ($FromArtifact -and -not $RestoredUpstream) {
 }
 
 if ($StageIndex -eq 1 -and -not $FromArtifact -and
-    -not (Test-Path $Src) -and $RequireUpstreamCache) {
+    -not (Test-Path $Src) -and
+    ($RequireUpstreamCache -or $env:CHROMIX_PREFER_UPSTREAM_CACHE -eq "1")) {
   # Leave the stage reserve and at least 30 minutes for restore/preparation.
   $fetchTimeoutSec = [Math]::Min(10800, ((Get-RemainingMin) - $PackReserveMin - 30) * 60)
   if ($fetchTimeoutSec -lt 60) {
@@ -645,22 +646,31 @@ if ($StageIndex -eq 1 -and -not $FromArtifact -and
   }
   # The fetcher exits zero for cache misses; report the cause before restore.
   $fetchResult = Get-Content -LiteralPath (Join-Path $UpstreamCacheDir "result.json") -Raw | ConvertFrom-Json
-  if ($fetchResult.status -ne "hit") {
+  $ExpiredOptionalCache = -not $RequireUpstreamCache -and
+    $fetchResult.status -eq "miss" -and $fetchResult.reason -eq "artifact_expired" -and
+    $fetchResult.phase -eq "metadata" -and -not (Test-Path $Src)
+  if ($ExpiredOptionalCache) {
+    # Expiry is checked AFTER pinned run/artifact provenance. Never downgrade a
+    # digest, archive, source-pin, interrupted restore, or download failure.
+    # Fetch extraction lives outside WorkDir; no cached source/output is reused.
+    Write-Host "==> pinned upstream artifact expired; starting pinned cold-source preparation (out/Chromix)"
+  } elseif ($fetchResult.status -ne "hit") {
     throw ("required upstream cache fetch failed: $($fetchResult.reason); " +
            "phase=$($fetchResult.phase); duration_seconds=$($fetchResult.duration_seconds)")
+  } else {
+    python (Join-Path $Repo "tools\restore_upstream_cache.py") --phase restore `
+      --platform windows --arch x64 --workdir $WorkDir --cache-dir $UpstreamCacheDir
+    if ($LASTEXITCODE -ne 0) { throw "upstream restore helper failed (exit $LASTEXITCODE)" }
+    if (-not (Test-Path -LiteralPath $restoreReceipt -PathType Leaf)) {
+      throw "required upstream cache: restore receipt missing after restore; refusing cold preparation or compilation"
+    }
+    & python (Join-Path $Repo "tools\restore_upstream_cache.py") --phase verify `
+      --platform windows --arch x64 --workdir $WorkDir
+    if ($LASTEXITCODE -ne 0) { throw "restored upstream source verification failed (exit $LASTEXITCODE)" }
+    $RestoredUpstream = $true
+    $OutDir = "$Src\out\Default"
+    Write-Host "==> restored upstream source/out/Default; appending Chromix patches before incremental Ninja"
   }
-  python (Join-Path $Repo "tools\restore_upstream_cache.py") --phase restore `
-    --platform windows --arch x64 --workdir $WorkDir --cache-dir $UpstreamCacheDir
-  if ($LASTEXITCODE -ne 0) { throw "upstream restore helper failed (exit $LASTEXITCODE)" }
-  if (-not (Test-Path -LiteralPath $restoreReceipt -PathType Leaf)) {
-    throw "required upstream cache: restore receipt missing after restore; refusing cold preparation or compilation"
-  }
-  & python (Join-Path $Repo "tools\restore_upstream_cache.py") --phase verify `
-    --platform windows --arch x64 --workdir $WorkDir
-  if ($LASTEXITCODE -ne 0) { throw "restored upstream source verification failed (exit $LASTEXITCODE)" }
-  $RestoredUpstream = $true
-  $OutDir = "$Src\out\Default"
-  Write-Host "==> restored upstream source/out/Default; appending Chromix patches before incremental Ninja"
 }
 
 if (-not (Test-Path (Join-Path $Src ".chromix-source-ready")) -and

@@ -145,3 +145,5 @@ patches/0143-webrtc-ip-build.patch
 patches/0144-webrtc-auto-startup.patch
 patches/0145-webrtc-local-sdp-roundtrip.patch
 patches/0146-canvas-text-noise-policy.patch
+patches/0147-webgl-context-backend-identity.patch
+patches/0148-webgpu-native-adapter-identity.patch

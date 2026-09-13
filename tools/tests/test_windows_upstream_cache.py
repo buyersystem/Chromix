@@ -59,7 +59,8 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
 
     def test_fetch_and_restore_only_fresh_opted_in_stage_one_before_preparation(self):
         self.assertRegex(self.cache, r"^if \(\$StageIndex -eq 1 -and -not \$FromArtifact -and\s+"
-                         r"-not \(Test-Path \$Src\) -and \$RequireUpstreamCache\) \{")
+                         r'-not \(Test-Path \$Src\) -and\s+\(\$RequireUpstreamCache -or '
+                         r'\$env:CHROMIX_PREFER_UPSTREAM_CACHE -eq "1"\)\) \{')
         self.assertNotIn("$ValidateOnly", self.cache)
         self.assertEqual(self.stage.count("fetch_upstream_cache.py"), 1)
         self.assertEqual(self.stage.count("--phase restore"), 1)
@@ -219,8 +220,10 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
         import yaml
 
         workflow = yaml.safe_load(self.workflow)
-        required = "${{ (github.event_name == 'push' || inputs.use_upstream_cache || inputs.upstream_run_id != '') && '1' || '0' }}"
+        required = "${{ (inputs.use_upstream_cache || inputs.upstream_run_id != '') && '1' || '0' }}"
         self.assertEqual(workflow['env']['CHROMIX_USE_UPSTREAM_CACHE'], required)
+        self.assertEqual(workflow['env']['CHROMIX_PREFER_UPSTREAM_CACHE'],
+                         "${{ github.event_name == 'push' && '1' || '0' }}")
         for job in workflow['jobs'].values():
             self.assertNotIn('CHROMIX_USE_UPSTREAM_CACHE', job.get('env', {}))
             for step in job['steps']:
@@ -261,7 +264,7 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
         for run in runs:
             self.assertNotIn("${{", run)
         self.assertIn("UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}", self.build_one)
-        self.assertIn("USE_UPSTREAM_CACHE: ${{ github.event_name == 'push' || inputs.use_upstream_cache }}", self.build_one)
+        self.assertIn("USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}", self.build_one)
         self.assertIn("GH_TOKEN: ${{ secrets.UPSTREAM_ACTIONS_TOKEN || github.token }}", self.build_one)
         self.assertIn(r"[ValidatePattern('\A[0-9]*\z')] [string]$UpstreamRunId", self.stage)
         self.assertIn('if ($UpstreamRunId) { $fetchArgs += @("--run-id", $UpstreamRunId) }', self.cache)
@@ -455,7 +458,7 @@ Add-Content $env:CALL_LOG ("ninja:" + $OutDir.Replace('\', '/'))
 ''')
 
     def run_stage(self, *, enabled=True, validate=False, resume=False, stage=1,
-                  minutes=300, fetch_rc=0, switch=False, run_id="", tracked_error=""):
+                  minutes=300, fetch_rc=0, switch=False, run_id="", tracked_error="", prefer=False):
         fixture = self.fixture
         env = {**fixture.env, "TEST_REPO": str(REPO), "TEST_WORK": str(fixture.work),
                "TEST_CACHE": str(fixture.cache), "TEST_PYTHON": sys.executable,
@@ -463,9 +466,35 @@ Add-Content $env:CALL_LOG ("ninja:" + $OutDir.Replace('\', '/'))
                "TEST_SWITCH": str(int(switch)), "TEST_RUN_ID": run_id,
                "TEST_VALIDATE": str(int(validate)), "TEST_MINUTES": str(minutes),
                "FETCH_RC": str(fetch_rc), "TEST_TRACKED_ERROR": tracked_error,
-               "CHROMIX_USE_UPSTREAM_CACHE": str(int(enabled))}
+               "CHROMIX_USE_UPSTREAM_CACHE": str(int(enabled)),
+               "CHROMIX_PREFER_UPSTREAM_CACHE": str(int(prefer))}
         return subprocess.run([self.powershell, "-NoLogo", "-NoProfile", "-NonInteractive",
                                "-File", str(self.script)], env=env, capture_output=True, text=True, timeout=20)
+
+    def test_only_metadata_expiry_can_fall_back_when_cache_is_optional(self):
+        for enabled, phase, reason, success in (
+                (False, 'metadata', 'artifact_expired', True),
+                (True, 'metadata', 'artifact_expired', False),
+                (False, 'download', 'artifact_expired', False),
+                (False, 'metadata', 'digest_mismatch', False),
+                (False, 'metadata', 'unavailable', False),
+                (False, 'extract_source_and_objects', 'insufficient_disk_space', False)):
+            with self.subTest(enabled=enabled, phase=phase, reason=reason):
+                self.fixture.seed('windows', 'x64', reason=reason)
+                path = self.fixture.cache / 'result.json'
+                report = json.loads(path.read_text())
+                report.update(phase=phase, duration_seconds=1)
+                path.write_text(json.dumps(report))
+                result = self.run_stage(enabled=enabled, prefer=True)
+                self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
+                if success:
+                    self.assertIn('pinned cold-source preparation', result.stdout)
+                    self.assertEqual(self.fixture.called(), ['fetch', 'prepare',
+                        f'ninja:{self.fixture.work.as_posix()}/src/out/Chromix'])
+                else:
+                    self.assertEqual(self.fixture.called(), ['fetch'])
+                self.assertFalse((self.fixture.work / 'src').exists())
+                self.fixture.calls.unlink()
 
     def test_required_miss_disk_shortage_and_timeout_fail_in_validation_too(self):
         for validate in (False, True):

@@ -585,6 +585,15 @@ source identity stops a required-restoration build before cold preparation or
 Ninja. Existing and resumed trees must carry a valid restoration receipt in this
 mode, including Windows validation; a cold snapshot cannot satisfy the request.
 
+**Windows push exception:** automatic pushes prefer the pinned cache through
+`CHROMIX_PREFER_UPSTREAM_CACHE=1`, rather than requiring it. Only a validated
+metadata-phase `status=miss`, `reason=artifact_expired`, with no source tree,
+permits fresh preparation of the pinned source in `out/Chromix`. A verified hit
+still restores `out/Default`. Manual/reusable explicit `use_upstream_cache=true`
+or `upstream_run_id` requests remain strict. Provenance/digest mismatches,
+download/extraction failures and interrupted restores never trigger this
+fallback. Other platform cache policies are unchanged.
+
 Restoration runs **before fresh source preparation**, only when `WORK/src` is
 absent. All five targets restore the complete upstream source tree and its
 `src/out/Default`, including objects, generated inputs, `build.ninja`,
@@ -936,8 +945,9 @@ Resume an interrupted compile with the same work directory:
 pwsh build/windows/build.ps1 -WorkDir D:\chromix-build -Resume -Jobs 8
 ```
 
-For GitHub Actions, stage 1 defaults to the pinned Windows `build-artifact`
-through `use_upstream_cache`. An optional `upstream_run_id` must equal the run in
+For GitHub Actions, stage 1 prefers the pinned Windows `build-artifact` on push,
+with only the checked artifact-expiry fallback described above. Explicit
+`use_upstream_cache=true` requires restoration. An optional `upstream_run_id` must equal the run in
 `build/upstream-cache.json`; it cannot select an arbitrary upload. The
 `UPSTREAM_ACTIONS_TOKEN` secret grants Actions read access. Windows restores the
 complete pinned source and `out/Default`, appends Chromix patches, and regenerates

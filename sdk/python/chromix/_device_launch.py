@@ -19,9 +19,11 @@ import threading
 from . import device_pool as pool
 from ._device_host import host_inventory
 from ._device_headers import header_errors
+from ._device_probe import probe_source, probe_hash
+from . import _device_fonts as fonts
 
 PROBE = Path(__file__).with_name('device_probe.js')
-DEFAULT_TIMEOUT = 30000
+DEFAULT_TIMEOUT = 120000
 NATIVE_ARGS = ['--fingerprint=off', '--uxr-webgl-real', '--uxr-disable-fingerprint-noise',
                '--no-first-run', '--no-default-browser-check', '--disable-background-networking']
 
@@ -56,6 +58,10 @@ def prepare(options, binary, headless, persistent=None):
         path = Path(path)
         return pool.validate_record(pool.load_json(path), path.parent)
     host = read(options['host'])
+    if host['schema_version'] != pool.SCHEMA_VERSION:
+        raise ValueError('legacy host lacks render admission evidence; recollect with probe v3')
+    if host['provenance'].get('probe_sha256') != probe_hash():
+        raise ValueError('complete device probe changed; recollect host evidence')
     collected = datetime.fromisoformat(host['provenance']['collected_at'])
     hours = (datetime.now(timezone.utc) - collected).total_seconds() / 3600
     if not 0 <= hours <= options['max_age_hours']:
@@ -124,9 +130,14 @@ def verify_observation(observation, prepared):
             errors.append(f'{scope}: live native capabilities differ from selected record')
     if pool.file_hash(prepared['binary']) != prepared['manifest']['browser_sha256']:
         errors.append('browser executable changed during launch')
+    if host_inventory() != prepared['expected']['device']['host']:
+        errors.append('native host inventory changed during launch')
+    if (prepared['expected'].get('schema_version') != pool.SCHEMA_VERSION or
+            prepared['expected']['provenance'].get('probe_sha256') != probe_hash()):
+        errors.append('render/probe provenance changed during launch')
     if errors:
         raise ValueError('; '.join(errors))
-    return {**prepared['manifest'], 'runtime_verified':True,
+    return {**prepared['manifest'], 'runtime_verified':True, 'render_verified':True,
             'rejected':prepared['rejected']}
 
 
@@ -146,7 +157,7 @@ WORKER_EVAL = """async kind => {
       await navigator.serviceWorker.ready;channel=new MessageChannel();port=channel.port1;
       registration.active.postMessage('probe',[channel.port2]);}
     return await new Promise((resolve,reject)=>{
-      timer=setTimeout(()=>reject(Error(kind+' timeout')),15000);
+      timer=setTimeout(()=>reject(Error(kind+' timeout')),60000);
       port.onmessage=e=>e.data.error?reject(Error(e.data.error)):resolve(e.data.value);
       port.onmessageerror=()=>reject(Error('message error'));
       if(worker)worker.onerror=e=>reject(Error(e.message||'worker error'));
@@ -184,7 +195,7 @@ class ProbeHandler(BaseHTTPRequestHandler):
                 content += '<iframe src="/frame"></iframe>'
             mime = 'text/html'
         elif self.path == '/probe.js':
-            content, mime = PROBE.read_text(encoding='utf-8'), 'text/javascript'
+            content, mime = probe_source(), 'text/javascript'
         elif self.path in ASSETS:
             content, mime = ASSETS[self.path], 'text/javascript'
         else:
@@ -202,7 +213,7 @@ class ProbeHandler(BaseHTTPRequestHandler):
             self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
             self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
             self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
-        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'")
         self.end_headers()
         self.wfile.write(data)
 
@@ -233,6 +244,7 @@ def collect_live(context, origin):
         observation['iframe'] = page.frame(url=origin + '/frame').evaluate(PROBE_EVAL)
         for scope in pool.SCOPES[2:]:
             observation[scope] = page.evaluate(WORKER_EVAL, scope)
+        observation['window']['fontBackend'] = fonts.collect(context, page)
         return observation
     finally:
         page.close()
@@ -246,6 +258,7 @@ async def collect_live_async(context, origin):
         observation['iframe'] = await page.frame(url=origin + '/frame').evaluate(PROBE_EVAL)
         for scope in pool.SCOPES[2:]:
             observation[scope] = await page.evaluate(WORKER_EVAL, scope)
+        observation['window']['fontBackend'] = await fonts.collect_async(context, page)
         return observation
     finally:
         await page.close()
@@ -364,7 +377,9 @@ def main():
     try:
         if args.command == 'serve':
             with probe_server() as origin:
-                print(json.dumps({'origin':origin, 'worker_eval':WORKER_EVAL, 'probe_eval':PROBE_EVAL}), flush=True)
+                print(json.dumps({'origin':origin, 'worker_eval':WORKER_EVAL, 'probe_eval':PROBE_EVAL,
+                    'font_eval':fonts.FONT_EVAL, 'font_selector':fonts.FONT_SELECTOR,
+                    'font_cleanup':fonts.FONT_CLEANUP}), flush=True)
                 sys.stdin.readline()
         else:
             request = json.loads(sys.stdin.read())

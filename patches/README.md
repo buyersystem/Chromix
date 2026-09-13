@@ -16,8 +16,8 @@ MediaCapabilities filters can
 only restrict native support, smoothness and power efficiency. GPU templates
 remain synthetic test records rather than a measured full-device pool.
 
-The current series contains **146 patches**. The [public flag contract](../docs/fingerprint-flags.md)
-documents fixed public defaults, GPU platform tuples, independent brand versions,
+The current series contains **148 patches**. The [public flag contract](../docs/fingerprint-flags.md)
+documents fixed public defaults, context-bound GPU presentation, independent brand versions,
 quota, third-party cookies, closed author shadow roots, Windows font metrics,
 voice tables, local WebRTC presentation/auto and noise/off semantics. These are
 source/SDK implementations awaiting a matching rebuilt browser, not evidence
@@ -29,6 +29,12 @@ is applied once in Canvas readback/buffer preparation; disabling it also keeps
 encoded output free of the downstream legacy transform. GPU readback preserves
 native packing, errors and backend bytes instead of a CPU-only rewrite. These
 changes still require a matching Chromium build and browser verification.
+
+`0147` binds WebGL presentation to the actual context backend and retains native
+software identities; `0148` keeps public WebGPU identity native rather than
+inferring its adapter from WebGL. Seed-only GPU templates remain synthetic-only.
+`0031` now skips extra alpha normalization/copying when synthetic noise is off
+or inapplicable, without removing the upstream image constructor's native readback.
 
 - One patch per file, numbered contiguously from `0001`; `series` lists them in
   apply order (`build/apply-patches.sh` / `build/windows/build.ps1` consume it).

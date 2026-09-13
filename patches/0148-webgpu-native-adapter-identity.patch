@@ -1,0 +1,15 @@
+diff --git a/third_party/blink/renderer/modules/webgpu/gpu_adapter_info.cc b/third_party/blink/renderer/modules/webgpu/gpu_adapter_info.cc
+--- a/third_party/blink/renderer/modules/webgpu/gpu_adapter_info.cc
++++ b/third_party/blink/renderer/modules/webgpu/gpu_adapter_info.cc
+@@ -48,6 +48,11 @@
+        !config.Has("uxr-webgl-vendor") && !config.Has("uxr-webgl-renderer")))
+     return;
+   const auto& persona = ungoogled::CurrentPersona();
++  // WebGL names cannot certify this adapter: hybrid systems may select a
++  // different GPU. Public mode keeps the complete native Dawn identity.
++  // Seed/template/explicit WebGPU overrides are synthetic-test-only.
++  if (persona.webgl_native_capabilities)
++    return;
+   const bool explicit_vendor = config.Has("uxr-webgpu-vendor") &&
+       !config.Get("uxr-webgpu-vendor").empty();
+   const bool explicit_architecture =

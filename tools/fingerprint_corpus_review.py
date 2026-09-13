@@ -15,6 +15,7 @@ import re
 import apply_restored_patches as paths
 import device_pool as pool
 from fingerprint_acceptance import read_json
+from chromix._device_probe import probe_hash as current_probe_hash
 
 PROBE = Path(__file__).resolve().parents[1] / 'sdk/python/chromix/device_probe.js'
 SHA256 = re.compile('[0-9a-f]{64}')
@@ -39,7 +40,7 @@ def review(manifest_path, *, now=None):
     now = datetime.now(timezone.utc) if now is None else now
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError('review clock requires timezone')
-    manifest_hash, probe_hash = pool.file_hash(manifest_path), pool.file_hash(PROBE)
+    manifest_hash, probe_hash = pool.file_hash(manifest_path), current_probe_hash()
     manifest = read_json(manifest_path)
     if (not isinstance(manifest, dict) or set(manifest) != {
             'schema_version', 'browser_version', 'probe_sha256', 'max_age_days', 'cohorts', 'samples'} or
@@ -115,9 +116,9 @@ def review(manifest_path, *, now=None):
             if (provenance.get('browser_version') != version or browser.get('browser_versions') != [version] * 3 or
                     provenance.get('probe_sha256') != probe_hash or browser.get('probe_sha256') != probe_hash):
                 raise ValueError('missing or mismatched browser-version/probe provenance; recollect the bundle')
-            if any(scope.get('probeVersion') != 2 for observation in browser['observations']
+            if record['schema_version'] != pool.SCHEMA_VERSION or any(scope.get('probeVersion') != 3 for observation in browser['observations']
                    for scope in observation.values()):
-                raise ValueError('every context requires probe v2 evidence')
+                raise ValueError('schema v2 and probe v3 rendering evidence are required in every context')
             collected = timestamp(provenance['collected_at'])
             reviewed, expires = timestamp(sample['reviewed_at']), timestamp(sample['expires_at'])
             if not collected <= reviewed <= now < expires:
@@ -133,7 +134,8 @@ def review(manifest_path, *, now=None):
             seen_devices.add(device)
             row.update(record_id=record['record_id'], cohort_id=sample['cohort_id'], device_id=sample['device_id'],
                        reviewer=sample['reviewer'], sample_kind=sample['sample_kind'],
-                       gpu_inventory_sha256=pool.digest(host['gpu']), font_inventory_sha256=pool.digest(host['fonts']))
+                       gpu_inventory_sha256=pool.digest(host['gpu']), font_inventory_sha256=pool.digest(host['fonts']),
+                       render_evidence_sha256=record['evidence']['render']['sha256'])
             # Controls and templates may accompany a review for calibration, but
             # never inflate the physical-device count or synthetic pool weights.
             if sample['sample_kind'] != 'physical':
@@ -152,7 +154,7 @@ def review(manifest_path, *, now=None):
     for path, before in fingerprints.items():
         if pool.file_hash(path) != before:
             report['errors'].append('input changed during review: ' + str(path))
-    if pool.file_hash(manifest_path) != manifest_hash or pool.file_hash(PROBE) != probe_hash:
+    if pool.file_hash(manifest_path) != manifest_hash or current_probe_hash() != probe_hash:
         report['errors'].append('manifest or device probe changed during review')
     report['status'] = 'failed' if report['errors'] else 'passed'
     return report

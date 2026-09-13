@@ -191,4 +191,4 @@ def test_native_smoke_does_not_enable_synthetic_paths():
     from test_fingerprint_smoke import smoke, scenario
     for mode in ('native', 'on', 'off'):
         args = smoke.browser_args(scenario(mode), 'http://127.0.0.1:9876', False)
-        assert ('--uxr-synthetic-device-tests=true' in args) == (mode != 'native')
+        assert ('--uxr-synthetic-device-tests=true' in args) == (mode == 'on')

@@ -20,8 +20,8 @@ all injected. `--fingerprint=off` disables persona overrides as described below.
 |---|---|
 | `--fingerprint=<seed>` | Nonzero decimal uint64 seed. Bare `--fingerprint` generates a seed. SDK persistent profiles reuse their saved seed; nonpersistent SDK launches generate a seed. |
 | `--fingerprint-platform` | `windows` / `Win32`, `macos` / `MacIntel`, `linux` / `Linux x86_64`. Same-OS generic aliases retain native high-entropy OS fields; cross-OS aliases use declared desktop defaults. |
-| `--fingerprint-gpu-vendor` | WebGL `UNMASKED_VENDOR_WEBGL`; absent values are selected with the renderer from a seed/platform template. |
-| `--fingerprint-gpu-renderer` | WebGL `UNMASKED_RENDERER_WEBGL`; coherent template selection also supplies known WebGPU vendor/architecture fields. Real software/fallback WebGPU adapters stay native. |
+| `--fingerprint-gpu-vendor` | Explicit WebGL `UNMASKED_VENDOR_WEBGL` presentation on nonsuppressed contexts. Seed-only launches stay native; detected software contexts always retain native identity. |
+| `--fingerprint-gpu-renderer` | Explicit WebGL `UNMASKED_RENDERER_WEBGL` presentation under the same per-context guard. Public WebGPU keeps its complete native Dawn identity, independently of WebGL. |
 | `--fingerprint-hardware-concurrency` | `navigator.hardwareConcurrency`, default **8**; SDK accepts integers 1–128. Does not allocate or emulate CPU cores. |
 | `--fingerprint-device-memory` | `navigator.deviceMemory`, default **8 GB**; positive values up to 32 are rounded to the nearest supported bucket: 0.25, 0.5, 1, 2, 4, 8, 16, 32. Does not change V8 heap limits. |
 | `--fingerprint-screen-width` | Default **1920** on Windows/Linux, **1440** on macOS. DIP screen geometry uses the launch display backend, not isolated screen getters. |
@@ -49,13 +49,25 @@ geometry mode. Use `--key=value`, not two separate arguments.
 
 ## Identity templates are not a measured device pool
 
-GPU identities are selected as platform-compatible tuples: three Windows,
-three Linux, three macOS ARM and two macOS Intel templates. Their weights are
-deterministic test choices, **not measured market shares**. Recognized one-sided
-GPU hints select a compatible counterpart. Unknown one-sided identities leave
-the missing side empty rather than borrowing an unrelated native identity.
-Complete explicit vendor/renderer pairs remain the caller's values; unknown
-WebGPU architecture/device/driver fields are not invented.
+Ordinary seeded launches no longer present a generated GPU template. Synthetic
+tests retain platform-compatible tuples: three Windows, three Linux, three
+macOS ARM and two macOS Intel templates. Their weights are deterministic test
+choices, **not measured market shares**. Explicit public WebGL hints remain
+presentation-only: recognized one-sided hints select a compatible counterpart;
+unknown one-sided hints leave the missing side empty rather than borrowing an
+unrelated native identity. Complete explicit pairs remain the caller's values
+only when the context guard permits presentation.
+
+Patches `0101`/`0102` and `0147` use the actual drawing buffer's provider metadata
+and unmodified `GL_RENDERER`. ANGLE SwiftShader/WARP/null, Microsoft Basic Render
+Driver and recognized native software renderers suppress overrides, even with
+GPU compositing enabled. Context restoration rechecks the current provider; it
+does not mutate the launch persona or poison another context's identity.
+
+Patch `0148` preserves the complete native Dawn adapter identity in public mode,
+including when WebGL strings were explicitly configured. WebGL and WebGPU may
+legitimately use different GPUs on hybrid systems. WebGPU template/explicit
+identity overrides require synthetic mode; fallback adapters still stay native.
 
 Public GPU identity flags preserve actual GL limits, extensions, shader
 precision, readback and Dawn capabilities. Changing a string does not provide
@@ -63,7 +75,7 @@ another GPU backend. CPU/RAM getters similarly do not change scheduling,
 SIMD/Wasm support or allocation limits.
 
 The older independently seeded hardware/display and GL-capability test paths
-still require `--uxr-synthetic-device-tests=true`. They are separate from the
+and GPU identity templates require `--uxr-synthetic-device-tests=true`. They are separate from the
 public fixed defaults above. Legacy font substitutions and Canvas readback/
 export noise also remain synthetic-test opt-ins. WebGL/audio/client-rect
 getter-only perturbations have **not** been restored by this compatibility work.

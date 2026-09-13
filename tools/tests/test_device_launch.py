@@ -12,7 +12,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from chromix import _device_launch as launch
-from test_device_pool import bundle, observation, seal
+from test_device_pool import seal
+from test_device_render import bundle, observation, refresh_render
 
 
 @pytest.fixture
@@ -28,6 +29,7 @@ def measured(tmp_path, monkeypatch):
     record['evidence']['browser']['sha256'] = launch.pool.file_hash(browser_path)
     record['provenance'].update(browser_sha256=launch.pool.file_hash(binary),
                                 collected_at=datetime.now(timezone.utc).isoformat())
+    refresh_render(record, tmp_path, browser)
     path = tmp_path / 'record.json'
     def save():
         path.write_text(json.dumps(seal(record)))
@@ -71,7 +73,8 @@ def test_native_fallback_and_whole_record(measured):
     prepared = launch.prepare({**measured.options, 'records':[]}, measured.binary, True)
     assert prepared['manifest']['status'] == 'native'
     assert prepared['expected'] == measured.record
-    assert launch.verify_observation(observation(), prepared)['runtime_verified']
+    verified = launch.verify_observation(observation(), prepared)
+    assert verified['runtime_verified'] and verified['render_verified']
 
 
 def test_runtime_mismatch_and_executable_change(measured):
@@ -83,6 +86,22 @@ def test_runtime_mismatch_and_executable_change(measured):
     measured.binary.write_bytes(b'changed')
     with pytest.raises(ValueError, match='executable changed'):
         launch.verify_observation(observation(), prepared)
+
+
+@pytest.mark.parametrize('fault', ['host', 'probe', 'render', 'font'])
+def test_live_render_and_provenance_are_rechecked(measured, monkeypatch, fault):
+    prepared = launch.prepare(measured.options, measured.binary, True)
+    current = observation()
+    if fault == 'host':
+        monkeypatch.setattr(launch, 'host_inventory', lambda: {})
+    elif fault == 'probe':
+        monkeypatch.setattr(launch, 'probe_hash', lambda: 'a'*64)
+    elif fault == 'render':
+        current['worker']['render']['value']['data'] = 'forged'
+    else:
+        current['window']['fontBackend']['value']['samples'][0]['platformFonts'] = []
+    with pytest.raises(ValueError):
+        launch.verify_observation(current, prepared)
 
 
 def test_profile_atomic_binding_and_no_rotation(tmp_path):

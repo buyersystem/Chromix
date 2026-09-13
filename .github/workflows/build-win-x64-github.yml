@@ -28,7 +28,14 @@ on:
       - 'tools/verify_patch_stack.py'
       - 'tools/device_p0_audit.py'
       - 'tools/canvas_chain_audit.py'
-      - 'sdk/python/chromix/device_probe.js'
+      - 'tools/collect_device.py'
+      - 'tools/device_pool.py'
+      - 'sdk/python/chromix/_device*.py'
+      - 'sdk/python/chromix/device_pool.py'
+      - 'sdk/python/chromix/_canvas_chain.py'
+      - 'sdk/python/chromix/_render_integration.py'
+      - 'sdk/python/chromix/*.js'
+      - 'sdk/python/pyproject.toml'
       - '.github/workflows/build-win-x64-github.yml'
       - 'CHROMIUM_VERSION'
       - 'UNGOOGLED_VERSION'
@@ -134,7 +141,10 @@ concurrency:
 env:
   CHROMIX_BUILD_PROFILE: ${{ inputs.build_profile || 'native' }}
   CHROMIX_JOBS: ${{ inputs.compile_jobs || 'auto' }}
-  CHROMIX_USE_UPSTREAM_CACHE: ${{ (github.event_name == 'push' || inputs.use_upstream_cache || inputs.upstream_run_id != '') && '1' || '0' }}
+  # Pushes prefer the pinned cache, but its normal artifact expiry may use the
+  # pinned cold-source pipeline. Explicit cache requests remain fail-closed.
+  CHROMIX_USE_UPSTREAM_CACHE: ${{ (inputs.use_upstream_cache || inputs.upstream_run_id != '') && '1' || '0' }}
+  CHROMIX_PREFER_UPSTREAM_CACHE: ${{ github.event_name == 'push' && '1' || '0' }}
   DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
   DEPOT_TOOLS_METRICS: '0'
   DEPOT_TOOLS_COLLECT_METRICS: '0'
@@ -162,7 +172,7 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_ACTIONS_TOKEN || github.token }}
-          USE_UPSTREAM_CACHE: ${{ github.event_name == 'push' || inputs.use_upstream_cache }}
+          USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
           $stageArgs = @{

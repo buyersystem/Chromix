@@ -4,10 +4,84 @@ This record tracks the implementation requested by `/root/fingerprint-p0-p2-back
 
 ## Acceptance rules
 
-### 2026-09-13 update — public feature compatibility
+### 2026-09-13 update — render evidence and Win64 cache repair
+
+The current source series contains **148 patches**. This update supersedes the
+earlier public GPU-template description; it is implementation evidence, not
+native-build or physical-device acceptance.
+
+- `0101`/`0102` and `0147` bind WebGL presentation to the actual drawing buffer
+  metadata and unmodified native renderer. Seed-only public identities stay
+  native. Explicit presentation is suppressed for detected software contexts;
+  hardware compositing alone does not certify a hardware WebGL context.
+  Unknown one-sided identities do not borrow an unrelated native counterpart.
+- `0148` retains the complete native Dawn adapter identity in public mode.
+  WebGL and WebGPU are not assumed to select the same GPU. Synthetic identity
+  templates remain opt-in, with native fallback adapters preserved.
+- `0031` skips private copying/extra alpha normalization when synthetic 8-bit
+  noise is disabled or inapplicable, including F16. The upstream image
+  constructor's required readback/conversion and failure behavior are unchanged.
+- Measured records use **schema v2 / probe v3** with `host.json`, `browser.json`
+  and independently derived `render.json`. All four packaged probe assets are
+  hashed together; compressed raw matrices are bounded and independently checked.
+  Canvas/ICC/codec contracts, richer glyph/raster scenes, WebGL1/2 precision,
+  shader/format/MSAA and WebGPU external-image/render/readback operations share
+  validators between collection and Python/Node live admission.
+- CDP records actual platform face/PostScript names and glyph counts for 20
+  samples. Host/GPU/font inventories are bound and rechecked. Exact font-file
+  binding and physical backend equivalence remain `not_verified`.
+- Schema-v1 evidence remains archive-readable but cannot qualify for selection,
+  live-host preflight or corpus review. No universal cross-context GPU identity
+  or per-profile pixel uniqueness is fabricated. Optional gaps and lossy codec
+  quality diagnostics remain explicit; individual lossless/alpha/OOB contracts
+  are mandatory. Embedded taint remains a standalone-audit requirement.
+- Automatic Windows pushes prefer the pinned upstream cache. Only a validated
+  metadata-phase artifact-expiry miss, with no source tree, permits a cold build
+  of the pinned Chromium source in `out/Chromix`. Explicit cache/run-ID requests
+  still require restoration; provenance, digest, download, extraction and
+  interrupted-restore failures cannot silently fall back.
+
+Local verification for this update:
+
+| Check | Result |
+|---|---|
+| Patch lint | All **148** patches pass |
+| Measured evidence/live/corpus, Canvas/integration validators, final GPU identity and WebGL contracts | **367 passed** |
+| GPU/Canvas extracted C++ and consistency regressions | **813 passed, 64 skipped** |
+| Python SDK and acceptance-orchestrator regressions | **327 passed, 3 skipped** |
+| Windows cache/required-cache/stage-budget policy | **30 passed, 52 subtests passed** |
+| Node SDK | **271 passed, 2 skipped** |
+| Python wheel | Built and installed into isolated scratch; seven evidence/launch modules, four JS assets and `measured` extra verified |
+| Syntax/whitespace | Python, shared JS, Windows PowerShell, workflow YAML and `git diff --check` pass |
+
+Compiled Canvas harnesses retain **ASan and UBSan** with compiler-matched LLVM
+runtimes; F16 tests exercise actual half conversion. Skips require unavailable
+source/build/platform prerequisites and are not passes. Test pixel/codec/device
+fixtures are invented, never physical corpus samples. A broader CI-test attempt
+on this Windows host was **not green** (77 failed, 113 passed, 8 skipped, 465
+subtests passed); POSIX execution and restored-build fixture failures are not
+certified as pre-existing by a clean baseline comparison. Targeted results do
+not replace that failure or establish a passing whole-repository suite.
+
+Stock Chrome **153.0.8010.37** control evidence remains local under
+`tmp_build/render-v3/control-02/`: three launches pass the richer scene matrix
+in all five scopes, integration in window/iframe, and all 20 CDP font samples.
+The shared Canvas chain still reports **258 failed checks per launch**, plus
+18 lossy quality diagnostics. These are checks, not distinct defect counts.
+Collection is rejected; no qualified measured record or hardware corpus was
+produced. This executable is not the patched Chromium **152.0.7977.82** target.
+
+The preceding Windows run
+[34710136829](https://github.com/xiaozhou26/Chromix/actions/runs/34710136829)
+failed on expired upstream artifact metadata **before compilation**. The cache
+repair is ready for a new cloud build; starting that build is not successful
+compilation. No matching native browser acceptance or clean full-stack source
+receipt is claimed. `.chromix-build-win/src` remains a read-only, mixed reference.
+
+### Earlier 2026-09-13 update — public feature compatibility
 
 The requested [public flag table](docs/fingerprint-flags.md) is implemented in
-the current **146-patch** source series and Python/Node SDKs. It supersedes the
+the then-current **146-patch** source series and Python/Node SDKs. It supersedes the
 earlier native-default/retired-IP descriptions below where noted:
 
 - `--fingerprint` supplies CPU/RAM 8/8, platform screen/taskbar defaults and
@@ -142,7 +216,7 @@ A standalone C++ test with stubs checks the extracted algorithm or getter contra
 | Intl / ICU | Move locale initialization before JS use rather than changing process-global ICU state from a language getter. | Default and explicit locale/calendar/numbering/hour-cycle cases across all contexts; ICU fallback, timezone initialization, and restart tests. |
 | Canvas | Coordinate-correct RGBA/BGRA readback, transparent-pixel preservation and private-copy encoding; suppress duplicate upstream noise. Async idle/worker/thread-pool encoding prepares and owns one buffer, with failure completion and late-task guards. | Native browser PNG/JPEG/WebP and ImageBitmap results, F16 privacy, transformed color-space/premultiplication agreement, and common WebGL/WebGPU origin/profile seed isolation remain open. |
 | WebAudio | Native AudioBuffer/silence/analyser/sample rate; new audit executes OfflineAudioContext oscillator/compressor and mutable PCM. | Graph-level privacy, physical output/channel/latency qualification and matching-build validation. Getter-only noise is not a graph-level solution. |
-| WebGPU | Feature allowlists intersect real support; explicit empty sets deny features, and embedded NUL tokens cannot alias valid names. Adapter/device limits and alignment validation retain Dawn semantics. Native preferred format preserves interoperability. Platform identity templates use known vendor/architecture tuples; unknown explicit metadata stays empty and software fallback stays native. | Subgroup data and real canvas configure/copy/map/request tests remain unverified on hardware. Windows/Linux/macOS GPU identities are templates, not measured-device samples or market-share weights. |
+| WebGPU | Feature allowlists intersect real support; explicit empty sets deny features, and embedded NUL tokens cannot alias valid names. Adapter/device limits and alignment validation retain Dawn semantics. Native preferred format preserves interoperability. Public adapter identity stays wholly native; identity templates are synthetic-only and software fallback stays native. | Subgroup data and real canvas configure/copy/map/request tests remain unverified on matching hardware. Windows/Linux/macOS GPU templates are not measured-device samples or market-share weights. |
 | Screen / Window / Viewport | Launch-time emulation backend; validated work area, viewport, DPR and signed position; one effective screen, ScreenDetails/events and OOPIF propagation. Getter-only substitutions retired. | Matching-build layout/compositor/input tests, CDP clear/override, fullscreen, orientation and physical monitor transitions. No extra physical monitors are emulated. |
 | Performance Timing | Remove the recursive synthetic network-phase fallback and preserve native ordering/zero rules. | Navigation/resource/paint/event/longtask/worker/RAF precision and background lifecycle tests. |
 
@@ -154,7 +228,7 @@ A standalone C++ test with stubs checks the extracted algorithm or getter contra
 | Codecs / MSE / EME | MediaCapabilities filters intersect native results, including WebRTC callbacks and missing-history fallback; EME fallback retains key-system access. Mixed recording configs also check their audio codec. MediaRecorder MIME queries remain native, and synchronous encoder-start failure restores inactive state. A shared codec policy across playback, MSE, EME, WebRTC and actual decoding remains open. Queries and standalone callback tests do not verify a real encoder/decoder. |
 | Storage | Renderer-only quota replacement remains removed. Patch 0129 adds launch-local browser quota policy for estimates, bucket allocation and writes; DevTools overrides win and usage/individual limits remain native. Enforcement, persistence and IndexedDB/Cache partitioning need matching-browser tests. |
 | Network Information | Removed RTT/downlink-only overrides so getters, cached state, effectiveType, saveData and native change events share the notifier again. Real network transitions and any future notifier-level test policy remain unverified. |
-| Font provenance | Native font selection; legacy whitelist/substitution/fallback require synthetic-test opt-in. Public Windows metric alignment on Linux requires an actual matching family/table. Probe v2 and CDP audit record samples and glyph counts. DirectWrite equivalence and file-to-glyph binding remain open. |
+| Font provenance | Native font selection; legacy whitelist/substitution/fallback require synthetic-test opt-in. Public Windows metric alignment on Linux requires an actual matching family/table. Probe v3 collection/live admission includes CDP faces and glyph counts alongside installed file inventories. DirectWrite equivalence and file-to-glyph binding remain open. |
 | Plugins / MIME / PDF | A reported PDF plugin cannot create a missing/disabled viewer. Verify actual PDF display and extension exposure. |
 | Input / device capabilities | Keyboard map overrides do not change actual key/code input. Touch/pointer CSS, gamepad, orientation, motion, and sensors remain open. |
 | CSS media features | Existing overrides cover selected preferences, not full gamut/HDR rendering, print media, scrollbars, and layout. |
@@ -187,14 +261,16 @@ Measured selection now gates the Python sync/async and Node context/persistent
 launch APIs, rejects field overrides, binds persistent record/seed manifests and
 verifies all five contexts before returning them. Measured mode keeps native
 geometry and `--fingerprint=off`. Public mode separately supplies fixed CPU/RAM/
-screen/quota defaults and platform GPU identity templates. Independent seeded
-CPU/RAM/display and GL-capability pools require `--uxr-synthetic-device-tests=true`,
+screen/quota defaults, while seed-only GPU identity remains native. Independent seeded
+CPU/RAM/display, GPU identity and GL-capability pools require `--uxr-synthetic-device-tests=true`,
 as do legacy font substitution/whitelisting. Public explicit CPU/RAM/GPU identity
-flags no longer require that flag. Heap limits and GL/Dawn capabilities remain
+flags no longer require that flag, but detected software WebGL contexts suppress
+presentation and public WebGPU identity stays native. Heap limits and GL/Dawn capabilities remain
 native; these overrides are not cross-device backend emulation.
 No reviewed real-hardware pool or cross-device backend emulation is bundled.
-Stock Chrome launch workflow tests pass; matching native Chromix build acceptance
-and real wire capture validation remain open.
+Historical stock Chrome launch workflow tests passed before probe v3. The new
+stock control is rejected by Canvas-chain admission; matching native Chromix
+build acceptance and real wire capture validation remain open.
 
 The GPU identity templates cover Windows/Linux/macOS, but are not a measured full-device corpus or population distribution. Seed stability does not turn independently configured fields into real device samples.
 

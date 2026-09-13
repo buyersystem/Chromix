@@ -7,6 +7,7 @@ CHROMIX_CANVAS_SOURCE_ROOT; they never modify either input tree.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 import re
 import shutil
@@ -20,6 +21,40 @@ ROOT = Path(__file__).resolve().parents[2]
 PATCH_BIN = shutil.which("gpatch") or shutil.which("patch")
 CXX = os.environ.get("CXX") or shutil.which("clang++") or shutil.which("g++")
 BASELINE = ROOT / ".chromix-build-verify/sparse-real110-81cwzua4/context-repair/linux/upstream"
+
+
+@lru_cache(maxsize=1)
+def compiler_runtime():
+    if os.name != 'nt':
+        return None
+    result = subprocess.run([CXX, '-print-resource-dir'], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    return Path(result.stdout.strip()) / 'lib/windows'
+
+
+def sanitizer_flags():
+    flags = ['-fsanitize=address,undefined', '-fno-sanitize-recover=all']
+    runtime = compiler_runtime()
+    if runtime is not None:
+        # Pin LLVM's runtime before similarly named Visual Studio libraries.
+        # Keep ASan/UBSan and actual half conversion enabled on Windows.
+        flags.extend(['-fms-runtime-lib=static', '-Xlinker', f'/LIBPATH:{runtime}'])
+        for name in ('clang_rt.builtins-x86_64.lib', 'clang_rt.ubsan_standalone-x86_64.lib',
+                     'clang_rt.ubsan_standalone_cxx-x86_64.lib'):
+            path = runtime / name
+            assert path.is_file(), f'missing compiler-matched runtime: {path}'
+            flags.append(str(path))
+    return flags
+
+
+def sanitizer_env():
+    result = dict(os.environ)
+    runtime = compiler_runtime()
+    if runtime is not None:
+        dll = runtime / 'clang_rt.asan_dynamic-x86_64.dll'
+        assert dll.is_file(), f'missing compiler-matched ASan DLL: {dll}'
+        result['PATH'] = str(runtime) + os.pathsep + result.get('PATH', '')
+    return result
 
 
 def patch_path(number):
@@ -113,7 +148,7 @@ def test_includes_and_bounded_scope(patched_sources):
     assert patched_sources["0031"].count("UxrCopyAndNoiseEncodeBuffer(pixmap_, retained_image_)") == 2
     series = [line.strip() for line in (ROOT / "patches/series").read_text().splitlines()
               if line.strip() and not line.lstrip().startswith("#")]
-    assert [Path(line).name[:4] for line in series] == [f"{i:04d}" for i in range(1, 127)]
+    assert [Path(line).name[:4] for line in series] == [f"{i:04d}" for i in range(1, len(series) + 1)]
     for number in ("0020", "0031"):
         assert series[int(number) - 1] == patch_path(number).relative_to(ROOT).as_posix()
 
@@ -170,7 +205,7 @@ def runtime_binary(tmp_path_factory, patched_sources):
                       noise + "}\n" + constructors + "\n}  // namespace blink\n" + CPP_TESTS)
     binary = directory / "canvas"
     result = subprocess.run([CXX, "-std=c++20", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
-                             "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
+                             *sanitizer_flags(),
                              str(source), "-o", str(binary)], text=True, capture_output=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     return binary
@@ -178,9 +213,10 @@ def runtime_binary(tmp_path_factory, patched_sources):
 
 @pytest.mark.parametrize("case", ["transparent-oob", "coordinates", "channels", "native", "padding",
                                   "constructors", "lifetime", "failures", "repeat", "uint64-seeds",
-                                  "uint64-high-bits", "legacy-seeds", "default-native"])
+                                  "uint64-high-bits", "legacy-seeds", "default-native", "native-alpha"])
 def test_extracted_noise_and_copy(runtime_binary, case):
-    result = subprocess.run([str(runtime_binary), case], text=True, capture_output=True, timeout=15)
+    result = subprocess.run([str(runtime_binary), case], text=True, capture_output=True, timeout=15,
+                            env=sanitizer_env())
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -580,6 +616,23 @@ int main(int argc, char** argv) {
       CheckPixels(original, encoded->pixmap_, 0, 0, seed);
       assert(Bytes(read.pm()) == Bytes(encoded->pixmap_));
     }
+  } else if (test == "native-alpha") {
+    auto& config = base::UxrConfig::GetInstance();
+    for (auto ct : {kRGBA_8888_SkColorType, kBGRA_8888_SkColorType, kRGBA_F16_SkColorType})
+      for (auto alpha : {kUnpremul_SkAlphaType, kPremul_SkAlphaType, kOpaque_SkAlphaType})
+        for (int mode = 0; mode < 5; ++mode) {
+          config.synthetic = mode != 0; config.disabled = mode == 1;
+          config.seed = mode < 2 ? "12345" : mode == 2 ? "" : mode == 3 ? "invalid" : "0";
+          // The F16 row stride must remain aligned to its eight-byte pixels.
+          Fixture f(ct, 7, 4, 16); f.info.at = alpha; auto before = f.bytes;
+          auto pm = f.pm(); allocation_count = raster_count = 0;
+          auto encoded = ImageDataBuffer::Create(pm); assert(encoded);
+          assert(encoded->pixmap_.addr() == pm.addr());
+          assert(encoded->pixmap_.rowBytes() == pm.rowBytes());
+          assert(encoded->pixmap_.info().alphaType() == alpha);
+          assert(allocation_count == 0 && raster_count == 0);
+          assert(f.bytes == before);
+        }
   } else if (test == "default-native") {
     auto& config = base::UxrConfig::GetInstance();
     config.synthetic = false;

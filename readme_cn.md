@@ -286,7 +286,7 @@ Node.js 顶层 `executablePath` 也不是该包装层的下载绕过选项；`la
 | ungoogled-chromium-windows | `152.0.7977.82-1.1` |
 | ungoogled-chromium-portablelinux | `152.0.7977.82-1` |
 | ungoogled-chromium-macos | `152.0.7977.82-1.1` |
-| Chromix | [patches/series](patches/series) 中的 146 个补丁 |
+| Chromix | [patches/series](patches/series) 中的 148 个补丁 |
 
 完整提交固定值见 [build/ungoogled-revisions.psd1](build/ungoogled-revisions.psd1)。
 

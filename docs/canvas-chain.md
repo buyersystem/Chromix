@@ -15,6 +15,12 @@ The older fingerprint smoke runner explicitly opts its non-native scenarios
 into synthetic mode to retain the meaning of its seed-effect tests. Its native
 control and this audit do not enable the synthetic flag.
 
+The 2026-09-13 `0031` correction skips private copying and extra alpha
+normalization whenever 8-bit synthetic noise does not apply, including F16,
+disabled/invalid seeds and ordinary public mode. Borrowed pixmaps retain their
+native alpha type. The upstream image constructor's own required readback and
+unpremultiplication are unchanged; failed native conversions still fail.
+
 ## Run
 
 Requires Python, Playwright and Pillow with WebP and LittleCMS support. No
@@ -31,6 +37,12 @@ profile A twice and fresh profile B once. Temporary profiles and servers are
 closed even on failure. It uses `NATIVE_ARGS` from `_device_launch.py`, not an OS
 network sandbox. Browser/probe hashes, browser and decoder versions, launch
 arguments, raw pixels, encoded images and per-comparison metrics are recorded.
+
+Canonical source now ships as `sdk/python/chromix/canvas_chain_probe.js`; the
+independent oracle is `chromix._canvas_chain`. The standalone runner uses these
+same implementations instead of maintaining another probe copy. Its source
+hash is that standalone asset; the measured-device probe hashes all four
+concatenated assets, as described in [device-pool.md](device-pool.md).
 
 Exit 0 requires all tested paths to pass without unavailable optional cases.
 Missing optional P3/F16 support produces `incomplete` and a nonzero exit; a
@@ -63,6 +75,13 @@ limits: chroma subsampling can fail them without a fingerprint patch defect.
 PNG independent color-managed comparison uses the lossless bounds; decoder
 rounding differences remain reported instead of being silently accepted.
 
+Schema-v2 measured admission embeds this oracle in probe v3 across all five
+scopes. It keeps individual lossless/alpha/OOB contracts, records lossy quality
+failures as diagnostics and permits different native backends between contexts.
+Embedded taint is explicitly `not_collected`; the standalone runner still
+requires taint, cross-context comparison and its stricter optional-case result.
+Neither mode creates profile-distinct pixels or labels a fixture as hardware.
+
 ## Evidence And Limits
 
 The 2026-09-10 local run uses installed Chrome 153.0.8010.37, not a verified
@@ -89,14 +108,23 @@ path. A broader run including CI-stage tests has one separate reproducible
 failure: the Rust missing-bundle test invokes `python3` on this Windows host and
 receives no expected diagnostic. That test was not changed or counted as passing.
 
+The newer stock Chrome 153 control (`tmp_build/render-v3/control-02/`,
+2026-09-13) passes the added rich-scene/GPU matrix and CDP font-face collection,
+but still fails shared-chain alpha:false/OOB/history checks: 258 failed checks
+and 18 lossy quality diagnostics per launch. All three launches are retained;
+no qualified pool record is produced. This is not a patched Chromium 152 test.
+Current offline counts are recorded in `FINGERPRINT_STATUS.md`; the counts above
+describe the earlier standalone run only.
+
 Passing offline tests only validate the oracle, malformed-evidence rejection
 and extracted C++ contracts. Their generated codec fixtures are not physical
 device samples. A full native Chromium build and full patch-chain application
 have not been rerun for these latest Canvas changes.
 
-Still open: bitmaprenderer, transferControlToOffscreen across worker ownership,
-ImageBitmap crop/resize/flip, wide-gamut/HDR F16 values, context loss/restoration,
-parallel exports and source mutation while encoding, software/GPU backend
-comparison, encoder quality boundaries and a shared backend-level privacy
-policy. This audit deliberately does not claim these paths are complete or that
-native fallback provides profile-distinct rendering identities.
+The packaged integration companion now exercises bitmaprenderer, transferred
+OffscreenCanvas ownership, concurrent call-time exports and context
+loss/restoration. The scene companion adds GPU/bitmap roundtrips with explicit
+orientation. These bounded probes do not complete ImageBitmap crop/resize/flip
+coverage, wide-gamut/HDR F16, software-versus-hardware validation, encoder quality
+boundaries or a shared backend-level privacy policy. All still require acceptance
+on matching builds; native fallback does not provide profile-distinct pixels.

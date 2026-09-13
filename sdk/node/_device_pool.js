@@ -80,6 +80,35 @@ export function probeExpression(script, argument = null) {
   return `(${script})(${JSON.stringify(argument)})`;
 }
 
+export async function collectFontSources(context, page, server) {
+  let session;
+  try {
+    const samples = await page.evaluate(probeExpression(server.font_eval));
+    session = await context.newCDPSession(page);
+    await session.send('DOM.enable'); await session.send('CSS.enable');
+    const { root } = await session.send('DOM.getDocument');
+    const { nodeIds } = await session.send('DOM.querySelectorAll',
+      { nodeId: root.nodeId, selector: server.font_selector });
+    if (nodeIds.length !== samples.length) throw new Error('platform font node count changed');
+    for (let i = 0; i < samples.length; ++i) {
+      const { fonts } = await session.send('CSS.getPlatformFontsForNode', { nodeId: nodeIds[i] });
+      // Match Python's ordinal ordering, independent of the host locale.
+      const cmp = (a, b) => {
+        const ac = Array.from(a, c => c.codePointAt(0)), bc = Array.from(b, c => c.codePointAt(0));
+        for (let j = 0; j < Math.min(ac.length, bc.length); ++j)
+          if (ac[j] !== bc[j]) return ac[j] - bc[j];
+        return ac.length - bc.length;
+      };
+      samples[i].platformFonts = fonts.sort((a, b) => cmp(a.familyName, b.familyName) ||
+        cmp(a.postScriptName, b.postScriptName) || a.glyphCount - b.glyphCount);
+    }
+    return { status: 'observed', value: { source: 'CDP.CSS.getPlatformFontsForNode',
+      samples, fileBinding: 'not_verified' } };
+  } finally {
+    try { await session?.detach(); } finally { await page.evaluate(server.font_cleanup); }
+  }
+}
+
 export async function launchMeasured(chromium, binary, options) {
   const { python, pool } = measuredOptions(options);
   const headless = options.headless ?? true;
@@ -107,6 +136,7 @@ export async function launchMeasured(chromium, binary, options) {
         iframe: await page.frame({ url: server.origin + '/frame' }).evaluate(probe) };
       for (const scope of ['worker', 'shared_worker', 'service_worker'])
         observation[scope] = await page.evaluate(probeExpression(server.worker_eval, scope));
+      observation.window.fontBackend = await collectFontSources(context, page, server);
     } finally { await page.close(); }
     context.chromixDeviceProfile = await bridge(python, 'verify', { observation, prepared });
     await server.stop(); server = null;

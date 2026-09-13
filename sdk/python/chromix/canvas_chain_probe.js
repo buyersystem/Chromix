@@ -1,5 +1,5 @@
 /* Real API operations; pixel evidence is validated independently by Python. */
-globalThis.canvasChainProbe = async () => {
+globalThis.canvasChainProbe = async ({taint = true} = {}) => {
   const width = 32, height = 24;
   const equal = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
   const require = (ok, why) => { if (!ok) throw Error(why); };
@@ -113,6 +113,7 @@ globalThis.canvasChainProbe = async () => {
     const empty = make('html'); empty.width = 0;
     result.zeroURL = empty.toDataURL();
     result.zeroCallback = await new Promise(resolve => empty.toBlob(b => resolve(b === null)));
+    if (!taint) { result.taint = {status:'not_collected'}; return result; }
     // No CORS header on this second loopback origin: security behavior must remain native.
     const img = new Image(); img.src = globalThis.canvasTaintURL;
     await img.decode();

@@ -1,25 +1,65 @@
 diff --git a/third_party/blink/renderer/modules/webgl/gpu_fingerprint.cc b/third_party/blink/renderer/modules/webgl/gpu_fingerprint.cc
+new file mode 100644
 --- /dev/null
 +++ b/third_party/blink/renderer/modules/webgl/gpu_fingerprint.cc
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,60 @@
 +#include "third_party/blink/renderer/modules/webgl/gpu_fingerprint.h"
 +
++#include <initializer_list>
++
++#include "base/strings/string_util.h"
 +#include "components/ungoogled/persona_profile.h"
 +
 +namespace blink {
++namespace {
 +
-+std::string GetGLVendorStringForFingerprint() {
++bool CanPresentWebGLIdentity(const Platform::WebGLContextInfo& info,
++                            std::string_view native_renderer) {
 +  const auto& persona = ungoogled::CurrentPersona();
-+  if (!persona.webgl_real)
-+    return persona.webgl_vendor;
-+  return "";
++  if (persona.webgl_real || native_renderer.empty())
++    return false;
++  // Seeded templates describe synthetic test devices, not the active adapter.
++  // Public explicit strings remain presentation-only; measured mode is native.
++  if (persona.webgl_native_capabilities && !persona.webgl_identity_explicit)
++    return false;
++  switch (info.angle_implementation) {
++    case gl::ANGLEImplementation::kSwiftShader:
++    case gl::ANGLEImplementation::kD3D11Warp:
++    case gl::ANGLEImplementation::kNull:
++      return false;
++    default:
++      break;
++  }
++  // The provider's GPU-process metadata precedes any JS identity override.
++  // GPU compositing is NOT evidence that this WebGL context is hardware.
++  if (info.vendor_id == 0x1414 && info.device_id == 0x008c)
++    return false;  // Microsoft Basic Render Driver.
++  // Native GL/Mesa software paths do not always carry an ANGLE CPU enum.
++  // Only query the actual context string, never an already presented identity.
++  const std::string renderer = base::ToLowerASCII(native_renderer);
++  for (std::string_view software : {"swiftshader", "llvmpipe", "softpipe",
++                                    "lavapipe", "software rasterizer",
++                                    "software renderer", "basic render driver"}) {
++    if (renderer.find(software) != std::string::npos)
++      return false;
++  }
++  return true;
 +}
 +
-+std::string GetGLRendererStringForFingerprint(uint64_t /*effective_seed*/) {
-+  const auto& persona = ungoogled::CurrentPersona();
-+  if (!persona.webgl_real)
-+    return persona.webgl_renderer;
-+  return "";
++}  // namespace
++
++std::optional<std::string> GetGLVendorStringForFingerprint(
++    const Platform::WebGLContextInfo& info, std::string_view native_renderer) {
++  if (!CanPresentWebGLIdentity(info, native_renderer))
++    return std::nullopt;
++  return ungoogled::CurrentPersona().webgl_vendor;
++}
++
++std::optional<std::string> GetGLRendererStringForFingerprint(
++    const Platform::WebGLContextInfo& info, std::string_view native_renderer) {
++  if (!CanPresentWebGLIdentity(info, native_renderer))
++    return std::nullopt;
++  return ungoogled::CurrentPersona().webgl_renderer;
 +}
 +
 +}  // namespace blink

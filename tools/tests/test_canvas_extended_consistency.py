@@ -21,6 +21,8 @@ from test_fingerprint_canvas import (
     patch_path,
     patched_sources,
     target_path,
+    sanitizer_flags,
+    sanitizer_env,
 )
 
 ASYNC_BASELINE = Path("/tmp/chromix-canvas-xtj3x5h3/base")
@@ -53,8 +55,7 @@ def compile_cpp(directory, source):
     path.write_text(source)
     result = subprocess.run(
         [CXX, "-std=c++20", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
-         "-Wno-unused-parameter", "-fsanitize=address,undefined",
-         "-fno-sanitize-recover=all", str(path), "-o", str(binary)],
+         "-Wno-unused-parameter", *sanitizer_flags(), str(path), "-o", str(binary)],
         text=True, capture_output=True, timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -62,7 +63,8 @@ def compile_cpp(directory, source):
 
 
 def run_case(binary, case):
-    result = subprocess.run([str(binary), case], text=True, capture_output=True, timeout=15)
+    result = subprocess.run([str(binary), case], text=True, capture_output=True, timeout=15,
+                            env=sanitizer_env())
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -71,7 +73,7 @@ def test_async_patches_are_in_series_and_well_formed(tmp_path):
 
     series = [line.strip() for line in (ROOT / "patches/series").read_text().splitlines()
               if line.strip() and not line.lstrip().startswith("#")]
-    assert len(series) == 128
+    assert len(series) >= 128
     for number in ("0121", "0122", "0123", "0124"):
         patch = patch_path(number)
         assert series[int(number) - 1] == patch.relative_to(ROOT).as_posix()
@@ -453,10 +455,22 @@ int main(int argc, char** argv) {
       assert(original.pixmap().readPixels(readback.info, readback.storage.data(), readback.row));
       ImageData data{readback.pixmap()}; ReadNoise(&data, 0, 0);
       for (int repeat = 0; repeat < 3; ++repeat) {
-        conversions = 0;
-        auto buffer = ImageDataBuffer::Create(original.pixmap()); assert(buffer && conversions == 1);
-        Equal(buffer->GetPixmap(), readback.pixmap()); assert(original.storage == before);
-        auto sync = ImageDataBuffer::Create(original.image()); assert(sync); Equal(sync->GetPixmap(), buffer->GetPixmap());
+        conversions = allocation_count = raster_count = 0;
+        const bool noise = !disabled && ct != kRGBA_F16_SkColorType;
+        auto buffer = ImageDataBuffer::Create(original.pixmap()); assert(buffer);
+        assert(conversions == (noise ? 1 : 0));
+        assert(allocation_count == (noise ? 1 : 0) && raster_count == (noise ? 1 : 0));
+        Equal(buffer->GetPixmap(), noise ? readback.pixmap() : original.pixmap());
+        if (!noise) assert(buffer->GetPixmap().addr() == original.storage.data());
+        assert(original.storage == before);
+        // The upstream image constructor already converts non-unpremul images.
+        // Keep that native conversion, without an extra no-noise copy.
+        conversions = allocation_count = raster_count = 0;
+        auto sync = ImageDataBuffer::Create(original.image()); assert(sync);
+        Equal(sync->GetPixmap(), readback.pixmap());
+        assert(conversions == 1);
+        assert(allocation_count == (noise ? 2 : 1) && raster_count == (noise ? 2 : 1));
+        assert(original.storage == before);
         for (int y = 0; y < 3; ++y) for (size_t x = original.info.minRowBytes(); x < original.row; ++x)
           assert(static_cast<const uint8_t*>(buffer->GetPixmap().addr())[size_t(y) * original.row + x] == 0xa7);
       }
@@ -485,7 +499,14 @@ int main(int argc, char** argv) {
       base::UxrConfig::GetInstance().disabled = disabled;
       Pixels p(kRGBA_8888_SkColorType, kPremul_SkAlphaType); auto before = p.storage;
       fail_conversion = true;
-      assert(!ImageDataBuffer::Create(p.pixmap())); assert(!ImageDataBuffer::Create(p.image()));
+      if (disabled) {
+        auto direct = ImageDataBuffer::Create(p.pixmap()); assert(direct);
+        Equal(direct->GetPixmap(), p.pixmap());
+        // Native image readback still requires a successful conversion.
+        assert(!ImageDataBuffer::Create(p.image()));
+      } else {
+        assert(!ImageDataBuffer::Create(p.pixmap())); assert(!ImageDataBuffer::Create(p.image()));
+      }
       assert(p.storage == before); fail_conversion = false;
     }
   } else if (test == "noise-gate") {

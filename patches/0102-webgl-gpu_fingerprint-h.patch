@@ -1,21 +1,28 @@
 diff --git a/third_party/blink/renderer/modules/webgl/gpu_fingerprint.h b/third_party/blink/renderer/modules/webgl/gpu_fingerprint.h
+new file mode 100644
 --- /dev/null
 +++ b/third_party/blink/renderer/modules/webgl/gpu_fingerprint.h
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,24 @@
 +#ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_GPU_FINGERPRINT_H_
 +#define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_GPU_FINGERPRINT_H_
 +
-+#include <cstdint>
++#include <optional>
 +#include <string>
++#include <string_view>
++
++#include "third_party/blink/public/platform/platform.h"
 +
 +namespace blink {
 +
-+// Returns the vendor of the immutable launch persona.
-+std::string GetGLVendorStringForFingerprint();
-+
-+// Returns the renderer of the same launch persona. The legacy seed argument
-+// does not select another GPU for each site.
-+std::string GetGLRendererStringForFingerprint(uint64_t effective_seed);
++// nullopt means use the native query; an engaged empty value stays empty.
++// Never fill an unknown one-sided identity with an unrelated native field.
++// The caller must pass this context's
++// provider metadata and unmodified GL_RENDERER, including after restoration.
++// No launch-global mutation or assumption about a WebGPU/other-context adapter.
++std::optional<std::string> GetGLVendorStringForFingerprint(
++    const Platform::WebGLContextInfo&, std::string_view native_renderer);
++std::optional<std::string> GetGLRendererStringForFingerprint(
++    const Platform::WebGLContextInfo&, std::string_view native_renderer);
 +
 +}  // namespace blink
 +

@@ -63,11 +63,13 @@ class WebGLCorrectnessRegressionTest(unittest.TestCase):
         self.assertIn("ConfigSwitchEnabled", self.persona_cc)
         self.assertIn("GetGLRendererStringForFingerprint", self.integration)
         self.assertIn("GetGLVendorStringForFingerprint", self.integration)
-        self.assertIn("effective_seed", self.gpu_fp_cc)
+        self.assertIn("CanPresentWebGLIdentity", self.gpu_fp_cc)
+        self.assertIn("persona.webgl_native_capabilities && !persona.webgl_identity_explicit", self.gpu_fp_cc)
+        self.assertNotIn("effective_seed", self.gpu_fp_cc)
 
     def test_gpu_identity_uses_one_canonical_persona(self):
-        self.assertIn("profile->webgl_vendor = gpu.vendor", self.persona_cc)
-        self.assertIn("profile->webgl_renderer = gpu.renderer", self.persona_cc)
+        self.assertIn('profile->webgl_vendor = gpu ? gpu->vendor : ""', self.persona_cc)
+        self.assertIn('profile->webgl_renderer = gpu ? gpu->renderer : ""', self.persona_cc)
         self.assertIn("CurrentPersona().webgl_vendor", self.integration)
         self.assertIn("CurrentPersona().webgl_renderer", self.integration)
         self.assertIn("std::call_once", self.persona_cc)
@@ -75,7 +77,9 @@ class WebGLCorrectnessRegressionTest(unittest.TestCase):
         self.assertIn("String(ungoogled::CurrentPersona().webgl_vendor)", self.hot_path)
 
     def test_explicit_webgl_identity_precedes_seeded_selection(self):
-        self.assertIn("if (!vendor.empty() && !renderer.empty())", self.persona_cc)
+        self.assertIn("if (!p.webgl_real && explicit_identity)", self.persona_cc)
+        self.assertIn("p.webgl_vendor.clear()", self.persona_cc)
+        self.assertIn("p.webgl_renderer.clear()", self.persona_cc)
         self.assertIn("p.webgl_identity_explicit = true", self.persona_cc)
         self.assertIn(
             "if (profile->webgl_real || profile->webgl_identity_explicit)",
@@ -130,8 +134,8 @@ class WebGLCorrectnessRegressionTest(unittest.TestCase):
         self.assertIn("ClampPersonaLimitF", self.webgl2)
 
     def test_real_mode_bypasses_spoofed_parameter_tables(self):
-        self.assertIn("if (ungoogled::CurrentPersona().webgl_real)", self.webgl1)
-        self.assertIn("if (ungoogled::CurrentPersona().webgl_real)", self.webgl2)
+        for source in (self.webgl1, self.webgl2):
+            self.assertRegex(source, r"if \(ungoogled::CurrentPersona\(\)\.webgl_real \|\|\s*ungoogled::CurrentPersona\(\)\.webgl_native_capabilities\)")
         self.assertIn("ContextGL()->GetString(GL_RENDERER)", self.webgl1)
         self.assertIn("ContextGL()->GetString(GL_VENDOR)", self.webgl1)
 

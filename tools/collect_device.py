@@ -18,6 +18,9 @@ import uuid
 
 import device_pool as pool
 import fingerprint_smoke as smoke
+from chromix._device_probe import probe_source, probe_hash
+from chromix._device_render import build_evidence
+from chromix._device_fonts import collect as collect_fonts
 
 ASSET = Path(__file__).resolve().parents[1] / 'sdk/python/chromix/device_probe.js'
 WORKER = """
@@ -50,7 +53,7 @@ CONTEXT_PROBE = r"""async (kind) => {
       active.postMessage('probe', [channel.port2]);
     }
     return await new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(kind + ' timeout')), 15000);
+      timer = setTimeout(() => reject(new Error(kind + ' timeout')), 60000);
       port.onmessage = e => e.data.error ? reject(new Error(e.data.error)) : resolve(e.data.value);
       port.onmessageerror = () => reject(new Error(kind + ' message error'));
       if (worker) worker.onerror = e => reject(new Error(e.message || kind + ' script error'));
@@ -68,7 +71,7 @@ CONTEXT_PROBE = r"""async (kind) => {
 class Handler(smoke.LocalHandler):
     def send_header(self, keyword, value):
         if keyword.lower() == 'content-security-policy':
-            value = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'"
+            value = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'"
         super().send_header(keyword, value)
 
     def do_CONNECT(self):
@@ -92,7 +95,7 @@ class Handler(smoke.LocalHandler):
             return
         with self.server.lock:
             self.server.requests.append({'path':self.path})
-        body = (ASSET.read_text(encoding='utf-8') if path == '/device-probe.js' else SCRIPTS[path]).encode()
+        body = (probe_source() if path == '/device-probe.js' else SCRIPTS[path]).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/javascript; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
@@ -122,7 +125,7 @@ from chromix._device_host import host_inventory
 def collect_browser(args):
     binary = smoke.binary_identity(args.browser)
     result = {'binary':binary, 'observations':[], 'external_requests':[],
-              'browser_versions':[], 'probe_sha256':pool.file_hash(ASSET),
+              'browser_versions':[], 'probe_sha256':probe_hash(),
               'profile_isolation':False, 'headless':not args.headed,
               'engine_provenance':'User supplied executable; hash is not authentication',
               'limitations':['No wire capture or physical backend equivalence proof',
@@ -169,6 +172,7 @@ def collect_browser(args):
                         observation[scope] = smoke.evaluate(target, '() => chromixDeviceProbe()', None, args.timeout_ms)
                     for scope in pool.SCOPES[2:]:
                         observation[scope] = smoke.evaluate(page, CONTEXT_PROBE, scope, args.timeout_ms)
+                    observation['window']['fontBackend'] = collect_fonts(context, page)
                     result['observations'].append(observation)
                 finally:
                     context.close()
@@ -177,7 +181,7 @@ def collect_browser(args):
         raise ValueError('browser executable changed during collection')
     if len(result['browser_versions']) != 3 or len(set(result['browser_versions'])) != 1:
         raise ValueError('browser version changed or was not observed in every launch')
-    if pool.file_hash(ASSET) != result['probe_sha256']:
+    if probe_hash() != result['probe_sha256']:
         raise ValueError('device probe changed during collection')
     return result
 
@@ -191,7 +195,7 @@ def main(argv=None):
     parser.add_argument('--browser', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True, help='new evidence directory; must not exist')
     parser.add_argument('--headed', action='store_true')
-    parser.add_argument('--timeout-ms', type=smoke.positive_int, default=30000)
+    parser.add_argument('--timeout-ms', type=smoke.positive_int, default=120000)
     args = parser.parse_args(argv)
     try:
         args.output.mkdir(parents=True, exist_ok=False)
@@ -203,16 +207,20 @@ def main(argv=None):
         write_json(args.output / 'host.json', host)
         browser = collect_browser(args)
         write_json(args.output / 'browser.json', browser)
-        record = {'schema_version':1, 'kind':'measured', 'provenance':{
-            'collector':'chromix-collect-device-v1',
+        if host_inventory() != host:
+            raise ValueError('native GPU/font/host inventory changed during collection')
+        render = build_evidence(host, browser)
+        write_json(args.output / 'render.json', render)
+        record = {'schema_version':pool.SCHEMA_VERSION, 'kind':'measured', 'provenance':{
+            'collector':'chromix-collect-device-v2',
             'collected_at':datetime.now(timezone.utc).isoformat(),
             'browser_sha256':browser['binary']['sha256'],
             'browser_version':browser['browser_versions'][0],
             'probe_sha256':browser['probe_sha256'],
         }, 'device':{'host':host, 'surfaces':pool.stable_observation(browser['observations'][0])},
             'evidence':{name:{'path':name + '.json', 'sha256':pool.file_hash(args.output / (name + '.json'))}
-                        for name in ('host', 'browser')},
-            'qualification':pool.QUALIFICATION}
+                        for name in ('host', 'browser', 'render')},
+            'qualification':pool.RENDER_QUALIFICATION}
         record['record_id'] = pool.digest(record)
         write_json(args.output / 'record.json', record)
         pool.validate_record(record, args.output)
