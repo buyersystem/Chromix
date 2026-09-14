@@ -1,8 +1,8 @@
 <#
-  Native Windows build using pinned ungoogled-chromium source layers.
+  Windows build using pinned ungoogled-chromium source layers (x64 host).
 
   Prerequisites:
-    - Visual Studio 2022 Desktop C++ workload
+    - Visual Studio 2022 Desktop C++ workload (ARM64 tools for -Arch arm64)
     - Windows 11 SDK 10.0.26100 with Debugging Tools
     - Python 3, Git, and 7-Zip
 #>
@@ -11,9 +11,12 @@ param(
   [string]$WorkDir = "$PSScriptRoot\..\..\.chromix-build-win",
   [switch]$Resume,
   [int]$Jobs = 8,
-  [switch]$ApplyDomainSubstitution
+  [switch]$ApplyDomainSubstitution,
+  [ValidateSet("x64", "arm64")]
+  [string]$Arch = $(if ($env:CHROMIX_TARGET_ARCH) { $env:CHROMIX_TARGET_ARCH } else { "x64" })
 )
 $ErrorActionPreference = "Stop"
+if ($Arch -cnotin @("x64", "arm64")) { throw "Arch/CHROMIX_TARGET_ARCH must be x64 or arm64" }
 $Repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 $Revisions = Import-PowerShellDataFile (Join-Path $Repo "build\ungoogled-revisions.psd1")
 $WorkDir = [IO.Path]::GetFullPath($WorkDir)
@@ -22,11 +25,13 @@ $Out = Join-Path $Src "out\Chromix"
 $UngoogledTooling = Join-Path $WorkDir "tooling\ungoogled-chromium"
 $WindowsTooling = Join-Path $WorkDir "tooling\ungoogled-chromium-windows"
 
-Write-Host "==> Chromix Windows build | Chromium $($Revisions.ChromiumVersion) | $WorkDir"
+Write-Host "==> Chromix Windows $Arch build | Chromium $($Revisions.ChromiumVersion) | $WorkDir"
+& "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch -Initialize:($Arch -eq "arm64")
+if ($Arch -eq "arm64") { & "$PSScriptRoot\assert-arm64-toolchain.ps1" }
 if ($Resume -and -not (Test-Path (Join-Path $Src ".chromix-source-ready"))) {
   throw "-Resume requested but $Src is not prepared"
 }
-& "$PSScriptRoot\prepare-ungoogled.ps1" -Root $WorkDir -Repo $Repo
+& "$PSScriptRoot\prepare-ungoogled.ps1" -Root $WorkDir -Repo $Repo -Arch $Arch
 
 Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue
 Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
@@ -52,8 +57,12 @@ $mergeArgs += @(
   (Join-Path $WindowsTooling "flags.windows.gn"),
   (Join-Path $Repo "build\args.windows.gn")
 )
+if ($Arch -eq "arm64") { $mergeArgs += (Join-Path $Repo "build\args.windows.arm64.gn") }
 python @mergeArgs
 if ($LASTEXITCODE -ne 0) { throw "GN argument merge failed" }
+if ($Arch -eq "arm64") {
+  & "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch
+}
 
 Push-Location $Src
 try {

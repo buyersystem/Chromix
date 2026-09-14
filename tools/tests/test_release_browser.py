@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -26,7 +27,42 @@ EXPECTED_WORKFLOWS = {
     "build-macos-x64": ("chromix-mac-x64",),
     "build-macos-arm64": ("chromix-mac-arm64",),
     "build-win-x64-github": ("chromix-win-x64",),
+    "build-win-arm64-github": ("chromix-win-arm64",),
 }
+EXPECTED_ARTIFACTS = {"chromix-win-arm64": "win-arm64"}
+
+
+def arm64_pe(machine=0xAA64, version="1.2.3.4", product_version=None):
+    data = bytearray(1024)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 60, 64)
+    data[64:68] = b"PE\0\0"
+    struct.pack_into("<HH", data, 68, machine, 1)
+    struct.pack_into("<HH", data, 84, 240, 2)
+    struct.pack_into("<H", data, 88, 0x20B)
+    struct.pack_into("<I", data, 196, 16)
+    struct.pack_into("<II", data, 216, 0x1000, 512)
+    data[328:336] = b".rsrc\0\0\0"
+    struct.pack_into("<IIII", data, 336, 512, 0x1000, 512, 512)
+    for offset, kind, target in ((512, 16, 0x80000018), (536, 1, 0x80000030), (560, 1033, 72)):
+        struct.pack_into("<HHII", data, offset + 12, 0, 1, kind, target)
+    struct.pack_into("<IIII", data, 584, 0x1060, 92, 0, 0)
+    struct.pack_into("<HHH", data, 608, 92, 52, 0)
+    data[614:646] = "VS_VERSION_INFO\0".encode("utf-16le")
+    numbers = []
+    for value in (version, product_version or version):
+        a, b, c, d = map(int, value.split("."))
+        numbers += [(a << 16) | b, (c << 16) | d]
+    struct.pack_into("<13I", data, 648, 0xFEEF04BD, 0x10000, *numbers, *([0] * 7))
+    return bytes(data)
+
+
+def native_job(run, **changes):
+    job = {"name": "native Windows ARM64 bundle and fingerprint verification", "run_id": run["id"],
+           "run_attempt": run["run_attempt"], "head_sha": run["head_sha"],
+           "labels": ["windows-11-arm"], "status": "completed", "conclusion": "success"}
+    job.update(changes)
+    return job
 
 
 def backup_name(data):
@@ -47,8 +83,11 @@ def make_run(name="build-linux-x64", run_id=100, **changes):
 
 
 def write_bundle(path, missing=None, extra=None, corrupt=False):
-    if path.name == "chromix-win-x64.zip":
+    if path.name in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
         members = ["chromix/chromix.cmd", "chromix/chrome.exe"]
+        if path.name == "chromix-win-arm64.zip":
+            members += ["chromix/chrome.dll", "chromix/chrome_elf.dll", "chromix/libEGL.dll",
+                        "chromix/libGLESv2.dll"]
     elif path.name.startswith("chromix-mac-"):
         members = ["chromix/chromix", "chromix/Chromium.app/Contents/MacOS/Chromium"]
     else:
@@ -60,7 +99,9 @@ def write_bundle(path, missing=None, extra=None, corrupt=False):
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
             for name in members:
                 if name != missing:
-                    archive.writestr(zipfile.ZipInfo(name), "fixture")
+                    payload = (arm64_pe() if path.name == "chromix-win-arm64.zip"
+                               and name.endswith((".exe", ".dll")) else b"fixture")
+                    archive.writestr(zipfile.ZipInfo(name), payload)
             if extra:
                 archive.writestr(zipfile.ZipInfo(extra[0]), extra[1])
     if corrupt:
@@ -91,6 +132,7 @@ class ReleaseFixtureTest(unittest.TestCase):
         self.event_run = self.runs["build-win-x64-github"]
         self.event_response = self.event_run
         self.listing_responses = []
+        self.native_jobs = None
         self.gh = self.enterContext(patch.object(release, "gh", side_effect=self.fake_gh))
         self.stdout = self.enterContext(patch("sys.stdout", new_callable=io.StringIO))
 
@@ -101,6 +143,13 @@ class ReleaseFixtureTest(unittest.TestCase):
                 return json.dumps(pages)
             if args[3] == f"repos/{REPO}/releases?per_page=100":
                 return json.dumps([[self.release] if self.release else []])
+            match = re.fullmatch(f"repos/{REPO}/actions/runs/([0-9]+)/attempts/([0-9]+)/jobs\\?per_page=100", args[3])
+            if match:
+                candidate = next(run for run in self.runs.values() if run["id"] == int(match[1]))
+                if self.event_run["id"] == candidate["id"]:
+                    candidate = self.event_run
+                jobs = [native_job(candidate)] if self.native_jobs is None else self.native_jobs
+                return json.dumps([{"jobs": jobs}])
         if args[0] == "api":
             if args[1] == f"repos/{REPO}/actions/runs/{self.event_run['id']}":
                 return json.dumps(self.event_response)
@@ -121,9 +170,13 @@ class ReleaseFixtureTest(unittest.TestCase):
             error = self.artifact_errors.get(name)
             if error == "expired":
                 raise RuntimeError("Artifact expired")
-            asset = dest / (name + ".zip")
+            asset = dest / ("chromix-win-arm64.zip" if name == "win-arm64" else name + ".zip")
             write_bundle(asset, missing="chromix/LICENSE.chromium" if error == "layout" else None,
                          corrupt=error == "corrupt")
+            if name == "win-arm64" and error in ("x64", "version"):
+                executable = "chromix/chrome.exe"
+                payload = arm64_pe(machine=0x8664) if error == "x64" else arm64_pe(version="9.9.9.9")
+                write_bundle(asset, missing=executable, extra=(executable, payload))
             if error != "missing-checksum":
                 checksum = "0" * 64 if error == "checksum" else release.digest(asset)
                 (dest / "SHA256SUMS").write_text(f"{checksum}  {asset.name}\n")
@@ -218,7 +271,17 @@ class RunSelectionTest(ReleaseFixtureTest):
         self.assertEqual(release.WORKFLOWS, EXPECTED_WORKFLOWS)
         self.assertEqual(release.ASSETS, {names[0] + ".zip" for names in EXPECTED_WORKFLOWS.values()})
 
-    def test_workflow_subscribes_to_five_successful_main_builds(self):
+    def test_download_tables_list_each_registered_asset_without_claiming_acceptance(self):
+        root = Path(__file__).resolve().parents[2]
+        for filename in ("README.md", "readme_cn.md"):
+            text = (root / filename).read_text()
+            for asset in release.ASSETS:
+                with self.subTest(file=filename, asset=asset):
+                    self.assertIn(f"`{asset}` |", text)
+            self.assertIn("`windows-2022`", text)
+            self.assertIn("`windows-11-arm`", text)
+
+    def test_workflow_subscribes_to_six_successful_main_builds(self):
         path = Path(__file__).resolve().parents[2] / ".github/workflows/release-browser.yml"
         source = path.read_text()
         workflows = re.search(r"    workflows:\n(.*?)    types:", source, re.DOTALL)[1]
@@ -328,10 +391,10 @@ class BundleValidationTest(ReleaseFixtureTest):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 release.parse_manifest(f"{'a' * 64}  {name}\n", {name})
 
-    def test_all_five_platform_layouts(self):
+    def test_all_six_platform_layouts(self):
         for path in self.bundles().values():
             with self.subTest(asset=path.name):
-                release.validate_bundle(path)
+                release.validate_bundle(path, "1.2.3.4")
 
     def test_missing_or_empty_required_members_are_rejected(self):
         path = self.root / "chromix-win-x64.zip"
@@ -361,8 +424,152 @@ class BundleValidationTest(ReleaseFixtureTest):
         for name, run in self.runs.items():
             bundles = release.collect(REPO, run, self.root)
             self.assertEqual(set(bundles), {EXPECTED_WORKFLOWS[name][0] + ".zip"})
-        self.assertEqual(self.downloads, [(run["id"], EXPECTED_WORKFLOWS[name][0])
+        self.assertEqual(self.downloads, [(run["id"], EXPECTED_ARTIFACTS.get(EXPECTED_WORKFLOWS[name][0],
+                                                                          EXPECTED_WORKFLOWS[name][0]))
                                          for name, run in self.runs.items()])
+
+    def test_arm64_requires_source_version_and_core_dlls(self):
+        path = self.root / "chromix-win-arm64.zip"
+        write_bundle(path)
+        for version in (None, "", "1.2.3.4\n"):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "source Chromium version"):
+                release.validate_bundle(path, version)
+        for member in ("chrome.exe", "chrome.dll", "chrome_elf.dll", "libEGL.dll", "libGLESv2.dll"):
+            write_bundle(path, missing="chromix/" + member)
+            with self.subTest(member=member), self.assertRaisesRegex(ValueError, "Incomplete"):
+                release.validate_bundle(path, "1.2.3.4")
+
+    def test_arm64_checks_all_pe_members_not_just_the_launcher(self):
+        path = self.root / "chromix-win-arm64.zip"
+        for member in ("chrome.exe", "chrome.dll", "libEGL.dll", "nested/helper.EXE", "payload.bin"):
+            name = "chromix/" + member
+            for machine in (0x8664, 0x14C, 0xA641, 0xA64E):
+                write_bundle(path, missing=name, extra=(name, arm64_pe(machine=machine)))
+                with self.subTest(member=member, machine=machine), self.assertRaisesRegex(ValueError, "ARM64 PE"):
+                    release.validate_bundle(path, "1.2.3.4")
+
+    def test_arm64_version_is_read_from_resources_in_both_chrome_binaries(self):
+        path = self.root / "chromix-win-arm64.zip"
+        for member in ("chromix/chrome.exe", "chromix/chrome.dll", "chromix/1.2.3.4/chrome.dll"):
+            for payload in (arm64_pe(version="1.2.3.5"), arm64_pe(product_version="1.2.3.5")):
+                write_bundle(path, missing=member, extra=(member, payload))
+                with self.subTest(member=member), self.assertRaisesRegex(ValueError, "PE version does not match"):
+                    release.validate_bundle(path, "1.2.3.4")
+        write_bundle(path, extra=("chromix/third-party.dll", arm64_pe(version="9.8.7.6")))
+        release.validate_bundle(path, "1.2.3.4")
+
+    def test_arm64_truncated_and_forged_pe_resources_are_rejected(self):
+        valid = arm64_pe()
+        mutations = [(0, b"XX"), (60, struct.pack("<I", 0xFFFFFFFF)), (64, b"XXXX"),
+                     (70, struct.pack("<H", 0)), (88, struct.pack("<H", 0x10B)),
+                     (196, struct.pack("<I", 17)), (216, struct.pack("<II", 0, 0)),
+                     (348, struct.pack("<I", 99999)), (528, struct.pack("<I", 17)),
+                     (532, struct.pack("<I", 0x80000000)), (580, struct.pack("<I", 0x80000048)),
+                     (584, struct.pack("<I", 0xFFFFFFFF)), (588, struct.pack("<I", 10)),
+                     (608, struct.pack("<H", 20)), (610, struct.pack("<H", 0)),
+                     (614, b"X\0"), (648, struct.pack("<I", 0))]
+        payloads = [valid[:length] for length in (0, 63, 80, 200, 500, 700)]
+        for offset, value in mutations:
+            changed = bytearray(valid)
+            changed[offset:offset + len(value)] = value
+            payloads.append(bytes(changed))
+        for index, payload in enumerate(payloads):
+            with self.subTest(case=index), self.assertRaises(ValueError):
+                release.validate_arm64_pe(io.BytesIO(payload), len(payload), "chrome.exe", "1.2.3.4")
+
+    def test_arm64_rejects_case_aliases_and_special_zip_members(self):
+        path = self.root / "chromix-win-arm64.zip"
+        for name in ("chromix/CHROME.EXE", "chromix/chrome.exe.", "chromix/chrome.exe "):
+            write_bundle(path, extra=(name, arm64_pe()))
+            with self.subTest(member=name), self.assertRaises(ValueError):
+                release.validate_bundle(path, "1.2.3.4")
+        write_bundle(path)
+        with zipfile.ZipFile(path, "a") as archive:
+            info = zipfile.ZipInfo("chromix/link")
+            info.external_attr = 0o120777 << 16
+            archive.writestr(info, "chrome.exe")
+        with self.assertRaisesRegex(ValueError, "Special Windows ZIP"):
+            release.validate_bundle(path, "1.2.3.4")
+
+    def test_arm64_source_mismatch_is_rejected_during_collection(self):
+        run = self.runs["build-win-arm64-github"]
+        self.source_versions[run["head_sha"]] = "1.2.3.5"
+        with self.assertRaisesRegex(ValueError, "PE version does not match"):
+            release.collect(REPO, run, self.root)
+        self.assertEqual(self.downloads, [(run["id"], "win-arm64")])
+        self.assertEqual(self.mutations, [])
+
+
+class Arm64NativeGateTest(ReleaseFixtureTest):
+    def setUp(self):
+        super().setUp()
+        self.event_run = self.event_response = self.runs["build-win-arm64-github"]
+
+    def test_exact_native_attempt_is_required_and_job_pages_are_paginated(self):
+        self.event_run["run_attempt"] = 3
+        self.assertTrue(release.native_verification_passed(REPO, self.event_run))
+        self.gh.assert_called_once_with("api", "--paginate", "--slurp",
+                                       f"repos/{REPO}/actions/runs/{self.event_run['id']}/attempts/3/jobs?per_page=100")
+
+    def test_build_only_success_never_downloads_or_publishes(self):
+        valid = native_job(self.event_run)
+        invalid = [{"conclusion": "skipped"}, {"conclusion": "failure"}, {"conclusion": "cancelled"},
+                   {"status": "in_progress"}, {"labels": ["windows-2022"]}, {"labels": None},
+                   {"run_attempt": 2}, {"run_id": 999}, {"head_sha": OTHER_SHA}, {"name": "build"}]
+        for jobs in ([], [valid, valid], *[[{**valid, **change}] for change in invalid]):
+            with self.subTest(jobs=jobs):
+                self.native_jobs = jobs
+                self.run_main("--check-ready")
+                self.assertTrue((self.root / "output").read_text().endswith("ready=false\n"))
+                self.run_main()
+                with self.assertRaisesRegex(ValueError, "native verification"):
+                    release.collect(REPO, self.event_run, self.root)
+        self.assertEqual(self.downloads, [])
+        self.assertEqual(self.mutations, [])
+
+    def test_arm64_keeps_all_strict_source_identity_checks(self):
+        invalid = [{"repository": {"full_name": "other/repo"}}, {"head_repository": {"full_name": "other/repo"}},
+                   {"head_branch": "feature"}, {"event": "pull_request"}, {"head_sha": None},
+                   {"path": ".github/workflows/build-win-x64-github.yml"}, {"conclusion": "failure"}]
+        for changes in invalid:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                release.collect(REPO, {**self.event_run, **changes}, self.root)
+        self.gh.assert_not_called()
+
+    def test_renamed_x64_and_wrong_version_block_all_release_mutations(self):
+        for error in ("x64", "version", "checksum", "missing-checksum", "foreign-checksum", "unexpected", "layout"):
+            with self.subTest(error=error):
+                self.artifact_errors["win-arm64"] = error
+                with self.assertRaises(ValueError):
+                    self.run_main()
+                self.assertEqual(self.mutations, [])
+
+    def test_native_gate_is_rechecked_before_release_writes(self):
+        with patch.object(release, "native_verification_passed", side_effect=[True, True, False]):
+            self.run_main()
+        self.assertEqual(self.downloads, [(self.event_run["id"], "win-arm64")])
+        self.assertEqual(self.mutations, [])
+
+    def test_publish_cannot_bypass_pe_checks_with_local_bundle(self):
+        bundles = self.incoming()
+        path = next(iter(bundles.values()))
+        write_bundle(path, missing="chromix/chrome.exe", extra=("chromix/chrome.exe", arm64_pe(machine=0x8664)))
+        with self.assertRaisesRegex(ValueError, "ARM64 PE"):
+            release.publish(REPO, self.event_run, TAG, bundles, self.root)
+        self.assertEqual(self.mutations, [])
+
+    def test_orphan_recovery_revalidates_independent_arm64_artifact(self):
+        incoming = self.incoming()
+        self.existing_release(incoming)
+        self.release_files["SHA256SUMS"] = b""
+        for error in ("x64", "version"):
+            with self.subTest(error=error):
+                root = self.root / error
+                root.mkdir()
+                self.artifact_errors["win-arm64"] = error
+                with self.assertRaises(ValueError):
+                    release.publish(REPO, self.event_run, TAG, incoming, root)
+                self.assertEqual(self.mutations, [])
 
 
 class ReadinessTest(ReleaseFixtureTest):
@@ -449,7 +656,7 @@ class MainTest(ReleaseFixtureTest):
                 self.refs = []
                 self.run_main()
                 asset = EXPECTED_WORKFLOWS[name][0] + ".zip"
-                self.assertEqual(self.downloads, [(run["id"], asset[:-4])])
+                self.assertEqual(self.downloads, [(run["id"], EXPECTED_ARTIFACTS.get(asset[:-4], asset[:-4]))])
                 manifest_bytes = self.uploaded_files["SHA256SUMS"]
                 backup = backup_name(manifest_bytes)
                 self.assertEqual(set(self.uploaded_files), {asset, "SHA256SUMS", backup})
@@ -688,7 +895,7 @@ class PublicationTest(ReleaseFixtureTest):
         self.assertTrue(all("--clobber" not in args for args in self.mutations if args[1] == "upload"
                             and Path(args[3]).name != "SHA256SUMS"))
 
-    def test_four_later_platforms_append_to_manual_windows_release_at_distinct_source_shas(self):
+    def test_five_later_platforms_append_to_manual_windows_release_at_distinct_source_shas(self):
         windows = self.incoming()["chromix-win-x64.zip"]
         write_bundle(windows, missing="chromix/LICENSE.chromium")
         initial = {windows.name: windows}
@@ -698,7 +905,7 @@ class PublicationTest(ReleaseFixtureTest):
             initial[name] = path
         self.existing_release(initial, sha=OTHER_SHA)
         pinned_refs = copy.deepcopy(self.refs)
-        for index, name in enumerate(list(EXPECTED_WORKFLOWS)[:-1]):
+        for index, name in enumerate(name for name in EXPECTED_WORKFLOWS if name != "build-win-x64-github"):
             with self.subTest(platform=name):
                 sha = str(index + 1) * 40
                 self.event_run = self.event_response = {**self.runs[name], "head_sha": sha}
@@ -728,13 +935,13 @@ class PublicationTest(ReleaseFixtureTest):
                 self.assertNotIn("--draft=false", edits[0])
                 self.assertIn("--draft=false", edits[-1])
         backup_assets = {name for name in self.release_files if name.startswith("SHA256SUMS.backup.")}
-        self.assertEqual(len(backup_assets), 5)
+        self.assertEqual(len(backup_assets), 6)
         for name in backup_assets:
             self.assertEqual(name, backup_name(self.release_files[name]))
         self.assertEqual(set(self.release_files),
                          release.ASSETS | {"SHA256SUMS", "LICENSE.chromix", "LICENSE.chromium"} | backup_assets)
         self.assertIn(f"Source commit: `{OTHER_SHA}`", self.release["body"])
-        self.assertEqual(self.release["body"].count("Verified build:"), 4)
+        self.assertEqual(self.release["body"].count("Verified build:"), 5)
 
     def test_legacy_windows_zip_without_internal_licenses_is_not_repacked_or_revalidated(self):
         bundles = self.bundles()

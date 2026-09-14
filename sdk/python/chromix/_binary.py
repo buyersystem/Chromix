@@ -37,6 +37,7 @@ _ASSETS = {
     "linux-x64":   ("chromix-linux-x64.zip",   "zip", "chromix/chromix"),
     "linux-arm64": ("chromix-linux-arm64.zip", "zip", "chromix/chromix"),
     "win-x64":     ("chromix-win-x64.zip",     "zip", "chromix/chromix.cmd"),
+    "win-arm64":   ("chromix-win-arm64.zip",   "zip", "chromix/chromix.cmd"),
     "mac-arm64":   ("chromix-mac-arm64.zip",   "zip", "chromix/chromix"),
     "mac-x64":     ("chromix-mac-x64.zip",     "zip", "chromix/chromix"),
 }
@@ -50,6 +51,8 @@ def resolve_platform() -> str | None:
         return "linux-arm64"
     if sysname == "Windows" and mach in ("amd64", "x86_64"):
         return "win-x64"
+    if sysname == "Windows" and mach in ("arm64", "aarch64"):
+        return "win-arm64"
     if sysname == "Darwin" and mach in ("arm64", "aarch64"):
         return "mac-arm64"
     if sysname == "Darwin" and mach in ("x86_64", "amd64"):
@@ -81,7 +84,7 @@ def _expected_sha(asset: str, host: str) -> str | None:
 def _binary_path(plat: str, root: Path) -> Path:
     if plat.startswith("mac-"):
         return root / "chromix/Chromium.app/Contents/MacOS/Chromium"
-    return root / "chromix" / ("chrome.exe" if plat == "win-x64" else "chrome")
+    return root / "chromix" / ("chrome.exe" if plat.startswith("win-") else "chrome")
 
 
 def _bundle_complete(plat: str, root: Path) -> bool:

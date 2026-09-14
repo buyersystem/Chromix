@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from chromix import _binary as binary, api  # noqa: E402
+from chromix import _binary as binary, api, widevine  # noqa: E402
 
 HOST = "https://fixtures.invalid/release"
 TAG = binary._CHANNELS["stable"]["tag"]
@@ -19,6 +19,7 @@ PLATFORMS = [
     ("Linux", "x86_64", "linux-x64"),
     ("Linux", "aarch64", "linux-arm64"),
     ("Windows", "AMD64", "win-x64"),
+    ("Windows", "ARM64", "win-arm64"),
     ("Darwin", "x86_64", "mac-x64"),
     ("Darwin", "arm64", "mac-arm64"),
 ]
@@ -104,6 +105,7 @@ def test_zip_download_public_api_and_cache(cache, monkeypatch, system, machine, 
     assert api.ensure_binary(release_channel="stable") == chrome
     assert chrome.read_bytes() == b"chrome fixture"
     info = api.binary_info(release_channel="stable")
+    assert info["platform"] == plat
     assert info["installed"] and info["path"] == str(chrome)
     assert binary._download(plat, HOST, TAG) == root / binary._ASSETS[plat][2]
     assert api.ensure_binary(release_channel="stable") == chrome
@@ -118,7 +120,22 @@ def test_zip_download_public_api_and_cache(cache, monkeypatch, system, machine, 
         assert stat.S_IMODE((root / "chromix/resources.pak").stat().st_mode) == 0o644
 
 
-@pytest.mark.parametrize("system,machine", [("Linux", "i686"), ("Windows", "arm64"), ("Darwin", "ppc"), ("FreeBSD", "amd64")])
+@pytest.mark.parametrize("machine,plat", [
+    ("AMD64", "win-x64"), ("x86_64", "win-x64"),
+    ("ARM64", "win-arm64"), ("arm64", "win-arm64"), ("aarch64", "win-arm64"),
+])
+def test_windows_platform_and_paths(monkeypatch, tmp_path, machine, plat):
+    monkeypatch.setattr(binary.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(binary.platform, "machine", lambda: machine)
+    assert binary.resolve_platform() == plat
+    assert binary._ASSETS[plat] == (f"chromix-{plat}.zip", "zip", "chromix/chromix.cmd")
+    assert binary._binary_path(plat, tmp_path) == tmp_path / "chromix/chrome.exe"
+
+
+@pytest.mark.parametrize("system,machine", [
+    ("Linux", "i686"), ("Windows", "armv7l"), ("Windows", "i686"),
+    ("Windows", "unknown"), ("Darwin", "ppc"), ("FreeBSD", "amd64"),
+])
 def test_unsupported_platform(monkeypatch, system, machine):
     monkeypatch.setattr(binary.platform, "system", lambda: system)
     monkeypatch.setattr(binary.platform, "machine", lambda: machine)
@@ -144,9 +161,10 @@ def test_framework_symlinks_and_parent_relative_targets(cache, monkeypatch):
     assert (root / "chromix/Framework/chrome").read_bytes() == b"chrome fixture"
 
 
+@pytest.mark.parametrize("plat", ["linux-x64", "win-x64", "win-arm64"])
 @pytest.mark.parametrize("failure", ["http", "network", "stream", "checksum", "corrupt", "missing-launcher", "missing-binary", "directory-binary"])
-def test_failure_cleanup_preserves_old_cache_and_retry(cache, monkeypatch, failure):
-    plat = "linux-x64"
+def test_failure_cleanup_preserves_old_cache_and_retry(cache, monkeypatch, plat, failure):
+    chrome_name = binary._binary_path(plat, Path(".")).as_posix()
     root = cache / TAG / plat
     root.mkdir(parents=True)
     marker = root / "old-cache"
@@ -155,9 +173,9 @@ def test_failure_cleanup_preserves_old_cache_and_retry(cache, monkeypatch, failu
     if failure == "missing-launcher":
         entries = [entry for entry in entries if entry[0] != binary._ASSETS[plat][2]]
     if failure in ("missing-binary", "directory-binary"):
-        entries = [entry for entry in entries if entry[0] != "chromix/chrome"]
+        entries = [entry for entry in entries if entry[0] != chrome_name]
     if failure == "directory-binary":
-        entries.append(file("chromix/chrome/", b"", stat.S_IFDIR | 0o755))
+        entries.append(file(f"{chrome_name}/", b"", stat.S_IFDIR | 0o755))
     mock_release(monkeypatch, plat, b"not a ZIP" if failure == "corrupt" else zip_fixture(entries), failure)
     with pytest.raises((OSError, RuntimeError, zipfile.BadZipFile)):
         binary._download(plat, HOST, TAG)
@@ -169,11 +187,11 @@ def test_failure_cleanup_preserves_old_cache_and_retry(cache, monkeypatch, failu
     assert binary._bundle_complete(plat, root)
 
 
+@pytest.mark.parametrize("plat", ["linux-x64", "win-x64", "win-arm64"])
 @pytest.mark.parametrize("missing", ["launcher", "binary", "directory", "external-link"])
-def test_public_api_rejects_incomplete_cache(cache, monkeypatch, missing):
+def test_public_api_rejects_incomplete_cache(cache, monkeypatch, plat, missing):
     if missing == "external-link" and os.name == "nt":
         pytest.skip("POSIX symlink fixture")
-    plat = "linux-x64"
     monkeypatch.setattr(api, "resolve_platform", lambda: plat)
     root = cache / TAG / plat
     launcher = root / binary._ASSETS[plat][2]
@@ -194,6 +212,60 @@ def test_public_api_rejects_incomplete_cache(cache, monkeypatch, missing):
     urls = mock_release(monkeypatch, plat, zip_fixture(bundle(plat)))
     assert api.ensure_binary(release_channel="stable") == chrome
     assert len(urls) == 2
+
+
+@pytest.mark.parametrize("machine,plat,other", [
+    ("AMD64", "win-x64", "win-arm64"), ("ARM64", "win-arm64", "win-x64"),
+])
+@pytest.mark.parametrize("failure", ["", "http"])
+def test_windows_cache_isolation_without_architecture_fallback(cache, monkeypatch, machine, plat, other, failure):
+    monkeypatch.setattr(binary.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(binary.platform, "machine", lambda: machine)
+    other_root = cache / TAG / other
+    (other_root / "chromix").mkdir(parents=True)
+    (other_root / "chromix/chromix.cmd").write_text("other launcher")
+    (other_root / "chromix/chrome.exe").write_text(other)
+    assert binary._bundle_complete(other, other_root)
+    assert not api.binary_info(release_channel="stable")["installed"]
+    urls = mock_release(monkeypatch, plat, zip_fixture(bundle(plat)), failure)
+    if failure:
+        with pytest.raises(urllib.error.HTTPError):
+            api.ensure_binary(release_channel="stable")
+        info = api.binary_info(release_channel="stable")
+        assert not info["installed"] and info["path"] is None
+        assert urls == [f"{HOST}/chromix-{plat}.zip"]
+        assert list((cache / TAG).iterdir()) == [other_root]
+    else:
+        assert api.ensure_binary(release_channel="stable") == cache / TAG / plat / "chromix/chrome.exe"
+        assert urls == [f"{HOST}/chromix-{plat}.zip", f"{HOST}/SHA256SUMS"]
+        assert {root.name for root in (cache / TAG).iterdir()} == {plat, other}
+    assert (other_root / "chromix/chrome.exe").read_text() == other
+    assert binary._bundle_complete(other, other_root)
+
+
+@pytest.mark.parametrize("machine,plat", [("AMD64", "win-x64"), ("ARM64", "win-arm64")])
+@pytest.mark.parametrize("location", ["explicit", "installed", "cached"])
+def test_windows_launch_executable_and_x64_widevine_compatibility(cache, monkeypatch, machine, plat, location):
+    monkeypatch.setattr(binary.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(binary.platform, "machine", lambda: machine)
+    monkeypatch.setenv("CLOAKBROWSER_WIDEVINE", "1")
+    monkeypatch.delenv("CLOAKBROWSER_WIDEVINE_CDM", raising=False)
+    chrome_root = cache / "installed-chrome"
+    monkeypatch.setitem(widevine._CHROME_ROOTS, "win", [str(chrome_root)])
+    cdm = {"explicit": cache / "explicit-cdm",
+           "installed": chrome_root / "152.0.0.0" / "WidevineCdm",
+           "cached": cache / "widevine" / "WidevineCdm"}[location]
+    (cdm / "_platform_specific/win_x64").mkdir(parents=True)
+    (cdm / "manifest.json").write_text("{}")
+    (cdm / "_platform_specific/win_x64/widevinecdm.dll").write_bytes(b"x64 CDM")
+    if location == "explicit":
+        monkeypatch.setenv("CLOAKBROWSER_WIDEVINE_CDM", str(cdm))
+    mock_release(monkeypatch, plat, zip_fixture(bundle(plat)))
+    chrome, args, _, _ = api._prepare(
+        True, None, [], False, None, None, False, None, False, release_channel="stable")
+    assert chrome == cache / TAG / plat / "chromix/chrome.exe"
+    flags = [arg for arg in args if arg.startswith("--uxr-widevine-cdm=")]
+    assert flags == ([f"--uxr-widevine-cdm={cdm}"] if plat == "win-x64" else [])
 
 
 UNSAFE_ENTRIES = {

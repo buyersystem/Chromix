@@ -109,7 +109,8 @@ function mockPlatform(t, platform, arch) {
 }
 
 for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "arm64", "linux-arm64"],
-  ["win32", "x64", "win-x64"], ["darwin", "x64", "mac-x64"], ["darwin", "arm64", "mac-arm64"]]) {
+  ["win32", "x64", "win-x64"], ["win32", "arm64", "win-arm64"],
+  ["darwin", "x64", "mac-x64"], ["darwin", "arm64", "mac-arm64"]]) {
   test(`ZIP download, public API and cache: ${plat}`, async (t) => {
     mockPlatform(t, platform, arch);
     const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
@@ -118,6 +119,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
     const root = join(cache, tag, plat), chrome = binary.binaryPath(plat, root);
     assert.equal(await api.ensureBinary(options), chrome);
     assert.equal(readFileSync(chrome, "utf8"), "chrome fixture");
+    assert.equal(api.binaryInfo(options).platform, plat);
     assert.equal(api.binaryInfo(options).path, chrome);
     assert.equal(api.binaryInfo(options).installed, true);
     assert.equal(await binary.ensureNative(plat, host, tag), join(root, binary.ASSETS[plat].launcher));
@@ -148,15 +150,17 @@ test("ZIP preserves framework links, chains and internal parent-relative targets
   assert.equal(readFileSync(join(root, "chromix/Framework/chrome"), "utf8"), "chrome fixture");
 });
 
+for (const plat of ["linux-x64", "win-x64", "win-arm64"])
 for (const failure of ["http", "network", "stream", "checksum", "corrupt", "missing-launcher", "missing-binary", "directory-binary"]) {
-  test(`ZIP ${failure} cleans staging, keeps old cache and permits retry`, async (t) => {
-    const plat = "linux-x64", root = join(cache, tag, plat), marker = join(root, "old-cache");
+  test(`ZIP ${plat} ${failure} cleans staging, keeps old cache and permits retry`, async (t) => {
+    const root = join(cache, tag, plat), marker = join(root, "old-cache");
+    const chromeName = relative(".", binary.binaryPath(plat, ".")).split("\\").join("/");
     mkdirSync(root, { recursive: true });
     writeFileSync(marker, "keep");
     let entries = bundle(plat);
     if (failure === "missing-launcher") entries = entries.filter((entry) => entry.name !== binary.ASSETS[plat].launcher);
-    if (failure === "missing-binary") entries = entries.filter((entry) => entry.name !== "chromix/chrome");
-    if (failure === "directory-binary") entries = [...entries.filter((entry) => entry.name !== "chromix/chrome"), file("chromix/chrome/", "", 0o40755)];
+    if (failure === "missing-binary") entries = entries.filter((entry) => entry.name !== chromeName);
+    if (failure === "directory-binary") entries = [...entries.filter((entry) => entry.name !== chromeName), file(`${chromeName}/`, "", 0o40755)];
     mockRelease(t, plat, failure === "corrupt" ? Buffer.from("not a ZIP") : zipFixture(entries), failure);
     await assert.rejects(binary.ensureNative(plat, host, tag));
     assert.equal(readFileSync(marker, "utf8"), "keep");
@@ -168,10 +172,12 @@ for (const failure of ["http", "network", "stream", "checksum", "corrupt", "miss
   });
 }
 
+for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"],
+  ["win32", "x64", "win-x64"], ["win32", "arm64", "win-arm64"]])
 for (const missing of ["launcher", "binary", "directory", "external-link"]) {
-  test(`public API rejects incomplete cache: ${missing}`, { skip: missing === "external-link" && process.platform === "win32" }, async (t) => {
-    mockPlatform(t, "linux", "x64");
-    const plat = "linux-x64", root = join(cache, tag, plat);
+  test(`public API rejects incomplete ${plat} cache: ${missing}`, { skip: missing === "external-link" && process.platform === "win32" }, async (t) => {
+    mockPlatform(t, platform, arch);
+    const root = join(cache, tag, plat);
     const launcher = join(root, binary.ASSETS[plat].launcher), chrome = binary.binaryPath(plat, root);
     mkdirSync(dirname(chrome), { recursive: true });
     if (missing !== "launcher") writeFileSync(launcher, "old");
@@ -185,6 +191,56 @@ for (const missing of ["launcher", "binary", "directory", "external-link"]) {
     const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
     assert.equal(await api.ensureBinary(options), chrome);
     assert.equal(urls.length, 2);
+  });
+}
+
+for (const [arch, plat, other] of [["x64", "win-x64", "win-arm64"], ["arm64", "win-arm64", "win-x64"]])
+for (const failure of ["", "http"]) {
+  test(`Windows cache isolation without architecture fallback: ${plat} ${failure || "success"}`, async (t) => {
+    mockPlatform(t, "win32", arch);
+    const otherRoot = join(cache, tag, other);
+    mkdirSync(join(otherRoot, "chromix"), { recursive: true });
+    writeFileSync(join(otherRoot, "chromix", "chromix.cmd"), "other launcher");
+    writeFileSync(join(otherRoot, "chromix", "chrome.exe"), other);
+    assert.equal(binary.bundleComplete(other, otherRoot), true);
+    assert.equal(api.binaryInfo(options).installed, false);
+    const urls = mockRelease(t, plat, zipFixture(bundle(plat)), failure);
+    if (failure) {
+      await assert.rejects(api.ensureBinary(options), /download failed: 404/);
+      assert.equal(api.binaryInfo(options).installed, false);
+      assert.equal(api.binaryInfo(options).path, null);
+      assert.deepEqual(urls, [`${host}/chromix-${plat}.zip`]);
+      assert.deepEqual(readdirSync(join(cache, tag)), [other]);
+    } else {
+      assert.equal(await api.ensureBinary(options), join(cache, tag, plat, "chromix", "chrome.exe"));
+      assert.deepEqual(urls, [`${host}/chromix-${plat}.zip`, `${host}/SHA256SUMS`]);
+      assert.deepEqual(readdirSync(join(cache, tag)).sort(), [plat, other].sort());
+    }
+    assert.equal(readFileSync(join(otherRoot, "chromix", "chrome.exe"), "utf8"), other);
+    assert.equal(binary.bundleComplete(other, otherRoot), true);
+  });
+}
+
+for (const [arch, plat] of [["x64", "win-x64"], ["arm64", "win-arm64"]]) {
+  test(`Windows launch executable and x64 Widevine compatibility: ${plat}`, async (t) => {
+    mockPlatform(t, "win32", arch);
+    const cdm = join(cache, "widevine", "WidevineCdm");
+    mkdirSync(join(cdm, "_platform_specific", "win_x64"), { recursive: true });
+    writeFileSync(join(cdm, "manifest.json"), "{}");
+    writeFileSync(join(cdm, "_platform_specific", "win_x64", "widevinecdm.dll"), "x64 CDM");
+    for (const [key, value] of [["CLOAKBROWSER_WIDEVINE_CDM", cdm], ["CLOAKBROWSER_WIDEVINE", "1"]]) {
+      const original = process.env[key];
+      process.env[key] = value;
+      t.after(() => {
+        if (original === undefined) delete process.env[key];
+        else process.env[key] = original;
+      });
+    }
+    mockRelease(t, plat, zipFixture(bundle(plat)));
+    const launch = await api.buildLaunchOptions({ ...options, stealthArgs: false });
+    assert.equal(launch.executablePath, join(cache, tag, plat, "chromix", "chrome.exe"));
+    assert.deepEqual(launch.args.filter((arg) => arg.startsWith("--uxr-widevine-cdm=")),
+      arch === "x64" ? [`--uxr-widevine-cdm=${cdm}`] : []);
   });
 }
 

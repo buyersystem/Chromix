@@ -1,5 +1,5 @@
 <#
-  One stage of the GitHub-hosted Windows x64 build.
+  One stage of the GitHub-hosted Windows build (x64 host, x64 or ARM64 target).
 
   The source is prepared through the same pinned ungoogled-chromium pipeline as
   build.ps1. Each stage restores C:\c\chromix, resumes ninja, and snapshots the
@@ -12,9 +12,12 @@ param(
   [switch]$FromArtifact,
   [switch]$UseUpstreamCache,
   [ValidatePattern('\A[0-9]*\z')] [string]$UpstreamRunId = "",
-  [switch]$ValidateOnly
+  [switch]$ValidateOnly,
+  [ValidateSet("x64", "arm64")]
+  [string]$Arch = $(if ($env:CHROMIX_TARGET_ARCH) { $env:CHROMIX_TARGET_ARCH } else { "x64" })
 )
 $ErrorActionPreference = "Stop"
+if ($Arch -cnotin @("x64", "arm64")) { throw "Arch/CHROMIX_TARGET_ARCH must be x64 or arm64" }
 $Repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 $Revisions = Import-PowerShellDataFile (Join-Path $Repo "build\ungoogled-revisions.psd1")
 $BuildProfile = if ($env:CHROMIX_BUILD_PROFILE) { $env:CHROMIX_BUILD_PROFILE } else { "native" }
@@ -27,6 +30,11 @@ $OutDir = "$Src\out\Chromix"
 $RestoredUpstream = $false
 # CI opt-in requires a full restore, including validation and artifact resumes.
 $RequireUpstreamCache = $UseUpstreamCache -or $UpstreamRunId -or ($env:CHROMIX_USE_UPSTREAM_CACHE -eq "1")
+if ($Arch -eq "arm64") {
+  if ($RequireUpstreamCache) { throw "Windows ARM64 cannot reuse the x64 pinned upstream cache" }
+  # Optional x64 cache preference must never turn an ARM64 cold build into a restore.
+  $env:CHROMIX_PREFER_UPSTREAM_CACHE = "0"
+}
 $PartsDir = "C:\parts"
 $UpstreamCacheDir = "C:\u"
 # Standalone validation remains available; CI validates inside the first build job.
@@ -510,14 +518,19 @@ function Resolve-7Zip {
 function Save-Handoff {
   param([ValidateSet("Synced", "Unsynced")] [string]$Mode)
   if (Test-LastStage) { throw "build did not finish within $MaxStages stages" }
+  if ($Arch -eq "arm64" -or (Test-Path (Join-Path $WorkDir ".chromix-target-arch"))) {
+    & "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch -Initialize
+  }
   Write-OutVar upload_parts true
-  . "$PSScriptRoot\ci-parts.ps1" -Root $Root -PartsDir $PartsDir -Mode $Mode
+  . "$PSScriptRoot\ci-parts.ps1" -Root $Root -PartsDir $PartsDir -Mode $Mode -Arch $Arch
 }
 
 function Assert-CiScripts {
   foreach ($path in @(
     "$PSScriptRoot\ci-stage.ps1",
     "$PSScriptRoot\ci-parts.ps1",
+    "$PSScriptRoot\assert-target-arch.ps1",
+    "$PSScriptRoot\assert-arm64-toolchain.ps1",
     "$PSScriptRoot\prepare-ungoogled.ps1",
     "$PSScriptRoot\update-restored-source.ps1",
     "$PSScriptRoot\package-win.ps1"
@@ -558,6 +571,16 @@ function Initialize-VisualStudio {
     -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
     -property installationPath).Trim()
   if (-not $installation) { throw "Visual Studio 2022 C++ tools are not installed" }
+  if ($Arch -eq "arm64") {
+    $installation = (& $vswhere -latest -products * -version '[17.0,18.0)' `
+      -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 Microsoft.VisualStudio.Component.VC.Tools.ARM64 `
+      -property installationPath | Select-Object -First 1)
+    if (-not $installation) {
+      throw "VS2022 ARM64 tools are missing; add Microsoft.VisualStudio.Component.VC.Tools.ARM64 with the existing VS installer --add"
+    }
+    $env:GYP_MSVS_OVERRIDE_PATH = $installation.Trim()
+    $env:vs2022_install = $installation.Trim()
+  }
   $devCmd = Join-Path $installation "Common7\Tools\VsDevCmd.bat"
   if (-not (Test-Path $devCmd)) { throw "VsDevCmd.bat is missing: $devCmd" }
 
@@ -575,7 +598,8 @@ function Initialize-VisualStudio {
 
 function Install-Debuggers {
   $dbghelp = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\dbghelp.dll"
-  if (Test-Path $dbghelp) { return }
+  $targetDbghelp = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\arm64\dbghelp.dll"
+  if ((Test-Path $dbghelp) -and ($Arch -ne "arm64" -or (Test-Path $targetDbghelp))) { return }
   Write-Host "==> installing Windows SDK Debugging Tools"
   New-Item -ItemType Directory -Force -Path $Root | Out-Null
   $iso = "$Root\winsdk.iso"
@@ -596,6 +620,9 @@ function Install-Debuggers {
     Remove-Item $iso -Force -ErrorAction SilentlyContinue
   }
   if (-not (Test-Path $dbghelp)) { throw "dbghelp.dll is missing after Debugging Tools install" }
+  if ($Arch -eq "arm64" -and -not (Test-Path $targetDbghelp)) {
+    throw "ARM64 dbghelp.dll is missing after Debugging Tools install"
+  }
 }
 
 function Invoke-BoundedBrowser {
@@ -690,12 +717,14 @@ function Invoke-FingerprintAcceptance([string]$Browser) {
 }
 
 function Verify-FinalBundle {
-  $asset = Join-Path $Root "dist\chromix-win-x64.zip"
+  $assetName = if ($Arch -eq "arm64") { "chromix-win-arm64.zip" } else { "chromix-win-x64.zip" }
+  $asset = Join-Path $Root "dist\$assetName"
   $manifest = Join-Path $Root "dist\SHA256SUMS"
   if (-not (Test-Path $asset) -or -not (Test-Path $manifest)) {
     throw "final Windows bundle or SHA256SUMS is missing"
   }
-  $entry = @(Get-Content $manifest | Where-Object { $_ -match '^([0-9a-fA-F]{64})\s+chromix-win-x64\.zip$' })
+  $entryPattern = '^([0-9a-fA-F]{64})\s+' + [regex]::Escape($assetName) + '$'
+  $entry = @(Get-Content $manifest | Where-Object { $_ -match $entryPattern })
   if ($entry.Count -ne 1) { throw "SHA256SUMS has no unique Windows ZIP entry" }
   $expected = [regex]::Match($entry[0], '^([0-9a-fA-F]{64})').Groups[1].Value.ToLowerInvariant()
   $actual = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -731,6 +760,14 @@ function Verify-FinalBundle {
       throw "versioned Windows DLL differs from the newly linked portable DLL"
     }
   }
+  if ($Arch -eq "arm64") {
+    python (Join-Path $Repo "tools\verify_windows_bundle.py") --bundle $bundle --arch $Arch
+    if ($LASTEXITCODE -ne 0) { throw "extracted Windows ARM64 bundle metadata verification failed" }
+    Write-OutVar runtime_verified false
+    Write-OutVar status compiled
+    Write-Host "==> Windows ARM64 ZIP and PE metadata verified; native runtime verification is required on windows-11-arm"
+    return
+  }
   $profile = Join-Path $smokeRoot "profile"
   $dom = Invoke-BoundedBrowser -Launcher $launcher -Arguments @(
     "--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
@@ -752,6 +789,7 @@ Assert-CiScripts
 Free-Disk
 Initialize-VisualStudio
 Install-Debuggers
+if ($Arch -eq "arm64") { & "$PSScriptRoot\assert-arm64-toolchain.ps1" }
 git config --global core.longpaths true
 
 Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue
@@ -774,6 +812,9 @@ if ($FromArtifact) {
   if ($LASTEXITCODE -ne 0) { throw "7z restore failed" }
   Remove-Item C:\restore -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+& "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch -Initialize:($Arch -eq "arm64") `
+  -RequireMarker:($FromArtifact -and $Arch -eq "arm64")
 
 $domainProgress = Join-Path $Src ".chromix-domain-substitution-in-progress"
 $domainMarker = Join-Path $Src ".chromix-domain-substituted"
@@ -882,8 +923,10 @@ if (-not (Test-Path (Join-Path $Src ".chromix-source-ready")) -and
 $prepareDeadline = [DateTimeOffset]::new($Deadline).ToUnixTimeSeconds()
 try {
   # Revalidate ready markers on every stage, including artifact resumes.
+  $prepareOptions = @{}
+  if ($Arch) { $prepareOptions.Arch = $Arch }
   & "$PSScriptRoot\prepare-ungoogled.ps1" -Root $WorkDir -Repo $Repo `
-    -DeadlineEpoch $prepareDeadline -ReserveMinutes $PackReserveMin
+    -DeadlineEpoch $prepareDeadline -ReserveMinutes $PackReserveMin @prepareOptions
 } catch {
   if ($_.Exception.Message -like "PREPARE_BUDGET_EXHAUSTED:*") {
     if ($ValidateOnly) { throw }
@@ -908,8 +951,12 @@ $mergeArgs += @(
   (Join-Path $WindowsTooling "flags.windows.gn"),
   (Join-Path $Repo "build\args.windows.gn")
 )
+if ($Arch -eq "arm64") { $mergeArgs += (Join-Path $Repo "build\args.windows.arm64.gn") }
 python @mergeArgs
 if ($LASTEXITCODE -ne 0) { throw "GN argument merge failed" }
+if ($Arch -eq "arm64") {
+  & "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $WorkDir -Arch $Arch
+}
 
 $env:PATH = "$(Join-Path $Src 'third_party\ninja');$(Join-Path $Src 'third_party\node\win');$env:PATH"
 $Ninja = Join-Path $Src "third_party\ninja\ninja.exe"
@@ -1055,8 +1102,16 @@ if ($RestoredUpstream) {
 
 if ($rc -eq 0) {
   New-Item -ItemType Directory -Force -Path "$Root\dist" | Out-Null
-  & "$PSScriptRoot\package-win.ps1" -Out $OutDir -Dest "$Root\dist"
+  $packageOptions = @{}
+  if ($Arch) { $packageOptions.Arch = $Arch }
+  & "$PSScriptRoot\package-win.ps1" -Out $OutDir -Dest "$Root\dist" @packageOptions
   Verify-FinalBundle
+  if ($Arch -eq "arm64") {
+    if (-not (Test-Path -LiteralPath $FingerprintSourceReport -PathType Leaf)) {
+      throw "Windows ARM64 source verification receipt is missing"
+    }
+    Copy-Item -LiteralPath $FingerprintSourceReport -Destination "$Root\dist\source-verification.json" -Force
+  }
   Write-OutVar finished true
   return
 }

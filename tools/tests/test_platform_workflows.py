@@ -23,10 +23,10 @@ def events(workflow):
 
 
 class PlatformWorkflowTest(unittest.TestCase):
-    def test_exactly_five_build_entrypoints(self):
+    def test_exactly_six_build_entrypoints(self):
         names = {load(path.stem)['name'] for path in DIRECTORY.glob('build-*.yml')
                  if 'workflow_dispatch' in events(load(path.stem))}
-        self.assertEqual(names, set(PLATFORMS) | {'build-win-x64-github'})
+        self.assertEqual(names, set(PLATFORMS) | {'build-win-x64-github', 'build-win-arm64-github'})
         self.assertFalse((DIRECTORY / 'build-cross-platform.yml').exists())
         self.assertEqual(set(events(load('build-posix-github'))), {'workflow_call'})
 
@@ -73,16 +73,17 @@ class PlatformWorkflowTest(unittest.TestCase):
         self.assertEqual(len(groups), 4)
         self.assertNotIn(load('build-win-x64-github')['concurrency']['group'], groups)
 
-    def test_windows_push_requires_cache_and_keeps_manual_resume(self):
+    def test_windows_push_prefers_cache_and_keeps_manual_resume(self):
         workflow = load('build-win-x64-github')
         self.assertIn('push', events(workflow))
         self.assertEqual(events(workflow)['push']['branches'], ['main'])
         self.assertFalse(workflow['concurrency']['cancel-in-progress'])
-        self.assertIn("github.event_name == 'push' || inputs.use_upstream_cache",
-                      workflow['env']['CHROMIX_USE_UPSTREAM_CACHE'])
+        self.assertEqual(workflow['env']['CHROMIX_PREFER_UPSTREAM_CACHE'],
+                         "${{ github.event_name == 'push' && '1' || '0' }}")
+        self.assertEqual(workflow['env']['CHROMIX_USE_UPSTREAM_CACHE'],
+                         "${{ (inputs.use_upstream_cache || inputs.upstream_run_id != '') && '1' || '0' }}")
         stage = next(step for step in workflow['jobs']['build-1']['steps'] if step.get('id') == 'stage')
-        self.assertIn("github.event_name == 'push' || inputs.use_upstream_cache",
-                      stage['env']['USE_UPSTREAM_CACHE'])
+        self.assertEqual(stage['env']['USE_UPSTREAM_CACHE'], '${{ inputs.use_upstream_cache }}')
         self.assertIn('resume_run_id', events(workflow)['workflow_dispatch']['inputs'])
         paths = events(workflow)['push']['paths']
         self.assertIn('build/windows/**', paths)

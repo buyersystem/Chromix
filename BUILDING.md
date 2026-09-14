@@ -1,9 +1,9 @@
-# Building Chromix for Windows x64, Linux x64/arm64, and macOS x64/arm64
+# Building Chromix for Windows x64/arm64, Linux x64/arm64, and macOS x64/arm64
 
-The build scripts target Windows x64, Linux x64/arm64, and macOS x64/arm64 using
+The build scripts target Windows x64/arm64, Linux x64/arm64, and macOS x64/arm64 using
 pinned `ungoogled-chromium` sources. Each successful platform is verified and
 published independently to its Chromium version's release tag; other platforms
-append as they succeed, without a five-platform or shared-source-SHA gate.
+append as they succeed, without an all-platform or shared-source-SHA gate.
 
 Every platform uses this source-layer order:
 **Chromium archive → ungoogled core patches → matching platform patches →
@@ -145,12 +145,42 @@ a complete Chromium build remains necessary to establish compatibility with
 other APIs. This workflow neither downloads a private Apple toolchain nor
 changes SDK pins/GN requirements to hide a mismatch.
 
+## Windows ARM64 cross-builds
+
+Windows ARM64 uses the pinned Windows source layers and x64-hosted LLVM, Rust,
+GN and Ninja tools. Visual Studio 2022 needs the ARM64 C++ build tools and ATL
+libraries in addition to its x64 components; the Windows SDK must include ARM64
+libraries. The target overlay sets `target_cpu = "arm64"` after the common
+Windows flags. Separate work directories prevent accidental x64/ARM64 reuse:
+
+```powershell
+build/windows/build.ps1 -Arch arm64 -WorkDir C:\chromix-arm64
+build/windows/package-win.ps1 -Arch arm64 -Out C:\chromix-arm64\src\out\Chromix -Dest C:\dist-arm64
+```
+
+The independent `build-win-arm64-github.yml` workflow cross-compiles on
+`windows-2022`, preserving the twelve-stage snapshot handoff and process cleanup
+gates. Its first run prepares pinned sources without the x64 upstream object
+cache. Same-run snapshots use an ARM64-specific artifact prefix and exact
+producer attempt; cross-run snapshot inputs are not exposed for this new platform.
+The existing Windows x64 workflow and cache policy remain separate.
+
+`chromix-win-arm64.zip` is checked for its SHA256, bundle layout and ARM64 PE
+headers, then downloaded by a required `windows-11-arm` job from the same run.
+That job checks the native OS architecture with `IsWow64Process2`, validates
+Windows product-version resources, executes a bounded sandboxed headless DOM
+check, and runs the fingerprint acceptance gate with the producer's source
+receipt. Its Python controller runs under x64 emulation for dependency support;
+the browser being checked is ARM64. Cross-build success or PE metadata alone
+cannot pass the workflow. These are unsigned bundles; native build/runtime
+acceptance requires an actual successful Actions run.
+
 ## GitHub Actions cross-platform build
 
-Five independent workflows each own one platform's jobs and ZIP artifact.
-The four POSIX entrypoints call `build-posix-github.yml`; Windows uses its
-existing staged workflow directly. Failures and retries stay within that
-platform, and no entrypoint cancels an active build.
+Six independent workflows each own one platform's jobs and ZIP artifact.
+The four POSIX entrypoints call `build-posix-github.yml`; each Windows target has
+its own staged workflow. Failures and retries stay within that platform, and no
+entrypoint cancels an active build.
 
 | Workflow | Runner | Target | Archive |
 |---|---|---|---|
@@ -159,10 +189,12 @@ platform, and no entrypoint cancels an active build.
 | `build-macos-x64.yml` | `macos-15-intel` | macOS x64 | `chromix-mac-x64.zip` |
 | `build-macos-arm64.yml` | `macos-15` | macOS arm64 | `chromix-mac-arm64.zip` |
 | `build-win-x64-github.yml` | `windows-2022` | Windows x64 | `chromix-win-x64.zip` |
+| `build-win-arm64-github.yml` | `windows-2022` build; `windows-11-arm` verification | Windows arm64 | `chromix-win-arm64.zip` |
 
-Each entrypoint supports manual dispatch with `use_upstream_cache=true` by
-default. Filtered pushes start the affected platform workflows; shared build
-changes can start all five. To push a repair without duplicating platforms
+The existing five entrypoints support manual dispatch with
+`use_upstream_cache=true` by default. Windows ARM64 instead starts from pinned
+sources and accepts `build_profile` and `compile_jobs`. Filtered pushes start the
+affected platform workflows; shared build changes can start all six. To push a repair without duplicating platforms
 already running, include `[skip ci]` in the commit message, then dispatch only
 the repaired platform. Confirm the source SHA and workflow before dispatching
 and reuse an existing run rather than dispatching the same pair twice:
@@ -200,9 +232,9 @@ attempt when resuming. Donors must come from `main`, or from a manual run on the
 same explicitly selected recovery branch. Existing runs keep their original
 workflow revision and patch set.
 
-### Five-platform parallelism and incremental builds
+### Platform parallelism and incremental builds
 
-All five Actions entrypoints accept `compile_jobs=auto|N`. The default `auto`
+All six Actions entrypoints accept `compile_jobs=auto|N`. The default `auto`
 uses host CPU count and available RAM, reserving 2 GiB and budgeting 2.5 GiB per
 compile. It is a conservative starting heuristic, not a peak-memory guarantee:
 large translation units and linkers may need more memory. An unavailable memory

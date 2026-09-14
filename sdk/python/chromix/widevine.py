@@ -62,7 +62,10 @@ def _platform_key() -> tuple[str, str] | None:
 
 
 def _valid_cdm_dir(path: Path, plat: tuple[str, str]) -> bool:
-    subdir, lib = _LIB_NAMES[plat]
+    layout = _LIB_NAMES.get(plat)
+    if layout is None:
+        return False
+    subdir, lib = layout
     return (path / "manifest.json").is_file() and (path / "_platform_specific" / subdir / lib).is_file()
 
 

@@ -8,6 +8,7 @@ on:
       - build-macos-x64
       - build-macos-arm64
       - build-win-x64-github
+      - build-win-arm64-github
     types: [completed]
     branches: [main]
   workflow_dispatch:

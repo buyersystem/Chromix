@@ -21,7 +21,7 @@ Chromix 是基于 Chromium 的浏览器项目，面向浏览器自动化、兼�
 - **持久化配置种子**：SDK 的持久化用户目录复用同一个指纹种子；非持久化启动默认生成随机 32 位种子，命令行也支持显式种子。
 - **Playwright 集成**：Python 返回 `Browser` / `BrowserContext`，Node.js 提供对应的 camelCase API，并保持 CloakBrowser 风格的常用接口。
 - **代理感知配置**：可选 GeoIP 查询通过实际使用的代理获取语言、时区和出口 IP；代理启动默认限制非代理 UDP。WebRTC IP 参数修改本地地址的展示副本，实际 ICE 路由仍由原生后端负责。
-- **五平台独立构建**：Windows x64、Linux x64/ARM64、macOS Intel/Apple Silicon 各自构建和验证，不因其他平台尚未完成而阻塞已验证平台。
+- **六平台独立构建**：Windows x64/ARM64、Linux x64/ARM64、macOS Intel/Apple Silicon 各自构建和验证，不因其他平台尚未完成而阻塞已验证平台。
 - **固定源码与完整性检查**：源码版本和平台层固定，发布包附带 `SHA256SUMS`；SDK 在校验清单可用时先校验归档，再进行安全解压。
 
 ## 下载与平台支持
@@ -34,10 +34,13 @@ Canvas 原生路径修复和验收边界见 [Canvas 链路记录](docs/canvas-ch
 | 平台 | 归档名称 | 解压后的手动启动入口 |
 |---|---|---|
 | Windows x64 | `chromix-win-x64.zip` | `chromix/chromix.cmd` |
+| Windows ARM64 | `chromix-win-arm64.zip` | `chromix/chromix.cmd` |
 | Linux x64 | `chromix-linux-x64.zip` | `chromix/chromix` |
 | Linux ARM64 | `chromix-linux-arm64.zip` | `chromix/chromix` |
 | macOS Intel | `chromix-mac-x64.zip` | `chromix/chromix` |
 | macOS Apple Silicon | `chromix-mac-arm64.zip` | `chromix/chromix` |
+
+Windows ARM64 在 `windows-2022`（x64）上交叉编译，再由 `windows-11-arm` 执行原生验证。**构建完成不等于已验收或已发布**，请以 Release 的 Assets 为准。下方 Windows 示例使用 x64；下载已发布的 ARM64 包时，将示例中的 `win-x64` 全部替换为 `win-arm64`。
 
 当前源码固定到 Chromium **`152.0.7977.82`**，对应发布标签为 [`v152.0.7977.82`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.82)。二进制发布可能滞后于源码。
 

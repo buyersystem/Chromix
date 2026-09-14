@@ -18,10 +18,17 @@ param(
   [Parameter(Mandatory)] [string]$Root,
   [Parameter(Mandatory)] [string]$PartsDir,
   [ValidateSet("Synced", "Unsynced")]
-  [string]$Mode = "Synced"
+  [string]$Mode = "Synced",
+  [ValidateSet("x64", "arm64")]
+  [string]$Arch = $(if ($env:CHROMIX_TARGET_ARCH) { $env:CHROMIX_TARGET_ARCH } else { "x64" })
 )
 $ErrorActionPreference = "Stop"
+if ($Arch -cnotin @("x64", "arm64")) { throw "Arch/CHROMIX_TARGET_ARCH must be x64 or arm64" }
 $MaxSlots = 4
+$workDir = Join-Path $Root "chromix"
+if ($Arch -eq "arm64" -or (Test-Path (Join-Path $workDir ".chromix-target-arch"))) {
+  & "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $workDir -Arch $Arch -RequireMarker
+}
 
 Remove-Item $PartsDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path "$PartsDir\stage" | Out-Null

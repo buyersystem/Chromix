@@ -10,9 +10,12 @@ param(
   [Parameter(Mandatory)] [string]$Root,
   [Parameter(Mandatory)] [string]$Repo,
   [int]$DeadlineEpoch = 0,
-  [int]$ReserveMinutes = 45
+  [int]$ReserveMinutes = 45,
+  [ValidateSet("x64", "arm64")]
+  [string]$Arch = $(if ($env:CHROMIX_TARGET_ARCH) { $env:CHROMIX_TARGET_ARCH } else { "x64" })
 )
 $ErrorActionPreference = "Stop"
+if ($Arch -cnotin @("x64", "arm64")) { throw "Arch/CHROMIX_TARGET_ARCH must be x64 or arm64" }
 
 $Revisions = Import-PowerShellDataFile (Join-Path $Repo "build\ungoogled-revisions.psd1")
 $Tooling = Join-Path $Root "tooling"
@@ -20,6 +23,9 @@ $Ungoogled = Join-Path $Tooling "ungoogled-chromium"
 $Windows = Join-Path $Tooling "ungoogled-chromium-windows"
 $DownloadCache = Join-Path $Root "download_cache"
 $Src = Join-Path $Root "src"
+if ($Arch -eq "arm64" -or (Test-Path (Join-Path $Root ".chromix-target-arch"))) {
+  & "$PSScriptRoot\assert-target-arch.ps1" -WorkDir $Root -Arch $Arch -Initialize
+}
 $PatchExe = ""
 $PatchSafetyOptions = @("--fuzz=0", "--binary", "--get=0", "--no-backup-if-mismatch", "--reject-file=-")
 $env:PATCH_GET = "0"
@@ -109,7 +115,7 @@ function Prepare-RustToolchain {
   # bin\cargo.exe on the first CI run while pwsh replications looked perfect.
   Invoke-Checked $Python @(
     (Join-Path $Repo "build\windows\prep_rust_toolchain.py"),
-    "--third-party-root", (Join-Path $Src "third_party")
+    "--third-party-root", (Join-Path $Src "third_party"), "--arch", $Arch
   )
   foreach ($binary in @("cargo.exe", "rustc.exe")) {
     if (-not (Test-Path (Join-Path $destination "bin\$binary"))) {
@@ -120,6 +126,14 @@ function Prepare-RustToolchain {
       throw "Rust toolchain merge did not produce bin\$binary"
     }
   }
+}
+
+function Assert-Arm64RustToolchain {
+  if ($Arch -ne "arm64") { return }
+  Invoke-Checked $Python @(
+    (Join-Path $Repo "build\windows\prep_rust_toolchain.py"),
+    "--third-party-root", (Join-Path $Src "third_party"), "--arch", $Arch, "--verify-only"
+  )
 }
 
 function Restore-LiteTarballFiles {
@@ -365,6 +379,7 @@ if (Test-Path (Join-Path $Src ".chromix-domain-substituted")) {
 }
 if (Test-Path $readyMarker) {
   Assert-PreparedLayers
+  Assert-Arm64RustToolchain
   if (-not $RestoredUpstream) {
     Write-Host "==> source layers already prepared and verified: $versionKey"
     return
@@ -517,6 +532,7 @@ if (-not (Test-Marker ".chromix-source-unpacked" $Revisions.ChromiumVersion)) {
 if (-not (Test-Path (Join-Path $Src "third_party\rust-toolchain\bin\rustc.exe"))) {
   Prepare-RustToolchain
 }
+Assert-Arm64RustToolchain
 Restore-LiteTarballFiles
 
 if (-not (Test-Marker ".chromix-ungoogled-core" $Revisions.UngoogledCommit)) {

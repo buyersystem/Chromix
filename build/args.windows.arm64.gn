@@ -1,0 +1,2 @@
+# Final target overlay; host GN, Ninja, Node, LLVM and Rust remain x64.
+target_cpu = "arm64"

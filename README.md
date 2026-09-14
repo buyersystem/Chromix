@@ -13,7 +13,7 @@ Chromix is a Chromium-based browser build focused on presenting a coherent,
 per-launch browser persona across JavaScript-visible surfaces. It is built on
 pinned `ungoogled-chromium` sources and the matching Windows/Linux/macOS platform
 layer, then adds a reviewed Chromium 152 patch series and lightweight Python and
-Node SDKs. Five independent workflows build Windows x64, Linux x64/arm64,
+Node SDKs. Six independent workflows target Windows x64/arm64, Linux x64/arm64,
 and macOS x64/arm64. Each platform publishes independently after its build,
 checksum, extraction, version, headless smoke and fingerprint regression gates succeed. Successful
 platforms append to the same Chromium-version release tag; they need not share
@@ -71,9 +71,9 @@ for defaults, implemented boundaries and the requirement to rebuild this stack.
 
 ## Downloads
 
-Prebuilt **Windows x64, Linux x64/arm64, and macOS x64/arm64** packages are
-published on the [GitHub Releases page](https://github.com/xiaozhou26/Chromix/releases)
-as each independent platform succeeds, without waiting for the others. Available
+The source targets **Windows x64/arm64, Linux x64/arm64, and macOS x64/arm64**.
+Prebuilt packages are published on the [GitHub Releases page](https://github.com/xiaozhou26/Chromix/releases)
+as each independent platform passes verification, without waiting for the others. Available
 platforms accumulate under one `v<CHROMIUM_VERSION>` tag, titled `Chromix <version>`.
 The tag stays pinned to its initial source commit; notes identify each platform's
 actual source SHA and build run, which may differ for the same Chromium version.
@@ -81,6 +81,21 @@ Existing assets and checksums are preserved, and an already published ZIP is nev
 replaced with different bytes. Every browser bundle is accompanied by `SHA256SUMS`.
 macOS bundles remain unsigned and are not notarized because Apple signing
 credentials are not part of this build.
+
+| Target platform | Archive | Manual launcher after extraction |
+|---|---|---|
+| Windows x64 | `chromix-win-x64.zip` | `chromix/chromix.cmd` |
+| Windows ARM64 | `chromix-win-arm64.zip` | `chromix/chromix.cmd` |
+| Linux x64 | `chromix-linux-x64.zip` | `chromix/chromix` |
+| Linux ARM64 | `chromix-linux-arm64.zip` | `chromix/chromix` |
+| macOS Intel | `chromix-mac-x64.zip` | `chromix/chromix` |
+| macOS Apple Silicon | `chromix-mac-arm64.zip` | `chromix/chromix` |
+
+**The target list is not a list of already accepted or published binaries.**
+Windows ARM64 is cross-compiled on `windows-2022` (x64), then requires native
+verification on `windows-11-arm`. Build completion alone is not acceptance;
+check the release Assets for availability. The Windows examples below use x64;
+for a published ARM64 package, replace `win-x64` with `win-arm64` throughout.
 
 Old aggregate runs are not automatically adopted. The selected Windows run `34080799322`
 (artifact `10066146011`, source `23fd0a7a0c63cd452cfaec6b2aba8469ef5d4123`) was

@@ -100,7 +100,7 @@ def ensure_binary(license_key: str | None = None,
     if plat is None:
         raise RuntimeError(
             "No native Chromix binary for this platform (Linux x64/arm64, "
-            "Windows x64, macOS x64/arm64); or point CLOAKBROWSER_BINARY_PATH at a local build.")
+            "Windows x64/arm64, macOS x64/arm64); or point CLOAKBROWSER_BINARY_PATH at a local build.")
     ch = _channel_for(browser_version, release_channel)
     tag = _CHANNELS[ch]["tag"]
     chrome = _chrome_binary(plat, tag)

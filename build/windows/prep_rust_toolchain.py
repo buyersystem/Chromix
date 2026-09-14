@@ -54,7 +54,7 @@ def write_installed_version(destination, sources):
         subprocess.run([str(rustc), "--version"], stdout=handle, check=True)
 
 
-def verify(destination, third_party_root):
+def verify(destination, third_party_root, arch="x64"):
     missing = [name for name in BINARIES_THAT_MUST_EXIST
                if not (destination / "bin" / name).is_file()]
     if missing:
@@ -65,6 +65,14 @@ def verify(destination, third_party_root):
              f"{', '.join('bin/' + m for m in missing)} under {destination}; "
              f"bundles found: {bundles or 'none'}; merged entries: "
              f"{listing or 'none'}")
+    if arch == "arm64":
+        for triple in ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"):
+            libraries = destination / "lib" / "rustlib" / triple / "lib"
+            for pattern in ("libstd-*.rlib", "libcore-*.rlib", "liballoc-*.rlib",
+                            "libcompiler_builtins-*.rlib"):
+                matches = list(libraries.glob(pattern))
+                if not matches or any(path.stat().st_size == 0 for path in matches):
+                    fail(f"merged Rust {triple} libraries missing or empty: {pattern}")
 
 
 def main():
@@ -73,10 +81,15 @@ def main():
                         help="source tree third_party directory containing "
                              "rust-toolchain-x64/x86/arm bundles and the "
                              "rust-toolchain merge target (default: cwd)")
+    parser.add_argument("--arch", choices=("x64", "arm64"), default="x64")
+    parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
 
     root = Path(args.third_party_root or ".").resolve()
     destination = root / "rust-toolchain"
+    if args.verify_only:
+        verify(destination, root, args.arch)
+        return
     if destination.exists():
         shutil.rmtree(destination)
 
@@ -92,7 +105,7 @@ def main():
     merge_toolchain(sources, destination)
     # Verify before writing the version stamp: a missing cargo must fail even
     # on platforms where executing the bundled rustc binary is impossible.
-    verify(destination, root)
+    verify(destination, root, args.arch)
     write_installed_version(destination, sources)
     print(f"==> merged Rust toolchain: {len(sources)} bundles -> {destination}")
 

@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 import re
+import stat
+import struct
 import subprocess
 import tempfile
 import zipfile
@@ -18,8 +20,25 @@ WORKFLOWS = {
     "build-macos-x64": ("chromix-mac-x64",),
     "build-macos-arm64": ("chromix-mac-arm64",),
     "build-win-x64-github": ("chromix-win-x64",),
+    "build-win-arm64-github": ("chromix-win-arm64",),
 }
 ASSETS = {name + ".zip" for names in WORKFLOWS.values() for name in names}
+ARTIFACT_NAMES = {"chromix-win-arm64": "win-arm64"}
+ARM64_WORKFLOW = "build-win-arm64-github"
+ARM64_NATIVE_JOB = "native Windows ARM64 bundle and fingerprint verification"
+
+
+def native_verification_passed(repo: str, run: dict) -> bool:
+    if run["name"] != ARM64_WORKFLOW:
+        return True
+    run_id, attempt = run_identity(run)
+    pages = json.loads(gh("api", "--paginate", "--slurp",
+                          f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100"))
+    jobs = [job for page in pages for job in page.get("jobs", []) if job.get("name") == ARM64_NATIVE_JOB]
+    return (len(jobs) == 1 and jobs[0].get("run_id") == run_id
+            and jobs[0].get("run_attempt") == attempt and jobs[0].get("head_sha") == run["head_sha"]
+            and jobs[0].get("status") == "completed" and jobs[0].get("conclusion") == "success"
+            and isinstance(jobs[0].get("labels"), list) and "windows-11-arm" in jobs[0]["labels"])
 
 
 def gh(*args: str) -> str:
@@ -91,7 +110,104 @@ def validate_run(run: dict, repo: str, head_sha: str | None = None) -> tuple[str
     return WORKFLOWS[run["name"]]
 
 
-def validate_bundle(path: Path) -> None:
+def validate_arm64_pe(stream, size: int, name: str, version: str | None = None) -> None:
+    """Read ARM64 headers and RT_VERSION resources without executing the image."""
+    def read(offset, length):
+        if offset < 0 or length < 0 or offset + length > size:
+            raise ValueError(f"Truncated PE file: {name}")
+        stream.seek(offset)
+        data = stream.read(length)
+        if len(data) != length:
+            raise ValueError(f"Truncated PE file: {name}")
+        return data
+
+    header = read(0, 64)
+    pe_offset = struct.unpack_from("<I", header, 60)[0]
+    if header[:2] != b"MZ" or not 64 <= pe_offset <= 1024 * 1024:
+        raise ValueError(f"Invalid DOS/PE header: {name}")
+    pe = read(pe_offset, 24)
+    machine, sections = struct.unpack_from("<HH", pe, 4)
+    optional_size, characteristics = struct.unpack_from("<HH", pe, 20)
+    if pe[:4] != b"PE\0\0" or machine != 0xAA64:
+        raise ValueError(f"Expected ARM64 PE machine 0xaa64: {name}")
+    if not 1 <= sections <= 96 or not 112 <= optional_size <= 4096 or not characteristics & 2:
+        raise ValueError(f"Invalid PE headers: {name}")
+    optional = read(pe_offset + 24, optional_size)
+    if struct.unpack_from("<H", optional)[0] != 0x20B:
+        raise ValueError(f"Expected ARM64 PE32+ optional header: {name}")
+    directory_count = struct.unpack_from("<I", optional, 108)[0]
+    if directory_count > 16 or 112 + directory_count * 8 > optional_size:
+        raise ValueError(f"Invalid PE data directory count: {name}")
+    section_table = read(pe_offset + 24 + optional_size, sections * 40)
+    ranges = []
+    for offset in range(0, len(section_table), 40):
+        _, rva, raw_size, raw_offset = struct.unpack_from("<IIII", section_table, offset + 8)
+        if raw_size and (raw_offset < pe_offset + 24 + optional_size + sections * 40
+                         or raw_offset + raw_size > size):
+            raise ValueError(f"Invalid PE section bounds: {name}")
+        ranges.append((rva, raw_size, raw_offset))
+    if version is None:
+        return
+
+    def read_rva(rva, length):
+        offsets = [raw + rva - base for base, count, raw in ranges
+                   if base <= rva and rva + length <= base + count]
+        if len(offsets) != 1:
+            raise ValueError(f"Invalid PE resource RVA: {name}")
+        return read(offsets[0], length)
+
+    if optional_size < 136 or struct.unpack_from("<I", optional, 108)[0] < 3:
+        raise ValueError(f"Missing PE version resource: {name}")
+    resource_rva, resource_size = struct.unpack_from("<II", optional, 128)
+    if not resource_rva or not 16 <= resource_size <= 16 * 1024 * 1024:
+        raise ValueError(f"Invalid PE resource directory: {name}")
+
+    resources = read_rva(resource_rva, resource_size)
+
+    def resource_read(offset, length):
+        if offset < 0 or offset + length > resource_size:
+            raise ValueError(f"Invalid PE resource bounds: {name}")
+        return resources[offset:offset + length]
+
+    def entries(offset):
+        directory = resource_read(offset, 16)
+        named, numbered = struct.unpack_from("<HH", directory, 12)
+        count = named + numbered
+        if not 1 <= count <= 4096:
+            raise ValueError(f"Invalid PE resource entries: {name}")
+        data = resource_read(offset + 16, count * 8)
+        return [struct.unpack_from("<II", data, index * 8) for index in range(count)]
+
+    roots = [target for kind, target in entries(0) if kind == 16]
+    if len(roots) != 1 or not roots[0] & 0x80000000:
+        raise ValueError(f"Missing or ambiguous PE version resource: {name}")
+    versions = []
+    for _, target in entries(roots[0] & 0x7FFFFFFF):
+        if not target & 0x80000000:
+            raise ValueError(f"Invalid PE version name directory: {name}")
+        for _, leaf in entries(target & 0x7FFFFFFF):
+            if leaf & 0x80000000:
+                raise ValueError(f"Invalid PE version language entry: {name}")
+            value_rva, value_size, _, _ = struct.unpack("<IIII", resource_read(leaf, 16))
+            if not 92 <= value_size <= 1024 * 1024:
+                raise ValueError(f"Invalid PE version data size: {name}")
+            value = resource_read(value_rva - resource_rva, value_size)
+            length, value_length, kind = struct.unpack_from("<HHH", value)
+            key = "VS_VERSION_INFO\0".encode("utf-16le")
+            fixed_offset = (6 + len(key) + 3) & ~3
+            if (not fixed_offset + 52 <= length <= len(value) or value_length != 52 or kind != 0
+                    or value[6:6 + len(key)] != key):
+                raise ValueError(f"Invalid VS_VERSION_INFO: {name}")
+            fixed = struct.unpack_from("<13I", value, fixed_offset)
+            if fixed[:2] != (0xFEEF04BD, 0x10000):
+                raise ValueError(f"Invalid VS_FIXEDFILEINFO: {name}")
+            for high, low in ((fixed[2], fixed[3]), (fixed[4], fixed[5])):
+                versions.append(f"{high >> 16}.{high & 0xFFFF}.{low >> 16}.{low & 0xFFFF}")
+    if not versions or any(found != version for found in versions):
+        raise ValueError(f"PE version does not match source Chromium version {version}: {name}")
+
+
+def validate_bundle(path: Path, version: str | None = None) -> None:
     with zipfile.ZipFile(path) as archive:
         names = archive.namelist()
         if len(set(names)) != len(names):
@@ -101,8 +217,11 @@ def validate_bundle(path: Path) -> None:
             if (not parts or parts[0] != "chromix" or ".." in parts
                     or "\\" in name or ":" in name):
                 raise ValueError(f"Unsafe browser ZIP member: {name}")
-        if path.name == "chromix-win-x64.zip":
+        if path.name in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
             required = {"chromix/chromix.cmd", "chromix/chrome.exe"}
+            if path.name == "chromix-win-arm64.zip":
+                required |= {"chromix/chrome.dll", "chromix/chrome_elf.dll", "chromix/libEGL.dll",
+                             "chromix/libGLESv2.dll"}
         elif path.name.startswith("chromix-mac-"):
             required = {"chromix/chromix", "chromix/Chromium.app/Contents/MacOS/Chromium"}
         else:
@@ -112,13 +231,36 @@ def validate_bundle(path: Path) -> None:
             raise ValueError(f"Incomplete browser ZIP: {path.name}")
         if archive.testzip() is not None:
             raise ValueError(f"Corrupt browser ZIP: {path.name}")
+        if path.name == "chromix-win-arm64.zip":
+            if version is None or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", version):
+                raise ValueError("ARM64 bundle verification requires the source Chromium version")
+            if len({name.casefold() for name in names}) != len(names):
+                raise ValueError("Case-colliding Windows ZIP members")
+            for info in archive.infolist():
+                mode = stat.S_IFMT(info.external_attr >> 16)
+                if mode not in (0, stat.S_IFREG, stat.S_IFDIR):
+                    raise ValueError(f"Special Windows ZIP member: {info.filename}")
+                if any(part.endswith((".", " ")) for part in PurePosixPath(info.filename).parts):
+                    raise ValueError(f"Unsafe Windows ZIP member: {info.filename}")
+                if info.is_dir():
+                    continue
+                with archive.open(info) as stream:
+                    is_pe = stream.read(2) == b"MZ"
+                    if is_pe or info.filename.lower().endswith((".exe", ".dll")):
+                        expected = version if PurePosixPath(info.filename).name.lower() in ("chrome.exe", "chrome.dll") else None
+                        validate_arm64_pe(stream, info.file_size, info.filename, expected)
 
 
 def collect(repo: str, run: dict, root: Path) -> dict[str, Path]:
+    names = validate_run(run, repo)
+    if not native_verification_passed(repo, run):
+        raise ValueError("Windows ARM64 native verification has not passed for this run attempt")
+    version = source_version(repo, run["head_sha"]) if run["name"] == ARM64_WORKFLOW else None
     result = {}
-    for name in validate_run(run, repo):
+    for name in names:
         dest = root / name
-        gh("run", "download", str(run["id"]), "--repo", repo, "--name", name, "--dir", str(dest))
+        artifact = ARTIFACT_NAMES.get(name, name)
+        gh("run", "download", str(run["id"]), "--repo", repo, "--name", artifact, "--dir", str(dest))
         files = {p.relative_to(dest).as_posix(): p for p in dest.rglob("*") if p.is_file()}
         asset = name + ".zip"
         if asset not in files or set(files) - {asset, "SHA256SUMS"}:
@@ -130,7 +272,7 @@ def collect(repo: str, run: dict, root: Path) -> dict[str, Path]:
                 raise ValueError(f"Checksum mismatch: {asset}")
         else:
             raise ValueError(f"Missing checksum: {asset}")
-        validate_bundle(files[asset])
+        validate_bundle(files[asset], version)
         result[asset] = files[asset]
     return result
 
@@ -263,6 +405,9 @@ def publish(repo: str, run: dict, tag: str, bundles: dict[str, Path], root: Path
     releases = json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/releases?per_page=100"))
     release = next((r for page in releases for r in page if r["tag_name"] == tag), None)
     pinned_sha = validate_release_revision(repo, tag, head_sha, release)
+    if run["name"] == ARM64_WORKFLOW:
+        for path in bundles.values():
+            validate_bundle(path, tag[1:])
     existing = {a["name"]: a for a in release["assets"]} if release else {}
     if release and len(existing) != len(release["assets"]):
         raise ValueError("Duplicate existing release asset names")
@@ -364,6 +509,9 @@ def ready_run(repo: str, event_run: dict) -> dict | None:
     if (latest is None or run_identity(latest) != run_identity(event_run)
             or latest.get("event") != event_run["event"]):
         print(f"Pending release for {head_sha}: {run['name']} event is not its latest successful run/attempt")
+        return None
+    if not native_verification_passed(repo, run):
+        print(f"Pending release for {head_sha}: Windows ARM64 native verification has not passed")
         return None
     return run
 

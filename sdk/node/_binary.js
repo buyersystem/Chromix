@@ -25,6 +25,7 @@ export const ASSETS = {
   "linux-x64":   { asset: "chromix-linux-x64.zip",   kind: "zip", launcher: "chromix/chromix" },
   "linux-arm64": { asset: "chromix-linux-arm64.zip", kind: "zip", launcher: "chromix/chromix" },
   "win-x64":     { asset: "chromix-win-x64.zip",     kind: "zip", launcher: "chromix/chromix.cmd" },
+  "win-arm64":   { asset: "chromix-win-arm64.zip",   kind: "zip", launcher: "chromix/chromix.cmd" },
   "mac-arm64":   { asset: "chromix-mac-arm64.zip",   kind: "zip", launcher: "chromix/chromix" },
   "mac-x64":     { asset: "chromix-mac-x64.zip",     kind: "zip", launcher: "chromix/chromix" },
 };
@@ -34,6 +35,7 @@ export function resolvePlatform() {
   if (platform === "linux" && arch === "x64") return "linux-x64";
   if (platform === "linux" && arch === "arm64") return "linux-arm64";
   if (platform === "win32" && arch === "x64") return "win-x64";
+  if (platform === "win32" && arch === "arm64") return "win-arm64";
   if (platform === "darwin" && arch === "arm64") return "mac-arm64";
   if (platform === "darwin" && arch === "x64") return "mac-x64";
   return null;
@@ -60,7 +62,7 @@ export async function expectedSha(asset, host) {
 export function binaryPath(plat, root) {
   if (plat.startsWith("mac-"))
     return join(root, "chromix", "Chromium.app", "Contents", "MacOS", "Chromium");
-  return join(root, "chromix", plat === "win-x64" ? "chrome.exe" : "chrome");
+  return join(root, "chromix", plat.startsWith("win-") ? "chrome.exe" : "chrome");
 }
 
 function inside(bundle, target) {

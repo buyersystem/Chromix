@@ -37,6 +37,22 @@ Release, SHA256-verified, and cached under `~/.cache/chromix`. Point
 `CLOAKBROWSER_BINARY_PATH` at a local build (e.g. your own `chrome.exe`) to skip
 the download.
 
+### Binary platforms
+
+The SDK resolves Linux x64/ARM64, Windows x64/ARM64, and macOS x64/ARM64.
+On Windows, `platform.machine()` values `ARM64`/`aarch64` (case-insensitive)
+select `win-arm64` and `chromix-win-arm64.zip`; `AMD64`/`x86_64` keep selecting
+`win-x64` and `chromix-win-x64.zip`. Use native ARM64 Python on Windows ARM64.
+The SDK follows the reported architecture and does not fall back to an x64
+bundle when the ARM64 asset is missing.
+
+Both Windows ZIPs contain `chromix/chromix.cmd` and `chromix/chrome.exe`.
+`ensure_binary()` returns `chrome.exe` for Playwright; the cache is isolated
+by release tag and platform (`~/.cache/chromix/<tag>/win-arm64/`). Downloads
+require the matching asset in the selected release or `CHROMIX_DOWNLOAD_HOST`;
+SDK support alone does not publish an ARM64 browser. Windows ARM64 Widevine
+CDM discovery is not supported; an x64 CDM is not reused for ARM64.
+
 ## API
 
 | Function | Description |

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 
-import { resolvePlatform, sha256, expectedSha, ASSETS } from "../_binary.js";
+import { resolvePlatform, sha256, expectedSha, ASSETS, binaryPath } from "../_binary.js";
 
 // --- helpers ---------------------------------------------------------------
 
@@ -47,6 +47,7 @@ test("resolvePlatform maps supported platform/arch pairs", () => {
     ["linux", "x64", "linux-x64"],
     ["linux", "arm64", "linux-arm64"],
     ["win32", "x64", "win-x64"],
+    ["win32", "arm64", "win-arm64"],
     ["darwin", "arm64", "mac-arm64"],
     ["darwin", "x64", "mac-x64"],
   ];
@@ -58,7 +59,7 @@ test("resolvePlatform maps supported platform/arch pairs", () => {
 test("resolvePlatform returns null for unsupported combos", () => {
   const cases = [
     ["linux", "ia32"],
-    ["win32", "arm64"],
+    ["win32", "arm"],
     ["win32", "ia32"],
     ["freebsd", "x64"],
     ["android", "arm64"],
@@ -67,6 +68,15 @@ test("resolvePlatform returns null for unsupported combos", () => {
     assert.equal(withProcess(platform, arch, resolvePlatform), null, `${platform}/${arch}`);
   }
 });
+
+for (const plat of ["win-x64", "win-arm64"]) {
+  test(`Windows asset and executable paths: ${plat}`, () => {
+    assert.deepEqual(ASSETS[plat], {
+      asset: `chromix-${plat}.zip`, kind: "zip", launcher: "chromix/chromix.cmd",
+    });
+    assert.equal(binaryPath(plat, "cache"), join("cache", "chromix", "chrome.exe"));
+  });
+}
 
 // --- checksums -------------------------------------------------------------
 
@@ -116,7 +126,7 @@ test("expectedSha swallows a network error instead of throwing", async () => {
 test("ASSETS stays consistent with resolvePlatform", () => {
   // Every key resolvePlatform() can return must exist in ASSETS, and each launcher path must
   // live under chromix/ so extraction lands where ensureNative expects.
-  const resolvable = ["linux-x64", "linux-arm64", "win-x64", "mac-arm64", "mac-x64"];
+  const resolvable = ["linux-x64", "linux-arm64", "win-x64", "win-arm64", "mac-arm64", "mac-x64"];
   for (const key of resolvable) assert.ok(key in ASSETS, `missing asset for ${key}`);
   for (const [plat, { asset, kind, launcher }] of Object.entries(ASSETS)) {
     assert.ok(asset.startsWith("chromix-") && asset.includes(plat), `${plat}: ${asset}`);

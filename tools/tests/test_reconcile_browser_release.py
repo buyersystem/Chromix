@@ -34,6 +34,7 @@ class ReconcileReleaseTest(unittest.TestCase):
         self.api = self.enterContext(patch.object(release, 'api', side_effect=self.fake_api))
         self.version = self.enterContext(patch.object(release, 'source_version', return_value=VERSION))
         self.gh = self.enterContext(patch.object(release, 'gh', side_effect=AssertionError('Unexpected GitHub call')))
+        self.native = self.enterContext(patch.object(release, 'native_verification_passed', return_value=True))
         self.stdout = self.enterContext(patch('sys.stdout', new_callable=io.StringIO))
 
     def fake_api(self, repo, path):
@@ -58,7 +59,61 @@ class ReconcileReleaseTest(unittest.TestCase):
 
     def test_all_platforms_are_discovered_across_source_commits(self):
         self.assertEqual(reconcile.discover_runs(REPO, VERSION), self.runs)
-        self.assertEqual(len({item['head_sha'] for item in self.runs.values()}), 5)
+        self.assertEqual(len({item['head_sha'] for item in self.runs.values()}), 6)
+
+    def test_arm64_build_without_native_acceptance_is_not_discovered(self):
+        name = 'build-win-arm64-github'
+        self.native.side_effect = lambda repo, item: item['name'] != name
+        selected = reconcile.discover_runs(REPO, VERSION)
+        self.assertEqual(set(selected), set(self.runs) - {name})
+        self.assertNotIn(name, reconcile.discover_runs(REPO, VERSION, include_build_only=True))
+
+    def test_arm64_unverified_latest_blocks_same_sha_fallback(self):
+        name = 'build-win-arm64-github'
+        old = self.runs[name]
+        newest = run(name, 999, head_sha=old['head_sha'])
+        self.listings[name] = [newest, old]
+        self.native.side_effect = lambda repo, item: item['id'] != newest['id']
+        self.assertNotIn(name, reconcile.discover_runs(REPO, VERSION))
+        earlier = run(name, 50)
+        self.listings[name].append(earlier)
+        self.assertEqual(reconcile.discover_runs(REPO, VERSION)[name], earlier)
+
+    def test_unverified_arm64_does_not_block_other_missing_platforms(self):
+        name = 'build-win-arm64-github'
+        self.native.side_effect = lambda repo, item: item['name'] != name
+        with patch.object(reconcile, 'published_slots', return_value={'chromix-win-x64.zip'}), \
+                patch.object(release, 'ready_run', side_effect=lambda repo, item: item), \
+                patch.object(release, 'collect', return_value={}), patch.object(release, 'publish') as publish:
+            reconcile.reconcile(REPO, VERSION)
+        self.assertEqual(publish.call_count, 4)
+        self.assertNotIn(name, {call.args[1]['name'] for call in publish.call_args_list})
+        self.assertIn('Platforms with no eligible latest successful run: ' + name, self.stdout.getvalue())
+
+    def test_published_arm64_slot_is_preserved_without_artifact_download(self):
+        existing = {'chromix-win-x64.zip', 'chromix-win-arm64.zip'}
+        with patch.object(reconcile, 'published_slots', return_value=existing), \
+                patch.object(release, 'ready_run', side_effect=lambda repo, item: item), \
+                patch.object(release, 'collect', return_value={}) as collect, \
+                patch.object(release, 'publish') as publish:
+            reconcile.reconcile(REPO, VERSION)
+        for operation in (collect, publish):
+            self.assertEqual(operation.call_count, 4)
+            self.assertTrue(all(not call.args[1]['name'].startswith('build-win-')
+                                for call in operation.call_args_list))
+
+    def test_arm64_integrity_failure_does_not_publish_its_slot(self):
+        name = 'build-win-arm64-github'
+        self.runs = {name: self.runs[name], **self.runs}
+        with patch.object(reconcile, 'discover_runs', return_value=self.runs), \
+                patch.object(reconcile, 'published_slots', return_value={'chromix-win-x64.zip'}), \
+                patch.object(release, 'ready_run', side_effect=lambda repo, item: item), \
+                patch.object(release, 'collect', side_effect=[ValueError('Expected ARM64 PE'), {}, {}, {}, {}]), \
+                patch.object(release, 'publish') as publish:
+            with self.assertRaisesRegex(RuntimeError, name + '.*Expected ARM64 PE'):
+                reconcile.reconcile(REPO, VERSION)
+        self.assertEqual(publish.call_count, 4)
+        self.assertNotIn(name, {call.args[1]['name'] for call in publish.call_args_list})
 
     def test_automatic_discovery_excludes_build_only_and_unknown_manual_commits(self):
         name = 'build-macos-x64'
@@ -181,7 +236,7 @@ class ReconcileReleaseTest(unittest.TestCase):
         sha = next(iter(self.runs.values()))['head_sha']
         for name in self.runs:
             self.listings[name] = [{**self.runs[name], 'head_sha': sha}]
-        self.assertEqual(len(reconcile.discover_runs(REPO, VERSION)), 5)
+        self.assertEqual(len(reconcile.discover_runs(REPO, VERSION)), 6)
         self.version.assert_called_once_with(REPO, sha)
 
     def test_invalid_workflow_repository_does_not_publish(self):
@@ -228,7 +283,7 @@ class ReconcileReleaseTest(unittest.TestCase):
         self.assertEqual(reconcile.MAX_PAGES, 10)
         self.assertEqual(reconcile.MAX_VERSION_LOOKUPS, 200)
 
-    def test_surviving_event_publishes_all_four_missing_platforms_without_windows_collection(self):
+    def test_surviving_event_publishes_all_five_missing_platforms_without_x64_collection(self):
         with patch.object(reconcile, 'published_slots', return_value={'chromix-win-x64.zip'}), \
                 patch.object(release, 'ready_run', side_effect=lambda repo, item: item) as ready, \
                 patch.object(release, 'collect', side_effect=lambda repo, item, root: {'fixture': root}) as collect, \
@@ -236,10 +291,10 @@ class ReconcileReleaseTest(unittest.TestCase):
             reconcile.reconcile(REPO, VERSION)
         expected = set(self.runs) - {'build-win-x64-github'}
         for operation in (ready, collect, publish):
-            self.assertEqual(operation.call_count, 4)
+            self.assertEqual(operation.call_count, 5)
             self.assertEqual({call.args[1]['name'] for call in operation.call_args_list}, expected)
         self.assertTrue(all(call.args[2] == 'v' + VERSION for call in publish.call_args_list))
-        self.assertEqual(len({call.args[1]['head_sha'] for call in publish.call_args_list}), 4)
+        self.assertEqual(len({call.args[1]['head_sha'] for call in publish.call_args_list}), 5)
 
     def test_finished_slots_preserved_and_stale_incoming_skipped(self):
         with patch.object(reconcile, 'published_slots', return_value={'chromix-win-x64.zip'}), \
@@ -258,23 +313,23 @@ class ReconcileReleaseTest(unittest.TestCase):
             with self.subTest(error=type(error).__name__), \
                     patch.object(reconcile, 'published_slots', return_value={'chromix-win-x64.zip'}), \
                     patch.object(release, 'ready_run', side_effect=lambda repo, item: item), \
-                    patch.object(release, 'collect', side_effect=[error, {}, {}, {}]) as collect, \
+                    patch.object(release, 'collect', side_effect=[error, {}, {}, {}, {}]) as collect, \
                     patch.object(release, 'publish') as publish:
                 with self.assertRaisesRegex(RuntimeError, first):
                     reconcile.reconcile(REPO, VERSION)
-                self.assertEqual(collect.call_count, 4)
-                self.assertEqual(publish.call_count, 3)
+                self.assertEqual(collect.call_count, 5)
+                self.assertEqual(publish.call_count, 4)
                 self.assertNotIn(first, {call.args[1]['name'] for call in publish.call_args_list})
 
     def test_multiple_collection_errors_are_reported_together(self):
         first, second = list(self.runs)[:2]
         with patch.object(reconcile, 'published_slots', return_value={'chromix-win-x64.zip'}), \
                 patch.object(release, 'ready_run', side_effect=lambda repo, item: item), \
-                patch.object(release, 'collect', side_effect=[ValueError('first'), ValueError('second'), {}, {}]), \
+                patch.object(release, 'collect', side_effect=[ValueError('first'), ValueError('second'), {}, {}, {}]), \
                 patch.object(release, 'publish') as publish:
             with self.assertRaisesRegex(RuntimeError, first + '.*' + second):
                 reconcile.reconcile(REPO, VERSION)
-        self.assertEqual(publish.call_count, 2)
+        self.assertEqual(publish.call_count, 3)
 
     def test_shared_publish_error_stops_remaining_platforms(self):
         with patch.object(reconcile, 'published_slots', return_value={'chromix-win-x64.zip'}), \
@@ -418,7 +473,7 @@ class ReconcileReleaseTest(unittest.TestCase):
                 patch.object(release, 'ready_run', side_effect=lambda repo, item: item), \
                 patch.object(release, 'collect', return_value={}), patch.object(release, 'publish') as publish:
             self.run_main({'workflow_run': event_run}, 'workflow_run', version=VERSION)
-        self.assertEqual(publish.call_count, 4)
+        self.assertEqual(publish.call_count, 5)
         self.assertNotIn(event_run['name'], {call.args[1]['name'] for call in publish.call_args_list})
 
     def test_late_completion_reconciles_slot_missed_by_earlier_scan(self):
@@ -434,7 +489,7 @@ class ReconcileReleaseTest(unittest.TestCase):
                 patch.object(release, 'collect', return_value={}) as collect, \
                 patch.object(release, 'publish', side_effect=published) as publish:
             reconcile.reconcile(REPO, VERSION)
-            self.assertEqual(publish.call_count, 3)
+            self.assertEqual(publish.call_count, 4)
             self.assertNotIn(late['name'], {call.args[1]['name'] for call in publish.call_args_list})
             self.listings[late['name']] = [late]
             collect.reset_mock()

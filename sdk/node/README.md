@@ -60,6 +60,22 @@ SHA256-verified when the release manifest is available, and cached under
 `~/.cache/chromix`. Point `CLOAKBROWSER_BINARY_PATH` at a local build to skip
 the download.
 
+### Binary platforms
+
+The SDK resolves Linux x64/ARM64, Windows x64/ARM64, and macOS x64/ARM64.
+On Windows, `process.platform === "win32"` with `process.arch === "arm64"`
+selects `win-arm64` and `chromix-win-arm64.zip`; `process.arch === "x64"`
+keeps selecting `win-x64` and `chromix-win-x64.zip`. Use native ARM64 Node.js
+on Windows ARM64: an x64 Node.js process running under emulation still reports
+`x64`. A missing ARM64 asset does not trigger an x64 fallback.
+
+Both Windows ZIPs contain `chromix/chromix.cmd` and `chromix/chrome.exe`.
+`ensureBinary()` returns `chrome.exe` for Playwright; the cache is isolated
+by release tag and platform (`~/.cache/chromix/<tag>/win-arm64/`). Downloads
+require the matching asset in the selected release or `CHROMIX_DOWNLOAD_HOST`;
+SDK support alone does not publish an ARM64 browser. Windows ARM64 Widevine
+CDM discovery is not supported; an x64 CDM is not reused for ARM64.
+
 ## Options
 
 CloakBrowser options work unchanged: `headless, proxy, args, stealthArgs,

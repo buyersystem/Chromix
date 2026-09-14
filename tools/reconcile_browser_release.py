@@ -89,7 +89,8 @@ def discover_runs(repo: str, version: str, *, include_build_only: bool = False) 
                     raise ValueError('Release source-version lookup limit reached; narrow the catch-up scope')
                 versions[sha] = release.source_version(repo, sha)
             if (versions[sha] == version and run.get('status') == 'completed'
-                    and run.get('conclusion') == 'success'):
+                    and run.get('conclusion') == 'success'
+                    and release.native_verification_passed(repo, run)):
                 selected[workflow] = run
                 break
     return selected

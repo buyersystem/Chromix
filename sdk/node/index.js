@@ -83,7 +83,7 @@ export async function ensureBinary({ browserVersion, releaseChannel } = {}) {
     return explicit;
   }
   const plat = resolvePlatform();
-  if (!plat) throw new Error("No native Chromix binary for this platform (Linux x64/arm64, Windows x64, macOS x64/arm64); or point CLOAKBROWSER_BINARY_PATH at a local build.");
+  if (!plat) throw new Error("No native Chromix binary for this platform (Linux x64/arm64, Windows x64/arm64, macOS x64/arm64); or point CLOAKBROWSER_BINARY_PATH at a local build.");
   const ch = channelFor(browserVersion, releaseChannel);
   const tag = CHANNELS[ch].tag;
   const chrome = chromeBinaryPath(plat, tag);
