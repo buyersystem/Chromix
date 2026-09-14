@@ -68,8 +68,10 @@ jobs:
       - name: Independently fetch and hash pinned source preimages
         shell: python
         run: |
-          import base64, hashlib, json, os, re, shutil, urllib.request
+          import json, os, re, shutil, sys
           from pathlib import Path, PurePosixPath
+          sys.path.insert(0, str(Path('tools').resolve()))
+          from fetch_preimage import fetch_preimage
           compiler = shutil.which('clang++')
           if not compiler or not (shutil.which('gpatch') or shutil.which('patch')):
               raise SystemExit('Clang and GNU patch are required, not optional skips')
@@ -89,11 +91,7 @@ jobs:
                   targets[path] = digest
           for path, digest in targets.items():
               url = f'https://chromium.googlesource.com/chromium/src/+/refs/tags/{version}/{path}?format=TEXT'
-              with urllib.request.urlopen(url, timeout=60) as response:
-                  encoded = response.read(16 * 1024 * 1024 + 1)
-              assert len(encoded) <= 16 * 1024 * 1024
-              data = base64.b64decode(encoded, validate=True)
-              assert hashlib.sha256(data).hexdigest() == digest, path
+              data = fetch_preimage(url, digest)
               output = root / path
               output.parent.mkdir(parents=True, exist_ok=True)
               with output.open('xb') as stream:
@@ -113,6 +111,7 @@ jobs:
           tools/tests/test_font_correctness.py
           tools/tests/test_verify_windows_bundle.py
           tools/tests/test_sdk_publish_workflow.py
+          tools/tests/test_fetch_preimage.py
           tools/tests/test_functionality_audits.py tools/tests/test_fingerprint_acceptance.py
           tools/tests/test_device_p0.py tools/tests/test_canvas_native_paths.py
           sdk/python/tests --junitxml=contracts-python.xml
