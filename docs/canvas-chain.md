@@ -21,6 +21,98 @@ disabled/invalid seeds and ordinary public mode. Borrowed pixmaps retain their
 native alpha type. The upstream image constructor's own required readback and
 unpremultiplication are unchanged; failed native conversions still fail.
 
+## Native Upload And Readback Repair (2026-09-14)
+
+The source series now includes `0149` and `0150`. They repair native pixel
+contracts independently of persona/seed settings; no synthetic flag is needed.
+
+### Cause and implementation
+
+- **Opaque uploads:** upstream `PutByteArray` changes the image's alpha metadata
+  to `kOpaque` without replacing the actual ImageData alpha bytes. CPU/GPU/export
+  paths can subsequently disagree about premultiplication. `0149` privately
+  copies only the clipped dirty rectangle, preserves RGB/color-space bits, and
+  physically sets alpha to 255, half-float 1, or float 1 for RGBA/BGRA8, F16 and
+  F32. The script-owned input is unchanged. Source/destination coordinates are
+  rebased before existing format conversion; allocation failure remains a
+  RangeError and alpha-enabled uploads retain the native path.
+- **GPU readback geometry:** upstream `MailboxTextureBacking::readPixels`
+  substitutes `dst_info.minRowBytes()` for the supplied stride and forwards
+  negative/OOB origins to RasterInterface. `0150` validates buffer geometry and
+  byte-size limits, intersects source bounds using 64-bit arithmetic, offsets a
+  destination pixmap subset, and passes the original stride to RasterInterface.
+  Nonintersecting requests make no GPU call; untouched padding stays unchanged
+  (Canvas zero-initializes it). Native success/failure and pixel metadata remain.
+
+These are correctness repairs, not a new cross-platform rasterizer, encoder,
+GPU capability simulator, or per-profile pixel generator.
+
+### Independent minimal control
+
+The reusable diagnostic uses plain Playwright, no Chromix SDK/persona arguments,
+and fresh canvases for each OOB history/options case. It records raw pixels and
+the explicit executable/probe hashes. It covers RGBA8 HTML/Offscreen canvases
+with omitted/false/true `willReadFrequently`; it is not the complete audit below.
+
+```powershell
+python -X utf8 tools/canvas_native_diagnostic.py --browser "C:/Program Files/Google/Chrome/Application/chrome.exe" --compare-software --output control-native.json
+python -X utf8 tools/canvas_native_diagnostic.py --browser C:/matching-chromix/chrome.exe --compare-software --output patched-native.json
+python -X utf8 tools/canvas_chain_audit.py --browser C:/matching-chromix/chrome.exe --output patched-chain.json
+```
+
+Output paths must be new. The diagnostic exits nonzero on missing/malformed
+observations or a mismatch. `--compare-software` makes a separate diagnostic
+launch with `--disable-gpu`; it does not change either acceptance oracle.
+
+The 2026-09-14 stock Chrome **153.0.8010.37** run remains **failed**:
+`tmp_build/canvas-control-followup/native-diagnostic-stock-01.json` contains
+44 default-path failed checks (20 OOB) and 24 software-requested failed checks
+(0 OOB). The opaque-upload failures persist when GPU is disabled. These are
+check counts, not unique defects. Earlier independent controls also reproduced
+the issues on installed Chromium 138, 149 and 151. No stock binary was modified.
+
+### Source and test evidence
+
+- Upstream `chromium-152.0.7977.82-lite.tar.xz` SHA-256:
+  `67ac37f365dfdac763c428862e5e460e5948940b3d6f856374da2ce219981417`.
+- Core revision `e71b91c6e336d0f25cfc6b9ef09298a9d2506e24`, Windows revision
+  `333bc7dfff72ff4abc4d9cc76bc41de300a46e06`. All 108 needed archive files were
+  independently extracted; a further input is created by the core patch layer.
+  Both core Canvas predecessors, then `0020`, `0076`, `0146`, are included.
+- All **150** patches apply to the prepared affected-file tree with `--fuzz=0`.
+  Existing predecessor offsets are retained in the log; new `0149`/`0150`
+  apply and reverse with **zero offsets and zero fuzz**. The whole current
+  stack also passes the read-only reverse/forward verifier. Reports are under
+  `tmp_build/canvas-control-followup/sparse-win-final/`. This is affected-file
+  patch evidence, not a full source preparation or Chromium compilation.
+- Native-method contracts: **47 passed**, including independent upstream hash
+  and preimage checks. Full extracted `putImageData`, `PutByteArray`, and
+  `MailboxTextureBacking::readPixels` plus the added helper run under ASan/UBSan.
+  Dependency shims model storage, geometry, allocation and GPU calls, not real
+  Skia color management or GPU drivers. Baseline code demonstrates both defects.
+- The diagnostic oracle has **24 passing** synthetic-fixture tests. Related
+  Canvas/UA/render/patch-application suites total **312 passed, 37 skipped** on
+  the integrated source; skipped cases are not passes or device evidence.
+- Concurrent `main` fixes are preserved: `6d4ae3b` repairs `0005`'s asymmetric
+  interior hunk and `0146`'s missing bridge predecessor context; `7b98822` adds
+  explicit creation metadata to `0103`–`0106` for Git source-freshness checks.
+
+Run the new contracts with LLVM/ASan/UBSan available:
+
+```powershell
+python -X utf8 -m pytest tools/tests/test_canvas_native_paths.py tools/tests/test_native_patch_context_repairs.py tools/tests/test_canvas_native_diagnostic.py -q
+```
+
+Optional `CHROMIX_CANVAS_UPSTREAM_ROOT` and `CHROMIX_NATIVE_PATCH_PREIMAGES`
+enable independently acquired source/provenance checks. Without them those
+checks skip, rather than use a patched reference tree as clean upstream.
+
+**Matching Chromium 152 browser integration remains pending.** The stock
+control still fails, no admission thresholds were relaxed, and no qualified
+measured-device record was created. See the pinned
+[CloakBrowser functionality comparison](cloakbrowser-functionality-comparison.md)
+for implemented interfaces, deliberate differences and remaining gaps.
+
 ## Run
 
 Requires Python, Playwright and Pillow with WebP and LittleCMS support. No
@@ -118,8 +210,9 @@ describe the earlier standalone run only.
 
 Passing offline tests only validate the oracle, malformed-evidence rejection
 and extracted C++ contracts. Their generated codec fixtures are not physical
-device samples. A full native Chromium build and full patch-chain application
-have not been rerun for these latest Canvas changes.
+device samples. The affected-file 150-patch preparation and reverse/forward
+checks above now pass. A full native Chromium build and matching runtime audit
+have not completed for these latest Canvas changes.
 
 The packaged integration companion now exercises bitmaprenderer, transferred
 OffscreenCanvas ownership, concurrent call-time exports and context

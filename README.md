@@ -374,6 +374,11 @@ reuse, domain substitution, packaging, and patch-maintenance details.
 
 ## Repository layout
 
+Canvas root causes, native fixes and validation boundaries are recorded in
+[the Canvas chain audit](docs/canvas-chain.md). The
+[pinned CloakBrowser functionality comparison](docs/cloakbrowser-functionality-comparison.md)
+separates implemented SDK/source features from remaining integration gaps.
+
 ```text
 patches/          Chromium persona and integration patch series
 build/windows/    Windows preparation, staged CI, build, and packaging scripts

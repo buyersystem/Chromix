@@ -4,9 +4,46 @@ This record tracks the implementation requested by `/root/fingerprint-p0-p2-back
 
 ## Acceptance rules
 
+### 2026-09-14 update — native Canvas upload/readback repairs
+
+The current source series contains **150 patches**. `0149` physically sets
+opaque upload alpha in a private clipped ImageData copy (RGBA/BGRA8, F16, F32),
+without mutating script-owned RGB or input data. `0150` clips mailbox-backed
+readback, retains the destination stride, preserves OOB padding, and checks
+geometry/size overflow. Neither change requires synthetic/persona flags.
+
+The fixed upstream archive and core/Windows layers prepare all affected input
+files independently of the mixed local source reference. All 150 patches apply
+with zero fuzz; new `0149`/`0150` also have zero offsets. The complete current
+stack passes read-only reverse/forward checks on that affected-file tree.
+Concurrent remote patch-context/creation-metadata and Windows/cache repairs
+were retained, not overwritten.
+
+Verification on the integrated source:
+
+| Check | Result |
+|---|---|
+| Native Canvas extracted methods and independent source provenance | **47 passed**, ASan/UBSan active |
+| Standalone diagnostic oracle | **24 passed**, synthetic unit fixtures only |
+| Related Canvas/UA/render/patch-application regressions (includes the above) | **312 passed, 37 skipped** |
+| Source preparation / freshness | **150** affected-file patches apply; full reverse/forward verification passes |
+| Matching native browser and device-pool admission | **Pending**, no new qualified record |
+
+The plain-Playwright stock Chrome 153 control is still **failed**: 44 checks
+fail on the default path (20 OOB), and 24 with `--disable-gpu` (0 OOB). GPU-off
+is diagnostic, not a workaround or an accepted device configuration. Existing
+lossless/alpha/OOB admission requirements remain unchanged. Skipped tests and
+dependency-shim execution do not establish native Chromium/Skia/GPU acceptance.
+
+Details, commands and artifact paths: [Canvas chain](docs/canvas-chain.md).
+The [pinned CloakBrowser comparison](docs/cloakbrowser-functionality-comparison.md)
+distinguishes public SDK behavior from unpublished C++ patches and identifies
+Puppeteer, transparent-proxy, portable-cookie and native SOCKS/UDP gaps without
+claiming empty-flag compatibility.
+
 ### 2026-09-13 update — render evidence and Win64 cache repair
 
-The current source series contains **148 patches**. This update supersedes the
+That update's source series contained **148 patches**. It supersedes the
 earlier public GPU-template description; it is implementation evidence, not
 native-build or physical-device acceptance.
 

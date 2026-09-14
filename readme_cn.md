@@ -26,6 +26,9 @@ Chromix 是基于 Chromium 的浏览器项目，面向浏览器自动化、兼�
 
 ## 下载与平台支持
 
+Canvas 原生路径修复和验收边界见 [Canvas 链路记录](docs/canvas-chain.md)；
+参考功能、刻意差异及待补齐项见 [CloakBrowser 公开功能对照](docs/cloakbrowser-functionality-comparison.md)。
+
 从 [GitHub Releases](https://github.com/xiaozhou26/Chromix/releases) 下载已经发布的包。源码目标平台如下，**实际可下载的平台以对应 Release 的 Assets 为准**，构建目标列表不表示所有包都已发布。
 
 | 平台 | 归档名称 | 解压后的手动启动入口 |
