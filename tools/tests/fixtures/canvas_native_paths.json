@@ -1,0 +1,76 @@
+{
+  "notice": "Pinned Chromium source excerpts, not browser or physical-device acceptance.",
+  "chromium_version": "152.0.7977.82",
+  "core_commit": "e71b91c6e336d0f25cfc6b9ef09298a9d2506e24",
+  "core_inputs": [
+    {
+      "path": "patches/extra/bromite/fingerprinting-flags-client-rects-and-measuretext.patch",
+      "sha256": "f8afff23b1afe2e0f04a3972282b9be5e9beebb86ce1693141b5df71f20ab857",
+      "target_fragment": "diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n+++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n@@ -110,6 +110,9 @@\n // https://github.com/include-what-you-use/include-what-you-use/issues/1122\n // IWYU pragma: no_include \"base/numerics/clamped_math.h\"\n \n+#include \"third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h\"\n+#include \"third_party/blink/renderer/core/frame/local_dom_window.h\"\n+\n namespace blink {\n \n class MemoryManagedPaintCanvas;\n@@ -1200,9 +1203,22 @@ TextMetrics* BaseRenderingContext2D::mea\n   TextDirection direction =\n       ToTextDirection(state.GetDirection(), host, computed_style);\n \n-  return MakeGarbageCollected<TextMetrics>(\n+  TextMetrics* text_metrics = MakeGarbageCollected<TextMetrics>(\n       font, direction, state.GetTextBaseline(), state.GetTextAlign(), text,\n       host->GetPlainTextPainter());\n+\n+  // Scale text metrics if enabled\n+  if (RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {\n+    if (HostAsOffscreenCanvas()) {\n+      if (auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext())) {\n+        if (window->GetFrame() && window->GetFrame()->GetDocument())\n+          text_metrics->Shuffle(window->GetFrame()->GetDocument()->GetNoiseFactorX());\n+      }\n+    } else if (canvas) {\n+      text_metrics->Shuffle(canvas->GetDocument().GetNoiseFactorX());\n+    }\n+  }\n+  return text_metrics;\n }\n \n String BaseRenderingContext2D::lang() const {\n"
+    },
+    {
+      "path": "patches/extra/bromite/flag-fingerprinting-canvas-image-data-noise.patch",
+      "sha256": "6e3dce40e54244e4ca146fdf364f9211ac96c0cf732cec4c28dfa45753136ae5",
+      "target_fragment": "diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n+++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc\n@@ -517,6 +517,9 @@ ImageData* BaseRenderingContext2D::getIm\n           snapshot->PaintImageForCurrentFrame().GetSkImageInfo().bounds();\n       DCHECK(!bounds.intersect(SkIRect::MakeXYWH(sx, sy, sw, sh)));\n     }\n+    if (read_pixels_successful && RuntimeEnabledFeatures::FingerprintingCanvasImageDataNoiseEnabled()) {\n+      StaticBitmapImage::ShuffleSubchannelColorData(image_data_pixmap.addr(), image_data_pixmap.info(), sx, sy);\n+    }\n   }\n \n   return image_data;\n"
+    }
+  ],
+  "sources": {
+    "0149": {
+      "target": "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc",
+      "upstream_sha256": "e0911a8cf677349caf60be8e281e80279fb7e2b8001e1760eb40831d193728ce",
+      "preimage_sha256": "6d5bb70249d9d3eb81b897249a1df96fd21ace03dfef7165ae7b7cacd695af36",
+      "predecessors": [
+        {
+          "path": "patches/0020-third_party-blink-renderer-modules-canvas-canvas2d-base_rendering_context_2d-cc.patch",
+          "sha256": "84f2d3139cb9adfc70d2c073395fb939b5d59c2f22d5c46450e2586ccceba708"
+        },
+        {
+          "path": "patches/0076-third_party-blink-renderer-modules-canvas-canvas2d-base_rendering_context_2d-cc.patch",
+          "sha256": "f18f6e5e22be6541eef925774ac2055443f2c836627de7ac25b2fdfb7c3d9a3d"
+        },
+        {
+          "path": "patches/0146-canvas-text-noise-policy.patch",
+          "sha256": "690c9e8801a98109c6cd21dedc6ca64fe7555ad4e800c45c449f9e4b3934ae55"
+        }
+      ],
+      "sections": [
+        {
+          "line": 1,
+          "text": "// Copyright 2016 The Chromium Authors\n// Use of this source code is governed by a BSD-style license that can be\n// found in the LICENSE file.\n\n#include \"third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.h\"\n\n#include \"base/strings/string_number_conversions.h\"\n#include \"base/uxr_config.h\"\n\n#include <cmath>\n#include <cstring>\n#include <cstdint>\n#include <cstdlib>\n#include <limits>\n#include <memory>\n#include <optional>\n#include <utility>\n#include <vector>\n\n#include \"base/check.h\"\n#include \"base/containers/span.h\"\n#include \"base/check_op.h\"\n#include \"base/location.h\"\n#include \"base/memory/scoped_refptr.h\"\n#include \"base/memory/weak_ptr.h\"\n#include \"base/metrics/histogram_functions.h\"\n#include \"base/notreached.h\"\n#include \"base/numerics/checked_math.h\"\n#include \"base/numerics/safe_conversions.h\"\n#include \"base/task/single_thread_task_runner.h\"\n#include \"base/time/time.h\"\n#include \"cc/paint/paint_canvas.h\"\n#include \"cc/paint/paint_flags.h\"\n#include \"cc/paint/paint_image.h\"\n#include \"cc/paint/record_paint_canvas.h\"\n#include \"components/viz/common/resources/shared_image_format_utils.h\"\n"
+        },
+        {
+          "line": 112,
+          "text": "#include \"third_party/blink/renderer/platform/wtf/forward.h\"\n#include \"third_party/blink/renderer/platform/wtf/math_extras.h\"\n#include \"third_party/blink/renderer/platform/wtf/text/wtf_string.h\"\n#include \"ui/gfx/geometry/skia_conversions.h\"\n#include \"ui/gfx/geometry/vector2d_f.h\"\n#include \"ui/gfx/skia_span_util.h\"\n"
+        },
+        {
+          "line": 128,
+          "text": "class MemoryManagedPaintCanvas;\n\nnamespace {\n\n\nbool IsContextProviderValid() {\n"
+        },
+        {
+          "line": 697,
+          "text": "void BaseRenderingContext2D::putImageData(ImageData* data,\n                                          int dx,\n                                          int dy,\n                                          ExceptionState& exception_state) {\n  putImageData(data, dx, dy, 0, 0, data->width(), data->height(),\n               exception_state);\n}\n\nvoid BaseRenderingContext2D::putImageData(ImageData* data,\n                                          int dx,\n                                          int dy,\n                                          int dirty_x,\n                                          int dirty_y,\n                                          int dirty_width,\n                                          int dirty_height,\n                                          ExceptionState& exception_state) {\n  if (!base::CheckMul(dirty_width, dirty_height).IsValid<int>()) {\n    return;\n  }\n\n  if (data->IsBufferBaseDetached()) {\n    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,\n                                      \"The source data has been detached.\");\n    return;\n  }\n\n  if (layer_count_ != 0) {\n    exception_state.ThrowDOMException(\n        DOMExceptionCode::kInvalidStateError,\n        \"`putImageData()` cannot be called with open layers.\");\n    return;\n  }\n\n  if (isContextLost() || !CanCreateResourceProvider()) [[unlikely]] {\n    return;\n  }\n\n  if (dirty_width < 0) {\n    if (dirty_x < 0) {\n      dirty_x = dirty_width = 0;\n    } else {\n      dirty_x += dirty_width;\n      dirty_width =\n          base::saturated_cast<int>(base::SafeUnsignedAbs(dirty_width));\n    }\n  }\n\n  if (dirty_height < 0) {\n    if (dirty_y < 0) {\n      dirty_y = dirty_height = 0;\n    } else {\n      dirty_y += dirty_height;\n      dirty_height =\n          base::saturated_cast<int>(base::SafeUnsignedAbs(dirty_height));\n    }\n  }\n\n  gfx::Rect dest_rect(dirty_x, dirty_y, dirty_width, dirty_height);\n  dest_rect.Intersect(gfx::Rect(0, 0, data->width(), data->height()));\n  gfx::Vector2d dest_offset(static_cast<int>(dx), static_cast<int>(dy));\n  dest_rect.Offset(dest_offset);\n  dest_rect.Intersect(gfx::Rect(0, 0, Width(), Height()));\n  if (dest_rect.IsEmpty())\n    return;\n\n  gfx::Rect source_rect = dest_rect;\n  source_rect.Offset(-dest_offset);\n\n  SkPixmap data_pixmap = data->GetSkPixmap();\n\n  // WritePixels (called by PutByteArray) requires that the source and\n  // destination pixel formats have the same bytes per pixel.\n  SkColorType dest_color_type =\n      viz::ToClosestSkColorType(color_params_.GetSharedImageFormat());\n  if (SkColorTypeBytesPerPixel(dest_color_type) !=\n      SkColorTypeBytesPerPixel(data_pixmap.colorType())) {\n    SkImageInfo converted_info =\n        data_pixmap.info().makeColorType(dest_color_type);\n    SkBitmap converted_bitmap;\n    if (!converted_bitmap.tryAllocPixels(converted_info)) {\n      exception_state.ThrowRangeError(\"Out of memory in putImageData\");\n      return;\n    }\n    if (!converted_bitmap.writePixels(data_pixmap, 0, 0)) {\n      NOTREACHED() << \"Failed to convert ImageData with writePixels.\";\n    }\n\n    PutByteArray(converted_bitmap.pixmap(), source_rect, dest_offset);\n    if (GetPaintCanvas()) {\n      WillDraw(dest_rect, CanvasPerformanceMonitor::DrawType::kImageData);\n    }\n    return;\n  }\n\n  PutByteArray(data_pixmap, source_rect, dest_offset);\n  if (GetPaintCanvas()) {\n    WillDraw(dest_rect, CanvasPerformanceMonitor::DrawType::kImageData);\n  }\n}\n\nvoid BaseRenderingContext2D::PutByteArray(const SkPixmap& source,\n                                          const gfx::Rect& source_rect,\n                                          const gfx::Vector2d& dest_offset) {\n  DCHECK(gfx::Rect(source.width(), source.height()).Contains(source_rect));\n  int dest_x = dest_offset.x() + source_rect.x();\n  DCHECK_GE(dest_x, 0);\n  DCHECK_LT(dest_x, Width());\n  int dest_y = dest_offset.y() + source_rect.y();\n  DCHECK_GE(dest_y, 0);\n  DCHECK_LT(dest_y, Height());\n\n  SkImageInfo info =\n      source.info().makeWH(source_rect.width(), source_rect.height());\n  if (!HasAlpha()) {\n    // If the surface is opaque, tell it that we are writing opaque\n    // pixels.  Writing non-opaque pixels to opaque is undefined in\n    // Skia.  There is some discussion about whether it should be\n    // defined in skbug.com/6157.  For now, we can get the desired\n    // behavior (memcpy) by pretending the write is opaque.\n    info = info.makeAlphaType(kOpaque_SkAlphaType);\n  } else {\n    info = info.makeAlphaType(kUnpremul_SkAlphaType);\n  }\n\n  WritePixels(info, source.addr(source_rect.x(), source_rect.y()),\n              source.rowBytes(), dest_x, dest_y);\n}\n\n"
+        }
+      ]
+    },
+    "0150": {
+      "target": "third_party/blink/renderer/platform/graphics/mailbox_texture_backing.cc",
+      "upstream_sha256": "630c56206c04f6926a6125fa21719558a6e22aa67ce0145712101bd5eb852a83",
+      "preimage_sha256": "630c56206c04f6926a6125fa21719558a6e22aa67ce0145712101bd5eb852a83",
+      "predecessors": [],
+      "sections": [
+        {
+          "line": 3,
+          "text": "// found in the LICENSE file.\n\n#include \"third_party/blink/renderer/platform/graphics/mailbox_texture_backing.h\"\n\n#include \"cc/paint/texture_backing.h\"\n#include \"components/viz/common/gpu/raster_context_provider.h\"\n"
+        },
+        {
+          "line": 11,
+          "text": "#include \"third_party/blink/renderer/platform/graphics/skia/skia_utils.h\"\n#include \"third_party/blink/renderer/platform/graphics/web_graphics_context_3d_provider_wrapper.h\"\n#include \"third_party/skia/include/core/SkImage.h\"\n#include \"ui/gfx/geometry/skia_conversions.h\"\n\nnamespace blink {\n"
+        },
+        {
+          "line": 85,
+          "text": "bool MailboxTextureBacking::readPixels(const SkImageInfo& dst_info,\n                                       void* dst_pixels,\n                                       size_t dst_row_bytes,\n                                       int src_x,\n                                       int src_y) {\n  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);\n  gpu::raster::RasterInterface* ri = context_provider_->RasterInterface();\n  return ri->ReadbackImagePixels(GetMailbox(), dst_info,\n                                 static_cast<GLuint>(dst_info.minRowBytes()),\n                                 src_x, src_y, /*plane_index=*/0, dst_pixels);\n}\n\n}  // namespace blink\n"
+        }
+      ]
+    }
+  }
+}

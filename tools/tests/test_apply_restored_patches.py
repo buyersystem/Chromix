@@ -414,7 +414,9 @@ def test_donor_code_is_never_executed(tmp_path):
         put(root, "utils/domain_substitution.py", b"raise RuntimeError('must not run')\n")
     fx.run()
     other = Fixture(tmp_path / "other")
-    program = put(other.core, "patch", b"#!/bin/sh\nexit 0\n")
+    # shutil.which on Windows requires a recognized executable extension. The
+    # donor-path guard must reject this before trying to execute its contents.
+    program = put(other.core, "patch.exe" if os.name == "nt" else "patch", b"#!/bin/sh\nexit 0\n")
     program.chmod(0o755)
     with pytest.raises(arp.ApplyError, match="donor code"):
         other.run(patch_bin=program)
@@ -473,8 +475,8 @@ def test_real_series_parses_without_donor_execution():
         transformed, entries = arp.transform_patch(raw, set(), [])
         assert transformed == raw
         assert entries
-    assert len(names) == 128
-    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 127)]
+    assert len(names) == 150
+    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 151)]
 
 
 def patch_stub(root, name, *, compatible):

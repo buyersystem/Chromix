@@ -1,0 +1,35 @@
+{
+  "chromium_version": "152.0.7977.82",
+  "core_commit": "e71b91c6e336d0f25cfc6b9ef09298a9d2506e24",
+  "notice": "File preimages from SHA-256 verified Chromium lite archive and pinned core/platform patches; not build acceptance.",
+  "sources": {
+    "0005": {
+      "target": "content/browser/renderer_host/render_process_host_impl.cc",
+      "patch": "patches/0005-content-browser-renderer_host-render_process_host_impl-cc.patch",
+      "preimage_file": "0005-render_process_host_impl.cc",
+      "preimage_sha256": "59e8c12b925edf2174e5b1476f96f2ef2be532677ad1431a372eab862b9abac7",
+      "sections": [
+        [
+          21,
+          "#include \"base/byte_size.h\"\n#include \"base/clang_profiling_buildflags.h\"\n#include \"base/command_line.h\"\n#include \"base/containers/adapters.h\"\n#include \"base/containers/flat_map.h\"\n#include \"base/containers/map_util.h\"\n#include \"base/debug/alias.h\"\n#include \"base/debug/crash_logging.h\"\n#include \"base/debug/dump_without_crashing.h\"\n#include \"base/feature_list.h\"\n"
+        ],
+        [
+          2011,
+          "  // Call this now and not in OnProcessLaunched in case any mojo calls get\n  // dispatched before this.\n  uint64_t trace_id = base::Token::CreateRandom().high();\n  TRACE_EVENT(\"navigation\", \"RenderProcessHostImpl::Init\",\n              perfetto::Flow::Global(trace_id));\n  GetRendererInterface()->InitializeRenderer(\n      GetContentClient()->browser()->GetUserAgent(),\n      GetContentClient()->browser()->GetUserAgentMetadata(),\n      storage_partition_impl_->cors_exempt_header_list(),\n      GetContentClient()->browser()->GetOriginTrialsSettings(), cpu_tier,\n"
+        ]
+      ]
+    },
+    "0146": {
+      "target": "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc",
+      "patch": "patches/0146-canvas-text-noise-policy.patch",
+      "preimage_file": "0146-base_rendering_context_2d.cc",
+      "preimage_sha256": "095c5a6bbfe09d4d52996f6ff3002edaf7df2a9583ef9d0acaab85b392b9f8cd",
+      "sections": [
+        [
+          1405,
+          "      }\n    }\n  }\n\n  // Scale text metrics if enabled\n  if (RuntimeEnabledFeatures::FingerprintingCanvasMeasureTextNoiseEnabled()) {\n    if (HostAsOffscreenCanvas()) {\n      if (auto* window = DynamicTo<LocalDOMWindow>(GetTopExecutionContext())) {\n        if (window->GetFrame() && window->GetFrame()->GetDocument())\n          text_metrics->Shuffle(window->GetFrame()->GetDocument()->GetNoiseFactorX());\n      }\n"
+        ]
+      ]
+    }
+  }
+}

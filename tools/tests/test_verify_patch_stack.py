@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import shutil
+import re
 import subprocess
 import sys
 import pytest
@@ -111,6 +112,25 @@ def test_new_file_must_match_completely(tmp_path):
         out.write(b'// unexpected old-version tail\n')
     with pytest.raises(ValueError):
         stack.verify(src, repo)
+
+
+@pytest.mark.parametrize('number', ['0103', '0104', '0105', '0106'])
+def test_repository_new_file_metadata_is_unambiguous(tmp_path, number):
+    root = Path(__file__).resolve().parents[2]
+    patch = next((root / 'patches').glob(number + '-*.patch'))
+    data = patch.read_text(encoding='utf-8')
+    assert '\nnew file mode 100644\n--- /dev/null\n' in data
+    repo, src = tmp_path / 'repo', tmp_path / 'src'
+    (repo / 'patches').mkdir(parents=True)
+    (repo / 'patches' / patch.name).write_bytes(data.encode())
+    (repo / 'patches/series').write_text('patches/' + patch.name + '\n')
+    target = src / re.search(r'^\+\+\+ b/(.*)$', data, re.M)[1]
+    target.parent.mkdir(parents=True)
+    target.write_bytes(''.join(line[1:] for line in data.splitlines(keepends=True)
+                              if line.startswith('+') and not line.startswith('+++')).encode())
+    before = target.read_bytes(), target.stat().st_mtime_ns
+    assert stack.verify(src, repo)['status'] == 'verified'
+    assert (target.read_bytes(), target.stat().st_mtime_ns) == before
 
 
 def test_nested_temp_cannot_silently_skip_patches(tmp_path, monkeypatch):
