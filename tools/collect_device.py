@@ -21,6 +21,7 @@ import fingerprint_smoke as smoke
 from chromix._device_probe import probe_source, probe_hash
 from chromix._device_render import build_evidence
 from chromix._device_fonts import collect as collect_fonts
+from chromix._gpu_backend import collect_system
 
 ASSET = Path(__file__).resolve().parents[1] / 'sdk/python/chromix/device_probe.js'
 WORKER = """
@@ -138,6 +139,7 @@ def collect_browser(args):
             storage = []
             for index, profile in enumerate(('profile-a', 'profile-a', 'profile-b')):
                 switches = smoke.browser_args({'mode':'native'}, server.origin, False)
+                switches.append('--uxr-gpu-backend=native')
                 result['launch_args'] = switches
                 context = playwright.chromium.launch_persistent_context(
                     str(Path(temp) / profile), executable_path=binary['path'],
@@ -173,6 +175,7 @@ def collect_browser(args):
                     for scope in pool.SCOPES[2:]:
                         observation[scope] = smoke.evaluate(page, CONTEXT_PROBE, scope, args.timeout_ms)
                     observation['window']['fontBackend'] = collect_fonts(context, page)
+                    observation['window']['gpuSystem'] = collect_system(context)
                     result['observations'].append(observation)
                 finally:
                     context.close()

@@ -36,4 +36,4 @@ chromix = "chromix.__main__:main"
 packages = ["chromix"]
 
 [tool.setuptools.package-data]
-chromix = ["device_probe.js", "device_render_probe.js", "canvas_chain_probe.js", "render_integration_probe.js"]
+chromix = ["device_probe.js", "device_render_probe.js", "canvas_chain_probe.js", "render_integration_probe.js", "gpu_backend_probe.js"]

@@ -1,0 +1,37 @@
+diff --git a/base/uxr_config.h b/base/uxr_config.h
+--- a/base/uxr_config.h
++++ b/base/uxr_config.h
+@@ -39,6 +39,17 @@
+   }
+ };
+ 
++// One immutable rendering policy for Canvas, WebGL and WebGPU. This is a
++// backend contract, not an adapter identity: native APIs may select different
++// GPUs, software paths, formats and color-management implementations.
++struct BASE_EXPORT UxrGpuBackendPolicy {
++  bool native = false;
++  bool canvas_pixel_noise = false;
++  bool canvas_text_noise = true;
++  bool canvas_bridge = false;
++  bool capability_overrides = true;
++};
++
+ class BASE_EXPORT UxrConfig {
+  public:
+   static constexpr uint32_t kSchemaVersion = 1;
+@@ -55,6 +66,7 @@
+   bool IsInitialized() const;
+   flat_map<std::string, std::string> Snapshot() const;
+   UxrDisplayConfig Display() const;
++  UxrGpuBackendPolicy GpuBackendPolicy() const;
+   std::string ValidationError() const;
+ 
+   bool Has(const std::string& key) const;
+@@ -81,6 +93,7 @@
+   mutable Lock lock_;
+   flat_map<std::string, std::string> map_;
+   UxrDisplayConfig display_;
++  UxrGpuBackendPolicy gpu_backend_policy_;
+   bool initialized_ = false;
+   std::string validation_error_;
+ };

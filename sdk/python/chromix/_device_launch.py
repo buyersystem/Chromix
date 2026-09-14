@@ -22,10 +22,11 @@ from ._device_headers import header_errors
 from ._device_probe import probe_source, probe_hash
 from ._socks_auth import apply_native_socks_auth
 from . import _device_fonts as fonts
+from . import _gpu_backend as gpu_backend
 
 PROBE = Path(__file__).with_name('device_probe.js')
 DEFAULT_TIMEOUT = 120000
-NATIVE_ARGS = ['--fingerprint=off', '--uxr-webgl-real', '--uxr-disable-fingerprint-noise',
+NATIVE_ARGS = ['--fingerprint=off', '--uxr-gpu-backend=native', '--uxr-webgl-real', '--uxr-disable-fingerprint-noise',
                '--no-first-run', '--no-default-browser-check', '--disable-background-networking']
 
 
@@ -60,7 +61,7 @@ def prepare(options, binary, headless, persistent=None):
         return pool.validate_record(pool.load_json(path), path.parent)
     host = read(options['host'])
     if host['schema_version'] != pool.SCHEMA_VERSION:
-        raise ValueError('legacy host lacks render admission evidence; recollect with probe v3')
+        raise ValueError('legacy host lacks GPU backend admission evidence; recollect with probe v4')
     if host['provenance'].get('probe_sha256') != probe_hash():
         raise ValueError('complete device probe changed; recollect host evidence')
     collected = datetime.fromisoformat(host['provenance']['collected_at'])
@@ -169,13 +170,13 @@ WORKER_EVAL = """async kind => {
 }"""
 
 
-def bounded(script):
+def bounded(script, timeout_ms=60000):
     return """async argument => {
       let timer;
       try { return await Promise.race([(%s)(argument),new Promise((_,reject)=>{
-        timer=setTimeout(()=>reject(Error('device probe timeout')),30000);
+        timer=setTimeout(()=>reject(Error('device probe timeout')),%d);
       })]); } finally { clearTimeout(timer); }
-    }""" % script
+    }""" % (script, timeout_ms)
 
 
 PROBE_EVAL = bounded('() => chromixDeviceProbe()')
@@ -199,6 +200,8 @@ class ProbeHandler(BaseHTTPRequestHandler):
             content, mime = probe_source(), 'text/javascript'
         elif self.path in ASSETS:
             content, mime = ASSETS[self.path], 'text/javascript'
+            if getattr(self.server, 'probe_family', 'device') == 'gpu-backend':
+                content = content.replace('chromixDeviceProbe()', 'chromixGpuBackendProbe()')
         else:
             self.send_error(404)
             return
@@ -223,9 +226,12 @@ class ProbeHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def probe_server(isolated=False):
+def probe_server(isolated=False, *, probe_family='device'):
+    if probe_family not in ('device', 'gpu-backend'):
+        raise ValueError('unknown packaged probe family')
     server = ThreadingHTTPServer(('127.0.0.1', 0), ProbeHandler)
     server.isolated = isolated
+    server.probe_family = probe_family
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -246,6 +252,7 @@ def collect_live(context, origin):
         for scope in pool.SCOPES[2:]:
             observation[scope] = page.evaluate(WORKER_EVAL, scope)
         observation['window']['fontBackend'] = fonts.collect(context, page)
+        observation['window']['gpuSystem'] = gpu_backend.collect_system(context)
         return observation
     finally:
         page.close()
@@ -260,6 +267,7 @@ async def collect_live_async(context, origin):
         for scope in pool.SCOPES[2:]:
             observation[scope] = await page.evaluate(WORKER_EVAL, scope)
         observation['window']['fontBackend'] = await fonts.collect_async(context, page)
+        observation['window']['gpuSystem'] = await gpu_backend.collect_system_async(context)
         return observation
     finally:
         await page.close()

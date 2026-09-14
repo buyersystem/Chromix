@@ -57,10 +57,16 @@ The runner requires Python Playwright, serves its own loopback test pages, and
 never downloads a browser. A passing tooling test is not a passing browser smoke.
 
 The new [fingerprint regression gate](docs/fingerprint-acceptance.md) checks source
-freshness before compilation and runs seven bounded suites against the exact
+freshness before compilation and runs eleven bounded suites against the exact
 extracted executable. Display configuration now uses a launch-time emulation
 backend instead of separate getters. These changes still need a matching native
 Chromix build; installed Chrome control results are not release acceptance.
+
+The [shared native GPU policy and device matrix](docs/gpu-backend.md) connect
+Canvas/WebGL/WebGPU to one immutable native-policy snapshot and independently
+check resource operations. Measured admission requires probe v4 and five hashed
+assets. The 33-cell OS/architecture/API/vendor plan is currently unsampled;
+stock controls, virtual GPUs and unexercised inventory entries never count.
 
 The GPU pool contains Windows/Linux/macOS identity templates, not a measured
 full-device dataset. Screen/layout, font provenance, CPU/memory capabilities,

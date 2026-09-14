@@ -47,7 +47,7 @@ globalThis.chromixDeviceProbe = async () => {
       return typeof SharedArrayBuffer === 'function' && memory.buffer instanceof SharedArrayBuffer;
     });
   }
-  const result = {probeVersion:3, execution, identity:await capture(async () => ({
+  const result = {probeVersion:4, execution, identity:await capture(async () => ({
     ua:n.userAgent, platform:n.platform, languages:Array.from(n.languages),
     timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,
     locale:Intl.DateTimeFormat().resolvedOptions().locale,

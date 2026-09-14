@@ -259,7 +259,8 @@ globalThis.chromixSceneProbe = async () => {
 // Compression bounds transport size; Python rechecks length, hash and every
 // pixel contract after bounded decompression. A success label alone never passes.
 globalThis.chromixPackedRenderProbe = async () => {
-  const value = {version:1, chain:await canvasChainProbe({taint:false}),
+  const value = {version:2, chain:await canvasChainProbe({taint:false}),
+    gpuBackend:await chromixGpuBackendProbe(),
     scenes:await chromixSceneProbe(), integration:typeof document === 'undefined'
       ? {status:'not_applicable', reason:'DOM ownership tests run in window/iframe'}
       : await chromixRenderProbe()};

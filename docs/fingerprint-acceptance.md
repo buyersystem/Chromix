@@ -62,6 +62,7 @@ CI 另负责同一构建的 package 校验和 source receipt 关联。
 | socks_auth | 原生 RFC 1929 TCP、window/iframe/worker、错误密码与认证降级拒绝 |
 | font_provenance | 实际 shaped-run typeface 表摘要与 SFNT/TTC 文件关联；不证明栅格等价 |
 | render | ImageBitmap、导出快照、worker ownership、WebGL loss、WebGPU boundaries |
+| gpu_backend | A/A-restart/B-conflict 原生策略；五 scope Canvas 色域/类型、GL client/PBO stride、WebGPU adapter/格式/MSAA/销毁重建、CDP GPU 库存 |
 
 每项默认 240 秒，可配置 30–1800 秒。Windows 使用 gated child + kill-on-close
 Job Object；POSIX 使用独立进程组和 psutil 后代身份跟踪，只清理本次拥有的进程。
@@ -77,7 +78,7 @@ GitHub run 的 producer receipt，报告明确标为 `producer-receipt-only`。
 
 - `status=failed`：至少一项错误，退出非零。
 - `status=incomplete`：必需检查通过，optional 能力有明确 gap。
-- `ci_gate_passed=true`：非 control、source/binary 身份通过、十项完整执行且无
+- `ci_gate_passed=true`：非 control、source/binary 身份通过、十一项完整执行且无
   required failure。允许记录的 optional gap，不表示完整设备验收。
 - `full_acceptance=false`：没有真实硬件、font-file/glyph 或外部 proxy/DNS/
   QUIC/TURN 的完整证据，不自动升级为全量验收。
@@ -112,3 +113,10 @@ npm test --prefix sdk/node
 不能算有效证据。Cookie 必须保留测试夹具的 host-only/domain、有效期、HttpOnly、
 priority 和 CHIPS 属性，而非只保留四个名字。SOCKS 拒绝路径即使没有应用请求，
 只要错误密码认证成功或降级后发送了 CONNECT，也会失败。
+
+第十一项 [GPU backend audit](gpu-backend.md) 保留全部前十项，不以 renderer 名称
+相等或库存列出多块 GPU 当作统一后端证明。`native` 是不可变的共享策略；
+不同 API/adapter request 可以选不同 GPU。probe-v4 准入重新校验原始格式、
+padding、生命周期和 CDP 证据，旧 probe-v3 bundle 需重采。本机 stock GPU
+对照仍失败；33-cell 设备矩阵目前没有 reviewed 样本。这些状态不随源码/
+SDK 契约 CI 通过而自动升级。

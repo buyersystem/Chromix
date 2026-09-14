@@ -4,9 +4,43 @@ This record tracks the implementation requested by `/root/fingerprint-p0-p2-back
 
 ## Acceptance rules
 
+### 2026-09-14 update — shared native GPU policy and reviewed device matrix
+
+The current series contains **165 patches**. `0158`–`0164` add the immutable
+`--uxr-gpu-backend=native` policy shared by Canvas pixels/text/export/Bridge,
+WebGL persona/capabilities and WebGPU feature negotiation. Conflicting synthetic
+flags cannot enable those paths. Unset/`compatibility` retains legacy behavior;
+native drivers, software fallback and independent API adapter selection remain.
+`0165` initializes only in-bounds alpha for unallocated opaque Canvas readback,
+sharing RGBA/BGRA8/F16/F32 encoding with opaque upload and preserving OOB/padding.
+
+Measured records now require **schema v2 / probe v4**, five hashed assets,
+raw GPU resource/lifecycle matrices and native CDP GPU evidence. Old probe-v3
+bundles must be recollected. OS inventory adds Linux PCI and macOS display data;
+API identities are not equated with the process-wide adapter list.
+The acceptance runner keeps the old ten suites and adds `gpu_backend` as #11.
+
+The 165-patch affected-file tree passes reverse/forward checks, and the eight
+new patches pass zero-fuzz/zero-offset application. These and dependency-shim
+tests are not a native Chromium build. The stock Chrome 153 GPU control still
+fails opaque HTML Canvas reset readback; full collection also retains the older
+Canvas alpha/OOB failures and is rejected. The committed matrix is an unsampled
+33-cell plan: **0 reviewed devices**, all cells **not_sampled**. Controls never count.
+
+Current regression: Linux **5113 passed, 343 skipped**; Windows contract-focused
+**1296 passed, 6 skipped**; Node **372/4** on Windows and **376/0** on Linux
+(passed/skipped). Wheel/sdist/npm archives and isolated imports match current
+source and all five probe assets. Windows whole-repository success is still not
+claimed. These results are tooling/shim checks, not native browser acceptance.
+
+This implements a **shared native rendering contract**, not a common cross-API
+privacy rasterizer, physical adapter attestation or completed hardware corpus.
+Matching 165-patch native builds and cross-OS hardware acceptance remain pending.
+Commands, exact evidence and remaining scope: [GPU backend](docs/gpu-backend.md).
+
 ### 2026-09-14 follow-up — SDK functionality, native SOCKS auth and font provenance
 
-The series now contains **157 patches**. `0151`–`0153` add DevTools digests
+At that checkpoint the series contained **157 patches**. `0151`–`0153` add DevTools digests
 of the actual shaped-run typeface tables; the independent SFNT/TTC collector
 binds these to file hashes without treating names or duplicate paths as proof.
 `0154`–`0157` add native RFC 1929 SOCKS5 TCP authentication, network-service
@@ -17,7 +51,7 @@ Node now has a native Puppeteer subpath and shared persistent seeds. Both SDKs
 provide explicit authenticated Cookie export/import with cross-language scrypt /
 AES-256-GCM envelopes. This is not an OSCrypt/portable-profile database mode.
 
-Acceptance now runs ten suites, adding `sdk_cookies`, `socks_auth` and
+That checkpoint ran ten suites, adding `sdk_cookies`, `socks_auth` and
 `font_provenance`. Native source hunks, shim tests and stock-browser SDK controls
 do not establish a matching Chromix build or qualified physical device.
 The complete 157-patch affected-file stack passes reverse/forward verification;

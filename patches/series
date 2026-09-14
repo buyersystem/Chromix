@@ -156,3 +156,11 @@ patches/0154-socks5-auth-declaration.patch
 patches/0155-socks5-auth-handshake.patch
 patches/0156-socks5-auth-network-service.patch
 patches/0157-socks5-auth-native-tests.patch
+patches/0158-gpu-backend-policy-declaration.patch
+patches/0159-gpu-backend-policy-snapshot.patch
+patches/0160-canvas-shared-backend-policy.patch
+patches/0161-canvas-export-backend-policy.patch
+patches/0162-canvas-bridge-backend-policy.patch
+patches/0163-webgl-shared-backend-policy.patch
+patches/0164-webgpu-device-backend-policy.patch
+patches/0165-canvas-lazy-opaque-readback.patch

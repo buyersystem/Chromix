@@ -134,7 +134,7 @@ def test_failure_keeps_all_other_diagnostics(orchestrator, failure):
     behavior['device'] = fail
     result = audit.run(args)
     assert result['status'] == 'failed' and not result['ci_gate_passed']
-    assert len(result['suites']) == len(audit.SUITES) and calls[-1] == 'render'
+    assert len(result['suites']) == len(audit.SUITES) and calls[-1] == 'gpu_backend'
     assert any(error.startswith('device:') for error in result['errors'])
     assert (args.output_dir / 'render.json').exists()
 

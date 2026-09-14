@@ -1,0 +1,12 @@
+diff --git a/third_party/blink/renderer/platform/canvas_bridge/canvas_bridge_client.cc b/third_party/blink/renderer/platform/canvas_bridge/canvas_bridge_client.cc
+--- a/third_party/blink/renderer/platform/canvas_bridge/canvas_bridge_client.cc
++++ b/third_party/blink/renderer/platform/canvas_bridge/canvas_bridge_client.cc
+@@ -111,7 +111,7 @@
+ CanvasBridgeClient* CanvasBridgeClient::Get() {
+   static CanvasBridgeClient* instance = []() -> CanvasBridgeClient* {
+     const base::UxrConfig& config = base::UxrConfig::GetInstance();
+-    if (config.Get("uxr-synthetic-device-tests") != "true" ||
++    if (!config.GpuBackendPolicy().canvas_bridge ||
+         !config.Has("uxr-canvas-bridge") ||
+         !config.Has("uxr-canvas-bridge-unsafe")) {
+       return nullptr;

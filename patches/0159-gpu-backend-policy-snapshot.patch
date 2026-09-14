@@ -1,0 +1,54 @@
+diff --git a/base/uxr_config.cc b/base/uxr_config.cc
+--- a/base/uxr_config.cc
++++ b/base/uxr_config.cc
+@@ -87,6 +87,23 @@
+   // Color depth is a backend capability, never a getter-only declaration.
+   return !cfg.contains("uxr-screen-color-depth");
+ }
++bool ParseGpuBackend(const flat_map<std::string, std::string>& cfg,
++                     UxrGpuBackendPolicy* policy) {
++  if (auto it = cfg.find("uxr-gpu-backend"); it != cfg.end()) {
++    if (it->second != "native" && it->second != "compatibility")
++      return false;
++    policy->native = it->second == "native";
++  }
++  const auto synthetic = cfg.find("uxr-synthetic-device-tests");
++  const bool allow_synthetic = !policy->native && synthetic != cfg.end() &&
++                               synthetic->second == "true";
++  const bool noise_disabled = cfg.contains("uxr-disable-fingerprint-noise");
++  policy->canvas_pixel_noise = allow_synthetic && !noise_disabled;
++  policy->canvas_text_noise = !policy->native && !noise_disabled;
++  policy->canvas_bridge = allow_synthetic;
++  policy->capability_overrides = !policy->native;
++  return true;
++}
+ }  // namespace
+ 
+ UxrConfig::UxrConfig() = default;
+@@ -130,8 +147,14 @@
+     validation_error_ = "invalid or inconsistent display geometry";
+     return false;
+   }
++  UxrGpuBackendPolicy gpu_backend_policy;
++  if (!ParseGpuBackend(cfg, &gpu_backend_policy)) {
++    validation_error_ = "invalid GPU backend policy";
++    return false;
++  }
+   map_ = cfg;
+   display_ = display;
++  gpu_backend_policy_ = gpu_backend_policy;
+   initialized_ = true;
+   validation_error_.clear();
+   return true;
+@@ -150,6 +173,11 @@
+ UxrDisplayConfig UxrConfig::Display() const {
+   AutoLock locker(lock_);
+   return display_;
++}
++
++UxrGpuBackendPolicy UxrConfig::GpuBackendPolicy() const {
++  AutoLock locker(lock_);
++  return gpu_backend_policy_;
+ }
+ 
+ std::string UxrConfig::ValidationError() const {

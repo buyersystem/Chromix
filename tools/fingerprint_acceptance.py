@@ -33,6 +33,7 @@ SUITES = (
     ('socks_auth', 'socks5_browser_audit.py', ()),
     ('font_provenance', 'font_provenance_audit.py', ()),
     ('render', 'fingerprint_render_audit.py', ()),
+    ('gpu_backend', 'gpu_backend_audit.py', ()),
 )
 
 
@@ -210,6 +211,11 @@ def assess_suite(name, report, expected_hash, expected_version):
                 errors.append('render page matrix did not complete')
             for run in report['runs']:
                 errors.extend(assess(run)[0])
+        elif name == 'gpu_backend':
+            from gpu_backend_audit import assess
+            failures, missing = assess(report)
+            errors.extend(failures)
+            derived_gaps.extend(missing)
         else:
             errors.append('unknown suite')
     except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:

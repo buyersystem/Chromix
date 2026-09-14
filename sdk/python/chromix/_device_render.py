@@ -17,6 +17,7 @@ import zlib
 
 from . import _canvas_chain as chain
 from ._render_integration import assess as assess_integration
+from . import _gpu_backend as gpu_backend
 
 SCOPES = chain.SCOPES
 MAX_BYTES = 8 * 1024 * 1024
@@ -231,7 +232,12 @@ def assess_observation(observation):
     try:
         envelopes = tuple(json.dumps(observation.get(s, {}).get('render'), sort_keys=True,
                                      separators=(',', ':'), allow_nan=False) for s in SCOPES)
-        return deepcopy(_assess_envelopes(envelopes))
+        result = deepcopy(_assess_envelopes(envelopes))
+        try:
+            gpu_backend.system_projection(observation.get('window', {}).get('gpuSystem'))
+        except (ValueError, TypeError, AttributeError, KeyError) as error:
+            result['errors'].append('native GPU system inventory: ' + str(error))
+        return result
     except (ValueError, TypeError, AttributeError) as error:
         return {'errors':['malformed render observation: ' + str(error)], 'unavailable':[],
                 'canvas_skipped':[], 'canvas_comparisons':0, 'codec_quality':[]}
@@ -245,13 +251,18 @@ def _assess_envelopes(envelopes):
             raise ValueError('Pillow LittleCMS and WebP decoders are required for measured admission')
     except ImportError as error:
         raise ValueError('install chromix[measured] to independently check render evidence') from error
-    decoded, errors, unavailable = {}, [], []
+    decoded, errors, unavailable, backends = {}, [], [], {}
     for scope, envelope in zip(SCOPES, envelopes):
         try:
             raw = unpack(json.loads(envelope))
-            if not isinstance(raw, dict) or set(raw) != {'version','chain','scenes','integration'} or raw['version'] != 1:
+            if (not isinstance(raw, dict) or set(raw) != {'version','chain','scenes','integration','gpuBackend'} or
+                    type(raw['version']) is not int or raw['version'] != 2):
                 raise ValueError('missing render families')
             decoded[scope] = raw
+            checked_backend = gpu_backend.assess(raw['gpuBackend'], scope)
+            errors.extend(scope + ': GPU backend: ' + e for e in checked_backend['errors'])
+            unavailable.extend(scope + ': GPU backend: ' + e for e in checked_backend['gaps'])
+            backends[scope] = checked_backend
             errors.extend(scope + ': ' + e for e in scene_errors(raw['scenes']))
             if scope in ('window','iframe'):
                 failures, missing = assess_integration(raw['integration'])
@@ -272,7 +283,7 @@ def _assess_envelopes(envelopes):
     # Preserve native lossy/color/coordinate differences instead of demanding
     # universal bytes across codecs or independently selected context backends.
     errors.extend(e for e in checked['errors'] if not e.endswith(': codec-quality mismatch'))
-    return {'errors':errors, 'unavailable':sorted(set(unavailable)),
+    return {'errors':errors, 'unavailable':sorted(set(unavailable)), 'gpu_backends':backends,
             'canvas_skipped':checked['skipped'], 'canvas_comparisons':len(checked['comparisons']),
             'codec_quality':[c for c in checked['comparisons']
                              if c.get('category') == 'codec-quality' and not c['pass']]}
@@ -284,23 +295,26 @@ def build_evidence(host, browser):
     from ._device_fonts import font_errors
     if browser.get('probe_sha256') != probe_hash():
         raise ValueError('render evidence requires the current complete probe bundle; recollect')
+    gpu_backend.validate_native_args(browser.get('launch_args'))
     observations = browser.get('observations', [])
     if len(observations) != 3:
         raise ValueError('render evidence requires three launches')
     runs = []
     # Repeated launches are checked, not synthesized from a single observation.
     for index, observation in enumerate(observations):
-        if any(observation.get(scope, {}).get('probeVersion') != PROBE_VERSION for scope in SCOPES):
-            raise ValueError('render evidence requires probe v3 in every context')
+        if any(type(observation.get(scope, {}).get('probeVersion')) is not int or
+               observation[scope]['probeVersion'] != PROBE_VERSION for scope in SCOPES):
+            raise ValueError('render evidence requires probe v4 in every context')
         checked = assess_observation(observation)
         checked['errors'].extend(font_errors(observation.get('window', {}).get('fontBackend')))
         if checked['errors']:
             raise ValueError('render run ' + str(index) + ': ' + '; '.join(checked['errors']))
         runs.append({**checked, 'payload_sha256':{s:observation[s]['render']['value']['sha256'] for s in SCOPES},
                      'font_backend_sha256':digest(observation['window']['fontBackend'])})
-    return {'schema_version':1, 'probe_sha256':browser['probe_sha256'],
+    return {'schema_version':2, 'probe_sha256':browser['probe_sha256'],
             'browser_sha256':browser['binary']['sha256'],
             'host_sha256':digest(host), 'gpu_inventory_sha256':digest(host.get('gpu')),
             'font_inventory_sha256':digest(host.get('fonts')), 'runs':runs,
+            'gpu_backend_policy':'native', 'gpu_backend_matrix_version':1,
             'physical_backend_equivalence':'not_verified', 'font_file_to_glyph_binding':'not_verified',
             'taint':'standalone_audit_only', 'profile_distinct_pixels':'not_required'}

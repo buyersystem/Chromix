@@ -11,6 +11,24 @@
 它们接入匹配二进制门禁。完整渲染隐私、UDP/ICE/TURN、TLS/HTTP persona、真实
 GPU/字体/媒体矩阵仍需后续后端工作，不能用展示参数代替。
 
+### 2026-09-14 GPU 后续更新
+
+新增 `0158`–`0165`，当前共 **165** 份补丁。Canvas/WebGL/WebGPU 共享不可变
+`--uxr-gpu-backend=native` 策略，禁止冲突参数重新打开旧噪声/Bridge/能力改写。
+另修未分配 snapshot 的 opaque Canvas 画布内 alpha；保留原 OOB、stride
+与设备丢失语义。未设置或 compatibility 模式保留此前接口行为。
+
+measured 准入升级为 schema2/probe4，五份探针资产共同哈希，加入实际 GPU
+分配/读回/格式/生命周期与 CDP 库存。Windows CIM、Linux PCI、macOS GPU
+库存分别取证，不把驱动列表等同于 API 选择。门禁增至 **十一套**。
+`gpu_device_matrix.py` 重新核验 reviewed records；已提交的 33-cell 矩阵只是
+计划，当前 **0 个 reviewed devices、33 个 not_sampled cell**，stock controls
+明确排除。本机完整采集仍因 Canvas 原生失败被拒绝，无新增 record。
+
+详见 [GPU 后端实施、实测与验证](gpu-backend.md)。这是共享原生策略和证据工具，
+不是完成了统一后端级隐私或跨 OS 实体设备验收。下面的 157-patch 结果保留为
+此前批次记录，不叠加为当前测试数量。
+
 ## 实施
 
 ### Puppeteer
@@ -136,7 +154,7 @@ Canvas 摘要断言按 `5271cf4` 的原生 alpha 路径修复更新，不回退�
 
 ## 验证
 
-匹配二进制门禁由七套扩至十套，新增 `sdk_cookies`、`socks_auth`、
+此前批次匹配二进制门禁由七套扩至十套，新增 `sdk_cookies`、`socks_auth`、
 `font_provenance`；依旧固定 executable/source receipts，并重新校验原始观测。
 
 ```powershell
@@ -215,8 +233,9 @@ fixture，检查 window/iframe/worker、错误密码和认证降级，不解析�
 
 ### 尚未完成的总清单
 
-1. 匹配构建与十套 native acceptance、跨 OS/真实 GPU 的运行验收。
-2. Canvas/WebGL/WebGPU 共用后端级隐私机制、完整色域/格式/设备丢失矩阵。
+1. 匹配 165-patch 构建与十一套 native acceptance、跨 OS/真实 GPU 的运行验收。
+2. Canvas/WebGL/WebGPU 共用后端级隐私机制；本轮色域/格式/丢失探针已接入，
+   仍需真实设备覆盖、实际切换/故障及精确适配器绑定。
 3. 字体完整 shaping/rasterization；真实设备池的 reviewed 全设备样本。
 4. 屏幕物理切换、媒体/音频图/权限/编解码的统一实际设备模型。
 5. UDP ASSOCIATE、真实 ICE/TURN/DNS/IPv6 路由和 packet/process 归因。

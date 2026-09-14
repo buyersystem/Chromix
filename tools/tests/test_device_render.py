@@ -12,12 +12,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'sdk/python'))
 from chromix import _device_render as render, device_pool as pool
-from chromix._device_probe import probe_hash, probe_source, ASSETS
+from chromix._device_probe import PROBE_VERSION, probe_hash, probe_source, ASSETS
 from chromix import _device_fonts as fonts
 from test_device_pool import bundle as legacy_bundle, seal
 from test_device_p0 import v2_observation
 from test_canvas_chain_audit import template as chain_template
 from test_fingerprint_runtime_audits import render_report
+from gpu_backend_fixtures import backend_fixture, system_fixture
 
 
 def pack(value):
@@ -68,10 +69,10 @@ def _template():
     chains = chain_template.__wrapped__()
     result = v2_observation()
     for scope, value in result.items():
-        value['probeVersion'] = 3
+        value['probeVersion'] = PROBE_VERSION
         if scope in ('window','iframe'):
             chains[scope]['taint'] = {'status':'not_collected'}
-        raw = {'version':1, 'chain':chains[scope], 'scenes':scene_fixture(),
+        raw = {'version':2, 'chain':chains[scope], 'scenes':scene_fixture(), 'gpuBackend':backend_fixture(scope),
                'integration':render_report() if scope in ('window','iframe') else
                              {'status':'not_applicable','reason':'DOM ownership tests run in window/iframe'}}
         value['render'] = pack(raw)
@@ -79,6 +80,7 @@ def _template():
         {'family':family,'text':text,'platformFonts':[{'familyName':'fixture-not-real',
             'postScriptName':'fixture-face','isCustomFont':False,'glyphCount':len(text)}]}
         for family in fonts.FAMILIES for text in fonts.TEXTS])
+    result['window']['gpuSystem'] = system_fixture()
     return result
 
 
@@ -103,7 +105,7 @@ def bundle(root):
     record = legacy_bundle(root)
     browser = pool.load_json(root / 'browser.json')
     browser.update(observations=[observation() for _ in range(3)], probe_sha256=probe_hash(),
-                   browser_versions=['152.0.7977.82']*3)
+                   browser_versions=['152.0.7977.82']*3, launch_args=['--fingerprint=off','--uxr-gpu-backend=native'])
     record.update(schema_version=2, qualification=deepcopy(pool.RENDER_QUALIFICATION))
     record['provenance'].update(probe_sha256=probe_hash(), browser_version='152.0.7977.82')
     return refresh_render(record, root, browser)
@@ -205,8 +207,8 @@ def test_no_artificial_uniqueness_or_universal_gpu_vendor_requirement():
 def test_packaged_probe_hash_includes_every_render_asset():
     source = probe_source()
     assert probe_hash() == hashlib.sha256(source.encode()).hexdigest()
-    assert len(ASSETS) == 4
-    for name in ('canvasChainProbe','chromixRenderProbe','chromixSceneProbe','chromixDeviceProbe'):
+    assert len(ASSETS) == 5
+    for name in ('canvasChainProbe','chromixRenderProbe','chromixSceneProbe','chromixDeviceProbe','chromixGpuBackendProbe'):
         assert name in source
 
 

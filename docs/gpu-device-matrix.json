@@ -1,0 +1,269 @@
+{
+  "schema_version": 1,
+  "cells": [
+    {
+      "id": "windows-x64-intel-webgl",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgl",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-x64-intel-webgl2",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgl2",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-x64-intel-webgpu",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgpu",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-x64-amd-webgl",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgl",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-x64-amd-webgl2",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgl2",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-x64-amd-webgpu",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgpu",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-x64-nvidia-webgl",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgl",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-x64-nvidia-webgl2",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgl2",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-x64-nvidia-webgpu",
+      "os": "Windows",
+      "architecture": "x64",
+      "api": "webgpu",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-arm64-qualcomm-webgl",
+      "os": "Windows",
+      "architecture": "arm64",
+      "api": "webgl",
+      "vendor_family": "qualcomm",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-arm64-qualcomm-webgl2",
+      "os": "Windows",
+      "architecture": "arm64",
+      "api": "webgl2",
+      "vendor_family": "qualcomm",
+      "min_devices": 1
+    },
+    {
+      "id": "windows-arm64-qualcomm-webgpu",
+      "os": "Windows",
+      "architecture": "arm64",
+      "api": "webgpu",
+      "vendor_family": "qualcomm",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-arm64-apple-webgl",
+      "os": "Darwin",
+      "architecture": "arm64",
+      "api": "webgl",
+      "vendor_family": "apple",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-arm64-apple-webgl2",
+      "os": "Darwin",
+      "architecture": "arm64",
+      "api": "webgl2",
+      "vendor_family": "apple",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-arm64-apple-webgpu",
+      "os": "Darwin",
+      "architecture": "arm64",
+      "api": "webgpu",
+      "vendor_family": "apple",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-x64-intel-webgl",
+      "os": "Darwin",
+      "architecture": "x64",
+      "api": "webgl",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-x64-intel-webgl2",
+      "os": "Darwin",
+      "architecture": "x64",
+      "api": "webgl2",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-x64-intel-webgpu",
+      "os": "Darwin",
+      "architecture": "x64",
+      "api": "webgpu",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-x64-amd-webgl",
+      "os": "Darwin",
+      "architecture": "x64",
+      "api": "webgl",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-x64-amd-webgl2",
+      "os": "Darwin",
+      "architecture": "x64",
+      "api": "webgl2",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "darwin-x64-amd-webgpu",
+      "os": "Darwin",
+      "architecture": "x64",
+      "api": "webgpu",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-intel-webgl",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgl",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-intel-webgl2",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgl2",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-intel-webgpu",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgpu",
+      "vendor_family": "intel",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-amd-webgl",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgl",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-amd-webgl2",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgl2",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-amd-webgpu",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgpu",
+      "vendor_family": "amd",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-nvidia-webgl",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgl",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-nvidia-webgl2",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgl2",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-x64-nvidia-webgpu",
+      "os": "Linux",
+      "architecture": "x64",
+      "api": "webgpu",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-arm64-nvidia-webgl",
+      "os": "Linux",
+      "architecture": "arm64",
+      "api": "webgl",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-arm64-nvidia-webgl2",
+      "os": "Linux",
+      "architecture": "arm64",
+      "api": "webgl2",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    },
+    {
+      "id": "linux-arm64-nvidia-webgpu",
+      "os": "Linux",
+      "architecture": "arm64",
+      "api": "webgpu",
+      "vendor_family": "nvidia",
+      "min_devices": 1
+    }
+  ]
+}

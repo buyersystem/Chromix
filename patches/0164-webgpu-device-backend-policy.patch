@@ -1,0 +1,13 @@
+diff --git a/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc b/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
+--- a/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
++++ b/third_party/blink/renderer/modules/webgpu/gpu_adapter.cc
+@@ -42,7 +42,8 @@
+ 
+   // An explicit empty allowlist exposes no features; unset preserves Dawn's set.
+   const base::UxrConfig& config = base::UxrConfig::GetInstance();
+-  const bool ph_filter = config.Has("uxr-webgpu-features");
++  const bool ph_filter = config.GpuBackendPolicy().capability_overrides &&
++                         config.Has("uxr-webgpu-features");
+   std::set<std::string> ph_allowed;
+   if (ph_filter) {
+     const std::string ph_allow_raw = config.Get("uxr-webgpu-features");

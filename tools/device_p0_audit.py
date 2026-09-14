@@ -74,8 +74,8 @@ def evaluate(observation, isolated):
     errors = launch.pool.observation_errors(observation)
     for scope in launch.pool.SCOPES:
         value = observation.get(scope, {})
-        if value.get('probeVersion') not in (2, 3):
-            errors.append(f'{scope}: requires probe v2 or v3')
+        if value.get('probeVersion') not in (2, 3, 4):
+            errors.append(f'{scope}: requires probe v2, v3 or v4')
         errors.extend(f'{scope}: {error}' for error in header_errors(value,
                       require_hints=scope in ('window', 'iframe')))
         execution = value.get('execution', {})

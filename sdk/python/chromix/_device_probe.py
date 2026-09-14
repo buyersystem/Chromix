@@ -2,9 +2,9 @@
 import hashlib
 from pathlib import Path
 
-PROBE_VERSION = 3
+PROBE_VERSION = 4
 ASSETS = ('canvas_chain_probe.js', 'render_integration_probe.js',
-          'device_render_probe.js', 'device_probe.js')
+          'gpu_backend_probe.js', 'device_render_probe.js', 'device_probe.js')
 
 
 def probe_source():

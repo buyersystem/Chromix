@@ -21,9 +21,10 @@ monitor. Never change the source record to make a candidate fit the host.
 The collector measures:
 
 - OS/release/build/architecture and logical CPU count. Windows adds CIM CPU,
-  physical RAM and GPU driver inventory. Other platforms explicitly retain
-  unavailable fields rather than borrowing Windows data.
-- Font-file hashes from Windows system/user font directories, or `fc-list`.
+  physical RAM and GPU drivers; Linux adds PCI sysfs GPU IDs/drivers and physical
+  RAM; macOS adds system-profiler GPU inventory and physical RAM. Non-PCI Linux
+  GPUs or missing native fields stay unavailable, not borrowed from templates.
+- Font-file hashes from Windows/macOS system/user font directories, or `fc-list`.
   These are inventory hashes, not proof of which font supplied a glyph.
 - UA/CH, locale/timezone, CPU count, deviceMemory, native heap exposure, actual
   Wasm/SIMD execution, bounded Wasm memory growth, Atomics, SAB and isolation in window, iframe,
@@ -38,6 +39,8 @@ The collector measures:
 - The shared Canvas/codec/ImageBitmap, WebGL1/2 shader/format/MSAA and WebGPU
   external-image/render/readback matrix described below. CDP records actual
   platform face names, PostScript names and glyph counts for 20 font samples.
+- Native GPU resource matrices, pack/PBO padding, device/context loss/recreation,
+  and browser-level CDP GPU inventory. API adapters and OS inventory stay separate.
 - Cross-context identity/execution agreement, restart stability and independent
   profile LocalStorage isolation. IDs remain raw in evidence, but salted media
   IDs, echoed HTTP headers, network estimates and dynamic audio state/latency are excluded from the
@@ -55,7 +58,7 @@ The collector measures:
 | `provenance` | Collector ID, timezone-aware collection timestamp, executable SHA-256, full browser version and complete probe-bundle SHA-256 |
 | `device` | Whole host inventory and stable five-context surface observations |
 | `evidence` | Exactly `host`, `browser`, `render`: relative `host.json`, `browser.json`, `render.json` paths and file SHA-256 values |
-| `qualification` | Independently checked render evidence; physical backend and font-file-to-glyph binding remain unverified; wire remains uncollected |
+| `qualification` | Independently checked render and GPU backend evidence; physical backend and font-file-to-glyph binding remain unverified; wire remains uncollected |
 
 Canonical JSON is sorted-key, ASCII-escaped, compact JSON with non-finite values
 forbidden. Evidence paths are resolved inside the bundle; absolute paths,
@@ -68,21 +71,24 @@ that is not a usable pool record.
 
 Schema-v1 records remain readable for archival integrity checks only. They
 cannot qualify for selection, live-host preflight or corpus review. Recollect
-with probe v3; adding v3 payloads to a v1 envelope is rejected, not a migration.
+with probe v4; adding current payloads to a v1 envelope is rejected, not a migration.
+Schema-v2/probe-v3 bundles likewise cannot satisfy the current probe hash and GPU
+evidence contract; recollect rather than editing their metadata.
 
 Checksums do not authenticate hardware or prove a collector was honest. A
 `measured` label is not a signed attestation. Keep raw device bundles local:
 they include installed font paths, hardware inventory and origin-salted IDs.
 
-## Rendering Admission (Probe v3)
+## Rendering Admission (Probe v4)
 
 The canonical packaged source bundle concatenates `canvas_chain_probe.js`,
-`render_integration_probe.js`, `device_render_probe.js`, then `device_probe.js`
+`render_integration_probe.js`, `gpu_backend_probe.js`, `device_render_probe.js`, then `device_probe.js`
 from `sdk/python/chromix/`, separated by newlines. `probe_hash()` hashes this
 complete UTF-8 source, not just the last file. Collection, live Python/Node
 launch and corpus review use the same bundle and validators.
 
-Each of the five scopes records a `gzip-json-v1` envelope with raw byte length,
+Each of the five scopes records a `gzip-json-v1` envelope (inner render version 2)
+with raw byte length,
 SHA-256 and base64 gzip data. Decompression is bounded to **8 MiB per scope**;
 duplicate keys, nonfinite numbers, truncated/trailing streams and incorrect
 hashes or lengths are rejected. The stable device projection keeps raw hashes
@@ -102,13 +108,17 @@ Coverage includes:
   bitmap upload → shader → RGBA/BGRA targets at 1/4 samples → mapped readback.
 - Window/iframe ownership, concurrent call-time exports, WebGL context
   loss/restoration and valid/invalid WebGPU device requests.
+- [Native GPU matrix](gpu-backend.md): Canvas sRGB/P3, unorm8/F16, alpha/read-frequency
+  combinations; GL float formats, noncompact client/PBO pack layouts and stale
+  resources; separate WebGPU adapter requests, format/MSAA, external-image alpha,
+  full padded readback, resize/unconfigure and destroyed-device mapping/recreation.
 - Actual CDP platform-font faces for four generic families and five glyph
   samples. Installed file hashes are separate evidence, **not** proof that a
   specific font file rasterized a glyph.
 
-`render.json` is independently derived from all three launches and binds the
+`render.json` schema 2 is independently derived from all three launches and binds the
 complete probe, executable, host, GPU inventory, font inventory and observed
-font faces. Host inventory is rechecked after collection and live startup.
+  font faces. Host inventory is rechecked after collection and live startup.
 Optional unavailable APIs remain explicit diagnostics; they are not simulated.
 JPEG/WebP engineering quality-threshold failures are recorded in `codec_quality`,
 not treated as Web-platform conformance failures. Individual lossless/alpha/OOB
@@ -191,7 +201,9 @@ The launch contract is deliberately restrictive:
   overrides are rejected, including nested Node options. Browser-returning
   `launch` APIs reject measured mode because they cannot verify future contexts.
 - Keep native display, CPU, V8, GPU, fonts, audio and media behavior. Launch uses
-  `--fingerprint=off`, real WebGL, noise disabled and no viewport emulation.
+  `--fingerprint=off`, `--uxr-gpu-backend=native`, real WebGL, noise disabled and
+  no viewport emulation. The shared native policy wins over conflicting GPU/
+  Canvas synthetic flags; forced backend/diagnostic GPU args cannot qualify.
   No different physical GPU or virtual device is created by selecting a record.
 - Collect and independently check all five live render contexts and actual
   font faces before returning the context (`render_verified: true`). A capability,
@@ -227,7 +239,7 @@ These changes require a rebuilt browser, not reuse of an older binary.
 python -X utf8 tools/device_p0_audit.py --browser C:/verified/chrome.exe --output .chromix-local-build/device-pool-p0/audit.json
 ```
 
-Probe v3 retains v2's Wasm scalar/SIMD, memory growth and maximum enforcement,
+Probe v4 retains the earlier Wasm scalar/SIMD, memory growth and maximum enforcement,
 WebGL shader rendering and extension requests, WebGPU compute and mapped texture
 readback. Validators check the returned results, not just success labels.
 The standalone audit runs five contexts on nonisolated and COOP/COEP-isolated
@@ -246,7 +258,7 @@ Both the collector and audit add CDP platform-font family/PostScript/glyph-count
 `passed` means the tested operations passed; unavailable GPU APIs remain explicit,
 and `wire`, `physical_gpu_equivalence`, `font_file_binding` remain unverified.
 No maximum JS heap allocation, exhaustive shader/format/limit matrix or driver identity
-attestation is performed. Recollect pre-v3 bundles before using the updated live
+attestation is performed. Recollect pre-v4 bundles before using the updated live
 probe; their stable projection no longer matches. Existing profile bindings do
 not silently migrate to the new record.
 
@@ -283,14 +295,20 @@ WebRTC traffic did not bypass the configured route.
 
 ## Remaining Work
 
-### Corpus review tooling (schema-v2/probe-v3 update, 2026-09-13)
+### Corpus review tooling (schema-v2/probe-v4 update, 2026-09-14)
 
 New collections include `browser_versions` for all three launches and the complete
 probe-bundle SHA-256 in browser evidence; the record provenance repeats the full
-browser version and probe hash. Corpus review now requires schema v2, probe v3
+browser version and probe hash. Corpus review now requires schema v2, probe v4
 and independently checked `render.json`. Older bundles are archive-only and
 must be recollected. This does not change the selector's
 exact-native matching or its existing 24-hour live-preflight age default.
+
+`tools/gpu_device_matrix.py` builds OS/architecture/API/vendor coverage from these
+review manifests. The committed [33-cell plan](gpu-device-matrix.json) contains
+no device records; all cells are currently unsampled. Actual API execution and
+five-scope/three-launch coverage are required. A GPU merely present in inventory,
+or a passing stock control, never fills a cell. See [GPU backend](gpu-backend.md).
 
 `tools/fingerprint_corpus_review.py` checks an explicitly prepared review manifest:
 

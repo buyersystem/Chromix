@@ -1,0 +1,155 @@
+diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+--- a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
++++ b/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc
+@@ -7,6 +7,7 @@
+ #include "base/strings/string_number_conversions.h"
+ #include "base/uxr_config.h"
+ 
++#include <algorithm>
+ #include <array>
+ #include <bit>
+ #include <cmath>
+@@ -132,35 +133,95 @@
+ 
+ namespace {
+ 
+-// Opaque canvas uploads must contain opaque alpha bytes, not merely carry
+-// kOpaque metadata. Otherwise native CPU/GPU/export paths can reinterpret
+-// untouched ImageData alpha as premultiplication and corrupt the same pixels.
++struct UxrOpaqueAlpha {
++  std::array<uint8_t, 4> bytes{};
++  size_t component_bytes = 0;
++};
++
++std::optional<UxrOpaqueAlpha> UxrOpaqueAlphaForColorType(SkColorType type) {
++  UxrOpaqueAlpha alpha;
++  switch (type) {
++    case kRGBA_8888_SkColorType:
++    case kBGRA_8888_SkColorType:
++      alpha.bytes[0] = 255;
++      alpha.component_bytes = 1;
++      break;
++    case kRGBA_F16_SkColorType: {
++      const auto one = std::bit_cast<std::array<uint8_t, 2>>(uint16_t{0x3c00});
++      alpha.bytes[0] = one[0];
++      alpha.bytes[1] = one[1];
++      alpha.component_bytes = 2;
++      break;
++    }
++    case kRGBA_F32_SkColorType:
++      alpha.bytes = std::bit_cast<std::array<uint8_t, 4>>(1.0f);
++      alpha.component_bytes = 4;
++      break;
++    default:
++      return std::nullopt;
++  }
++  return alpha;
++}
++
++// An unallocated opaque canvas still has logical opaque-black pixels. Readback
++// must initialize alpha only inside its bounds; OOB pixels/padding stay zero.
++// This writes the newly allocated ImageData, never a shared source resource.
++// A lost context is handled by the caller and retains the native lost path.
++bool UxrInitializeOpaqueReadback(const SkPixmap& destination,
++                                 int canvas_width,
++                                 int canvas_height,
++                                 int source_x,
++                                 int source_y) {
++  auto alpha_value = UxrOpaqueAlphaForColorType(destination.colorType());
++  if (!alpha_value || !destination.addr() || destination.info().isEmpty() ||
++      !destination.info().validRowBytes(destination.rowBytes()) ||
++      SkImageInfo::ByteSizeOverflowed(
++          destination.info().computeByteSize(destination.rowBytes()))) {
++    return false;
++  }
++  const int64_t left = std::max<int64_t>(0, source_x);
++  const int64_t top = std::max<int64_t>(0, source_y);
++  const int64_t right = std::min<int64_t>(
++      canvas_width, static_cast<int64_t>(source_x) + destination.width());
++  const int64_t bottom = std::min<int64_t>(
++      canvas_height, static_cast<int64_t>(source_y) + destination.height());
++  if (left >= right || top >= bottom)
++    return true;
++  SkPixmap clipped;
++  if (!destination.extractSubset(
++          &clipped,
++          SkIRect::MakeXYWH(static_cast<int>(left - source_x),
++                           static_cast<int>(top - source_y),
++                           static_cast<int>(right - left),
++                           static_cast<int>(bottom - top)))) {
++    return false;
++  }
++  auto bytes = gfx::SkPixmapToWritableSpan(clipped);
++  const size_t component_bytes = alpha_value->component_bytes;
++  const auto alpha = base::span(alpha_value->bytes).first(component_bytes);
++  for (int y = 0; y < clipped.height(); ++y) {
++    auto row = bytes.subspan(static_cast<size_t>(y) * clipped.rowBytes(),
++                            clipped.info().minRowBytes());
++    for (int x = 0; x < clipped.width(); ++x) {
++      row.subspan(static_cast<size_t>(x) * component_bytes * 4,
++                  component_bytes * 4)
++          .last(component_bytes)
++          .copy_from(alpha);
++    }
++  }
++  return true;
++}
++
++// Opaque canvas uploads contain opaque alpha bytes, not merely kOpaque
++// metadata. Share the exact RGBA/BGRA8/F16/F32 alpha encoding with lazy readback.
+ // Copy only the clipped dirty rectangle; never modify script-owned ImageData.
+ bool UxrCopyOpaqueImageData(const SkPixmap& source,
+                             const gfx::Rect& source_rect,
+                             SkBitmap& owned_copy) {
+-  std::array<uint8_t, 4> alpha_bytes{};
+-  size_t component_bytes = 0;
+-  switch (source.colorType()) {
+-    case kRGBA_8888_SkColorType:
+-    case kBGRA_8888_SkColorType:
+-      alpha_bytes[0] = 255;
+-      component_bytes = 1;
+-      break;
+-    case kRGBA_F16_SkColorType: {
+-      const auto one = std::bit_cast<std::array<uint8_t, 2>>(uint16_t{0x3c00});
+-      alpha_bytes[0] = one[0];
+-      alpha_bytes[1] = one[1];
+-      component_bytes = 2;
+-      break;
+-    }
+-    case kRGBA_F32_SkColorType:
+-      alpha_bytes = std::bit_cast<std::array<uint8_t, 4>>(1.0f);
+-      component_bytes = 4;
+-      break;
+-    default:
+-      return false;
+-  }
++  auto alpha_value = UxrOpaqueAlphaForColorType(source.colorType());
++  if (!alpha_value)
++    return false;
++  const size_t component_bytes = alpha_value->component_bytes;
+   SkPixmap clipped;
+   if (!source.extractSubset(&clipped, gfx::RectToSkIRect(source_rect)) ||
+       !owned_copy.tryAllocPixels(clipped.info())) {
+@@ -169,7 +230,7 @@
+   const SkPixmap& copy = owned_copy.pixmap();
+   const auto source_bytes = gfx::SkPixmapToSpan(clipped);
+   auto bytes = gfx::SkPixmapToWritableSpan(copy);
+-  const auto alpha = base::span(alpha_bytes).first(component_bytes);
++  const auto alpha = base::span(alpha_value->bytes).first(component_bytes);
+   for (int y = 0; y < copy.height(); ++y) {
+     auto row = bytes.subspan(static_cast<size_t>(y) * copy.rowBytes(),
+                              copy.info().minRowBytes());
+@@ -643,6 +704,13 @@
+                                    validate_and_create_params, exception_state);
+   if (!image_data)
+     return nullptr;
++
++  if (!snapshot && !HasAlpha() && !isContextLost() &&
++      !UxrInitializeOpaqueReadback(image_data->GetSkPixmap(), Width(), Height(),
++                                   sx, sy)) {
++    exception_state.ThrowRangeError("Invalid opaque ImageData storage");
++    return nullptr;
++  }
+ 
+   if (auto* bridge = canvas_bridge::CanvasBridgeClient::Get();
+       bridge && bridge->Connected()) {

@@ -110,6 +110,26 @@ export async function collectFontSources(context, page, server) {
   }
 }
 
+export async function collectGpuSystem(context) {
+  let session, result;
+  try {
+    session = await context.browser().newBrowserCDPSession();
+    const { gpu } = await session.send('SystemInfo.getInfo');
+    // Keep native CDP evidence; the shared Python validator projects only
+    // volatile counters away and never equates this list with API selections.
+    result = { status: 'observed', value: { source: 'CDP.SystemInfo.getInfo', gpu } };
+  } catch (error) {
+    result = { status: 'error', reason: String(error).slice(0, 2048) };
+  } finally {
+    try { await session?.detach(); }
+    catch (error) {
+      const prior = result?.reason ? `${result.reason}; ` : '';
+      result = { status: 'error', reason: `${prior}CDP session detach failed: ${error}`.slice(0, 2048) };
+    }
+  }
+  return result;
+}
+
 export async function launchMeasured(chromium, binary, options) {
   const { python, pool } = measuredOptions(options);
   const headless = options.headless ?? true;
@@ -140,6 +160,7 @@ export async function launchMeasured(chromium, binary, options) {
       for (const scope of ['worker', 'shared_worker', 'service_worker'])
         observation[scope] = await page.evaluate(probeExpression(server.worker_eval, scope));
       observation.window.fontBackend = await collectFontSources(context, page, server);
+      observation.window.gpuSystem = await collectGpuSystem(context);
     } finally { await page.close(); }
     context.chromixDeviceProfile = await bridge(python, 'verify', { observation, prepared });
     await server.stop(); server = null;

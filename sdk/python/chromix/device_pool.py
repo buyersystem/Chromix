@@ -19,6 +19,7 @@ WIRE_PROTOCOLS = ('tls', 'http2', 'quic', 'dns', 'proxy', 'webrtc')
 QUALIFICATION = {'wire':{name:'not_collected' for name in WIRE_PROTOCOLS},
                  'physical_backend_equivalence':'not_verified'}
 RENDER_QUALIFICATION = {**QUALIFICATION, 'render_evidence':'independently_checked',
+                        'gpu_backend_evidence':'independently_checked',
                         'font_file_to_glyph_binding':'not_verified'}
 SCHEMA_VERSION = 2
 
@@ -191,7 +192,8 @@ def observation_errors(observation, *, check_render=True):
     viewport = display.get('viewport')
     if not isinstance(viewport, dict) or not all(finite(viewport.get(k), True) for k in ('width', 'height', 'scale')):
         errors.append('display: missing or invalid visualViewport')
-    if check_render and any(isinstance(v, dict) and v.get('probeVersion') == 3 for v in observation.values()):
+    if check_render and any(isinstance(v, dict) and type(v.get('probeVersion')) is int and
+                            v['probeVersion'] >= 3 for v in observation.values()):
         from ._device_render import assess_observation
         from ._device_fonts import font_errors
         errors.extend(assess_observation(observation)['errors'])
@@ -206,6 +208,9 @@ def stable_observation(observation):
             continue
         value.pop('network', None)
         value.pop('http', None)
+        if 'gpuSystem' in value:
+            from ._gpu_backend import system_projection
+            value['gpuSystem'] = {'status':'observed', 'value':system_projection(value['gpuSystem'])}
         # Keep the hash/length of all raw render evidence in the device identity,
         # not gzip bytes (different compressors may encode identical evidence).
         render = value.get('render', {})
@@ -303,7 +308,7 @@ def backend_gaps(record):
     host = record['device']['host']
     gaps = []
     if record.get('schema_version') != SCHEMA_VERSION or record.get('qualification') != RENDER_QUALIFICATION:
-        gaps.append('legacy record lacks render admission evidence; collect schema v2 with probe v3')
+        gaps.append('legacy record lacks GPU backend admission evidence; collect schema v2 with probe v4')
     if not all(host.get('os', {}).get(key) for key in ('system', 'release', 'version', 'architecture')):
         gaps.append('OS/build/architecture inventory missing')
     cores = host.get('cpu', {}).get('logical_cores')

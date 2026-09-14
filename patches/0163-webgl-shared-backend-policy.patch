@@ -1,0 +1,14 @@
+diff --git a/components/ungoogled/persona_profile.cc b/components/ungoogled/persona_profile.cc
+--- a/components/ungoogled/persona_profile.cc
++++ b/components/ungoogled/persona_profile.cc
+@@ -218,7 +218,9 @@
+                                  !config.Get("uxr-webgl-renderer").empty();
+   // No flags means native. Public fingerprint mode and explicit GPU switches
+   // work without the independent synthetic hardware-test opt-in.
+-  if (ConfigSwitchEnabled(config, "uxr-fingerprint-off") ||
++  // This also governs actual extension/precision paths and restored contexts.
++  if (config.GpuBackendPolicy().native ||
++      ConfigSwitchEnabled(config, "uxr-fingerprint-off") ||
+       (!ConfigSwitchEnabled(config, "uxr-fingerprint-enabled") &&
+        !ConfigSwitchEnabled(config, "uxr-synthetic-device-tests") &&
+        !explicit_identity)) {

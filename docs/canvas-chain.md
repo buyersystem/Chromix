@@ -1,5 +1,26 @@
 # Canvas Chain Audit
 
+## Shared Native GPU Policy (2026-09-14)
+
+The current 165-patch series adds `--uxr-gpu-backend=native`: one immutable UXR
+policy now gates Canvas readback/export/text noise, Canvas Bridge, WebGL persona
+capabilities and WebGPU feature negotiation. It overrides conflicting synthetic
+flags without forcing GPU-off or a particular adapter. Unset/`compatibility`
+keeps the earlier behavior below. This is a shared **native contract**, not a
+common cross-platform privacy rasterizer.
+
+`0165` additionally repairs lazy opaque Canvas readback: no snapshot must still
+produce opaque-black pixels inside the canvas. It shares the existing upload
+RGBA/BGRA8/F16/F32 alpha encoding, clips with 64-bit arithmetic and leaves OOB,
+stride padding and lost-context behavior intact. The helper is tested with
+dependency shims, not yet a matching new Chromium build.
+
+The new GPU audit/complete collector still reject stock Chrome 153. The former
+reports opaque HTML Canvas resize failures; the latter also retains the existing
+lossless/alpha/OOB failures. No qualified device record has been produced, no
+GPU-off workaround is admitted, and existing Canvas thresholds are unchanged.
+See [GPU backend and real-device matrix evidence](gpu-backend.md).
+
 ## Default Policy
 
 Patches 0020 and 0031 retain native Canvas readback and export pixels by default:
@@ -133,7 +154,7 @@ arguments, raw pixels, encoded images and per-comparison metrics are recorded.
 Canonical source now ships as `sdk/python/chromix/canvas_chain_probe.js`; the
 independent oracle is `chromix._canvas_chain`. The standalone runner uses these
 same implementations instead of maintaining another probe copy. Its source
-hash is that standalone asset; the measured-device probe hashes all four
+hash is that standalone asset; the measured-device probe hashes all five
 concatenated assets, as described in [device-pool.md](device-pool.md).
 
 Exit 0 requires all tested paths to pass without unavailable optional cases.
@@ -167,7 +188,7 @@ limits: chroma subsampling can fail them without a fingerprint patch defect.
 PNG independent color-managed comparison uses the lossless bounds; decoder
 rounding differences remain reported instead of being silently accepted.
 
-Schema-v2 measured admission embeds this oracle in probe v3 across all five
+Schema-v2 measured admission embeds this oracle in probe v4 across all five
 scopes. It keeps individual lossless/alpha/OOB contracts, records lossy quality
 failures as diagnostics and permits different native backends between contexts.
 Embedded taint is explicitly `not_collected`; the standalone runner still
