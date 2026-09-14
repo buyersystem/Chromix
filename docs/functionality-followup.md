@@ -200,6 +200,14 @@ fixture，检查 window/iframe/worker、错误密码和认证降级，不解析�
 名称校验；不等于三平台 native acceptance。新增 workflow 的实际运行结果另行
 记录，不能从本地测试推定云端通过。
 
+源码提交 `e993efa` 的三平台契约 CI 已实际通过：
+[fingerprint-contracts / 34822278845](https://github.com/xiaozhou26/Chromix/actions/runs/34822278845)。
+三套 artifact 都包含九个独立 preimage 的哈希凭据和无 failure/error 的 JUnit；
+本地归档为 `ci-e993efa/`。这不改变原生浏览器/真实设备尚未验收的状态。
+同次 SDK 发布流水线的 Python asset 枚举遗漏了远端新增的 `win-arm64`，在测试
+前失败；跟进修复补齐该项，并增加直接执行发布检查脚本的四项正反向回归，
+继续拒绝缺失、错配和额外平台，而不是取消枚举校验。
+
 ### 尚未完成的总清单
 
 1. 匹配构建与十套 native acceptance、跨 OS/真实 GPU 的运行验收。

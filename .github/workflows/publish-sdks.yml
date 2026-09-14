@@ -66,6 +66,7 @@ jobs:
               'linux-x64': 'chromix-linux-x64.zip',
               'linux-arm64': 'chromix-linux-arm64.zip',
               'win-x64': 'chromix-win-x64.zip',
+              'win-arm64': 'chromix-win-arm64.zip',
               'mac-arm64': 'chromix-mac-arm64.zip',
               'mac-x64': 'chromix-mac-x64.zip',
           }

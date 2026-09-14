@@ -112,6 +112,7 @@ jobs:
           tools/tests/test_followup_native.py tools/tests/test_font_provenance.py
           tools/tests/test_font_correctness.py
           tools/tests/test_verify_windows_bundle.py
+          tools/tests/test_sdk_publish_workflow.py
           tools/tests/test_functionality_audits.py tools/tests/test_fingerprint_acceptance.py
           tools/tests/test_device_p0.py tools/tests/test_canvas_native_paths.py
           sdk/python/tests --junitxml=contracts-python.xml
