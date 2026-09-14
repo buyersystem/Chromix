@@ -1,5 +1,7 @@
 import copy
+import errno
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -14,6 +16,7 @@ import urllib.error
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from socket import create_connection
 from unittest import mock
 
 from tools import fetch_upstream_cache as cache
@@ -75,6 +78,26 @@ def zip_bytes(entries):
 
 class Response(io.BytesIO):
     status = 200
+
+
+class ScriptedResponse(Response):
+    def __init__(self, chunks, *, status=200, headers=None, clock=None, elapsed=0):
+        super().__init__()
+        self.chunks = iter(chunks)
+        self.status = status
+        self.headers = headers or {}
+        self.clock = clock
+        self.elapsed = elapsed
+
+    def read(self, size=-1):
+        if self.closed:
+            raise ValueError("read from closed response")
+        if self.clock is not None:
+            self.clock[0] += self.elapsed
+        chunk = next(self.chunks, b"")
+        if isinstance(chunk, BaseException):
+            raise chunk
+        return chunk
 
 
 class FetchUpstreamCacheTest(unittest.TestCase):
@@ -282,18 +305,25 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         pin["artifact"].update(digest=digest(data), size_in_bytes=len(data))
         path = self.root / "long-download"
         client = cache.GitHub("")
-        client.open = mock.Mock(return_value=Response(data))
-        with mock.patch.object(cache.time, "monotonic", side_effect=[0, 1, 901, 1000]):
+        now = [0.0]
+        client.open = mock.Mock(return_value=ScriptedResponse([data, b""], clock=now, elapsed=901))
+        with mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]):
             self.assertEqual(client.download(pin, path), len(data))
         self.assertEqual(cache.sha256(path), digest(data))
-        client.open = mock.Mock(return_value=Response(data))
-        with mock.patch.object(cache.time, "monotonic", side_effect=[0, 1, 2699, 2701]), \
+        now[0] = 0
+        client.open = mock.Mock(return_value=ScriptedResponse([data, b""], clock=now, elapsed=1351))
+        with mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]), \
                 self.assertRaisesRegex(cache.CacheMiss, "download_timeout") as failed:
             client.download(pin, path)
-        self.assertEqual(failed.exception.details, {
+        details = failed.exception.details
+        self.assertEqual({key: details[key] for key in (
+            "download_partial_bytes", "download_expected_bytes", "download_timeout_seconds")}, {
             "download_partial_bytes": len(data), "download_expected_bytes": len(data),
             "download_timeout_seconds": 2700,
         })
+        self.assertEqual(details["retry_attempts"][0]["elapsed_seconds"], 2702)
+        self.assertFalse(details["retry_exhausted"])
+        self.assertTrue(client.open.return_value.closed)
 
     def test_download_retries_share_a_single_deadline(self):
         data = b"fixture"
@@ -301,12 +331,14 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         pin["artifact"].update(digest=digest(data), size_in_bytes=len(data))
         client = cache.GitHub("")
         client.open = mock.Mock(return_value=Response(data[:2]))
-        with mock.patch.object(cache.time, "sleep"), \
-                mock.patch.object(cache.time, "monotonic", side_effect=[0, 1, 2, 3, 2701]), \
+        now = [0.0]
+        with mock.patch.object(cache.time, "sleep", side_effect=lambda _: now.__setitem__(0, 2701)), \
+                mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]), \
                 self.assertRaisesRegex(cache.CacheMiss, "download_timeout") as failed:
             client.download(pin, self.root / "retry-download")
         self.assertEqual(client.open.call_count, 1)
         self.assertEqual(failed.exception.details["download_partial_bytes"], 2)
+        self.assertEqual(len(failed.exception.details["retry_attempts"]), 2)
 
     def test_failed_retry_connection_preserves_prior_partial_byte_count(self):
         data = b"fixture"
@@ -315,13 +347,784 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         path = self.root / "failed-retry-download"
         client = cache.GitHub("")
         client.open = mock.Mock(side_effect=[Response(data[:2]), TimeoutError("connect timeout")])
-        with mock.patch.object(cache.time, "sleep"), \
-                mock.patch.object(cache.time, "monotonic", side_effect=[0, 1, 2, 3, 4, 2701]), \
+        now = [0.0]
+
+        def sleep(delay):
+            now[0] = 4 if now[0] == 0 else 2701
+
+        with mock.patch.object(cache.time, "sleep", side_effect=sleep), \
+                mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]), \
                 self.assertRaisesRegex(cache.CacheMiss, "download_timeout") as failed:
             client.download(pin, path)
         self.assertEqual(client.open.call_count, 2)
         self.assertEqual(path.read_bytes(), data[:2])
         self.assertEqual(failed.exception.details["download_partial_bytes"], 2)
+        self.assertEqual([entry["bytes_written"] for entry in failed.exception.details["retry_attempts"]],
+                         [2, 2, 2])
+
+    def download_fixture(self, data=b"fixture"):
+        pin = copy.deepcopy(self.pin)
+        pin["artifact"].update(digest=digest(data), size_in_bytes=len(data))
+        return cache.GitHub("fixture-token"), pin, self.root / "download-fixture"
+
+    def redirected_download(self, client, responses):
+        requests, redirects = [], []
+        responses = iter(responses)
+        generation = 0
+
+        def open_request(request, timeout):
+            nonlocal generation
+            requests.append(request)
+            self.assertGreater(timeout, 0)
+            self.assertLessEqual(timeout, cache.TIMEOUT)
+            if request.full_url.startswith(cache.API):
+                generation += 1
+                location = f"https://x.blob.core.windows.net/file?sig=secret-{generation}"
+                redirect = urllib.error.HTTPError(request.full_url, 302, "secret", {"Location": location},
+                                                  io.BytesIO(b"secret redirect body"))
+                redirects.append(redirect)
+                raise redirect
+            return next(responses)
+
+        client.opener.open = mock.Mock(side_effect=open_request)
+        return requests, redirects
+
+    def test_download_resume206_uses_written_partial_and_fresh_signed_url(self):
+        client, pin, path = self.download_fixture()
+        first = ScriptedResponse([b"f", http.client.IncompleteRead(b"ix", 4)])
+        second = ScriptedResponse([b"ture", b""], status=206,
+                                  headers={"Content-Range": "bytes 3-6/7", "Content-Length": "4"})
+        requests, redirects = self.redirected_download(client, [first, second])
+        with mock.patch.object(cache.time, "sleep") as sleep:
+            self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual(path.read_bytes(), b"fixture")
+        self.assertEqual(cache.sha256(path), pin["artifact"]["digest"])
+        self.assertEqual(len(requests), 4)
+        self.assertEqual(requests[0].full_url, requests[2].full_url)
+        self.assertNotEqual(requests[1].full_url, requests[3].full_url)
+        self.assertIsNone(requests[1].get_header("Range"))
+        self.assertEqual(requests[3].get_header("Range"), "bytes=3-")
+        for index in (0, 2):
+            self.assertEqual(requests[index].get_header("Authorization"), "Bearer fixture-token")
+            self.assertIsNone(requests[index].get_header("Range"))
+        for index in (1, 3):
+            for header in ("Authorization", "Accept", "X-github-api-version"):
+                self.assertIsNone(requests[index].get_header(header))
+        self.assertTrue(all(response.closed for response in [first, second, *redirects]))
+        sleep.assert_called_once_with(1)
+
+    def test_download_range_ignored200_resets_file_and_hash(self):
+        client, pin, path = self.download_fixture()
+        first = ScriptedResponse([b"BAD", TimeoutError("secret")])
+        second = Response(b"fixture")
+        requests, _ = self.redirected_download(client, [first, second])
+        with mock.patch.object(cache.time, "sleep"):
+            self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual(requests[-1].get_header("Range"), "bytes=3-")
+        self.assertEqual(path.read_bytes(), b"fixture")
+        self.assertEqual(cache.sha256(path), digest(b"fixture"))
+        self.assertTrue(first.closed and second.closed)
+
+    def test_download_mismatched_content_range_fails_closed_before_append(self):
+        values = [None, "bytes 1-6/7", "bytes 2-5/7", "bytes 2-7/8", "bytes 2-6/*",
+                  "bytes 2-6/8", "bytes 2-1/7", "items 2-6/7", "bytes 2-6/7, bytes 2-6/7",
+                  "bytes " + "9" * 10000 + "-6/7", 206]
+        for value in values:
+            with self.subTest(value_type=type(value), value_length=len(value) if isinstance(value, str) else 0):
+                client, pin, path = self.download_fixture()
+                first = Response(b"fi")
+                second = ScriptedResponse([b"xture"], status=206, headers={"Content-Range": value})
+                client.open = mock.Mock(side_effect=[first, second])
+                with mock.patch.object(cache.time, "sleep"), \
+                        self.assertRaisesRegex(cache.CacheMiss, "invalid_content_range") as failed:
+                    client.download(pin, path)
+                self.assertEqual(path.read_bytes(), b"fi")
+                self.assertEqual(failed.exception.details["download_partial_bytes"], 2)
+                self.assertEqual(failed.exception.details["retry_attempts"][-1]["http_status"], 206)
+                self.assertEqual(client.open.call_count, 2)
+                self.assertTrue(first.closed and second.closed)
+                self.assertLess(len(json.dumps(failed.exception.details)), 1000)
+
+    def test_download_rejects_inconsistent_range_length_and_unsolicited206(self):
+        for offset, length in ((2, "6"), (2, "secret" * 1000), (0, "7")):
+            with self.subTest(offset=offset, length_size=len(length)):
+                client, pin, path = self.download_fixture()
+                second = ScriptedResponse([b"xture"], status=206, headers={
+                    "Content-Range": f"bytes {offset}-6/7", "Content-Length": length})
+                responses = [Response(b"fi"), second] if offset else [second]
+                client.open = mock.Mock(side_effect=responses)
+                with mock.patch.object(cache.time, "sleep"), \
+                        self.assertRaisesRegex(cache.CacheMiss, "invalid_content_range"):
+                    client.download(pin, path)
+                self.assertEqual(path.read_bytes(), b"fi" if offset else b"")
+                self.assertTrue(second.closed)
+
+    def test_resumed_redirect_back_to_api_has_neither_auth_nor_range(self):
+        client = cache.GitHub("secret-token")
+        requests = []
+        destinations = ["https://x.blob.core.windows.net/file?sig=secret",
+                        cache.API + "/second", "https://y.actions.githubusercontent.com/file"]
+        response = Response(b"fixture")
+
+        def open_request(request, timeout):
+            requests.append(request)
+            if len(requests) <= len(destinations):
+                raise urllib.error.HTTPError(request.full_url, 302, "secret", {
+                    "Location": destinations[len(requests) - 1]}, io.BytesIO())
+            return response
+
+        client.opener.open = open_request
+        with client.open(cache.API + "/artifact", download=True, offset=2):
+            pass
+        self.assertEqual([request.get_header("Range") for request in requests],
+                         [None, "bytes=2-", None, "bytes=2-"])
+        self.assertEqual([request.get_header("Authorization") for request in requests],
+                         ["Bearer secret-token", None, None, None])
+        self.assertTrue(response.closed)
+
+    def test_download_retry_exhaustion_records_sanitized_attempts_after_cleanup(self):
+        secret = "https://x.blob.core.windows.net/file?sig=DO-NOT-LOG"
+        exception_type = type("DO-NOT-LOG", (ConnectionResetError,), {
+            "__str__": lambda self: (_ for _ in ()).throw(AssertionError("exception string accessed"))})
+        client = self.fixture_client()
+        first = ScriptedResponse([b"fi", exception_type(errno.ECONNRESET, secret)])
+        second = urllib.error.URLError(TimeoutError(errno.ETIMEDOUT, secret))
+        third = urllib.error.HTTPError(secret, 503, secret, {"Authorization": secret}, io.BytesIO())
+        client.open = mock.Mock(side_effect=[first, second, third])
+        now = [0.0]
+
+        def monotonic():
+            now[0] += 0.25
+            return now[0]
+
+        with mock.patch.object(cache.time, "sleep") as sleep, \
+                mock.patch.object(cache.time, "monotonic", side_effect=monotonic), \
+                mock.patch("sys.stderr", new=io.StringIO()) as output:
+            result = cache.fetch("windows", "x64", self.destination, root=self.root, client=client)
+        entries = result["retry_attempts"]
+        self.assertEqual(result["reason"], "github_http_503")
+        self.assertTrue(result["retry_exhausted"])
+        self.assertEqual([entry["attempt"] for entry in entries], [1, 2, 3])
+        self.assertEqual([entry["exception_class"] for entry in entries],
+                         ["ConnectionResetError", "URLError", "HTTPError"])
+        self.assertEqual([entry["errno"] for entry in entries], [errno.ECONNRESET, errno.ETIMEDOUT, None])
+        self.assertEqual(entries[1]["cause_class"], "TimeoutError")
+        self.assertEqual([entry["http_status"] for entry in entries], [200, None, 503])
+        self.assertEqual([entry["bytes_written"] for entry in entries], [2, 2, 2])
+        self.assertEqual([entry["phase"] for entry in entries],
+                         ["download_read", "download_request", "download_request"])
+        self.assertTrue(all(entry["elapsed_seconds"] > 0 for entry in entries))
+        self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(2)])
+        saved = (self.destination / "result.json").read_text()
+        for forbidden in (secret, "DO-NOT-LOG", "fixture-token", "Authorization", "sig="):
+            self.assertNotIn(forbidden, saved + output.getvalue())
+        self.assertEqual(json.loads(saved), result)
+        self.assertEqual({path.name for path in self.destination.iterdir()}, {"result.json"})
+        self.assertTrue(first.closed and third.closed)
+
+    def test_metadata_retry_uses_bounded_exception_evidence(self):
+        for status in (503, "secret" * 1000, 10**100):
+            with self.subTest(status_type=type(status)):
+                client = cache.GitHub("secret")
+                errors = [urllib.error.HTTPError("https://secret", status, "secret", {}, io.BytesIO())
+                          for _ in range(3)]
+                client.opener.open = mock.Mock(side_effect=errors)
+                with mock.patch.object(cache.time, "sleep"), self.assertRaises(cache.CacheMiss) as failed:
+                    client.json("/metadata")
+                entries = failed.exception.details["retry_attempts"]
+                self.assertEqual(len(entries), 3 if status == 503 else 1)
+                self.assertTrue(all(entry["phase"] == "api_request" for entry in entries))
+                self.assertTrue(all(entry["bytes_written"] == 0 for entry in entries))
+                self.assertEqual(entries[-1]["http_status"], 503 if status == 503 else None)
+                self.assertNotIn("secret", json.dumps(failed.exception.details) + str(failed.exception))
+                self.assertLess(len(json.dumps(failed.exception.details)), 1000)
+                self.assertTrue(errors[0].closed)
+                for error in errors:
+                    error.close()
+        client.opener.open = mock.Mock(side_effect=[ScriptedResponse([
+            http.client.IncompleteRead(b"secret", 10)]) for _ in range(3)])
+        with mock.patch.object(cache.time, "sleep"), self.assertRaisesRegex(cache.CacheMiss, "network_unavailable") as failed:
+            client.json("/metadata")
+        self.assertTrue(all(entry["phase"] == "metadata_read" for entry in failed.exception.details["retry_attempts"]))
+        self.assertNotIn("secret", json.dumps(failed.exception.details))
+
+    def test_exception_evidence_never_embeds_untrusted_classes_or_numeric_values(self):
+        for base, expected in ((OSError, "OSError"), (Exception, "Exception")):
+            error = type("secret" * 1000, (base,), {})("secret")
+            error.errno = "secret" * 1000
+            self.assertEqual(cache.exception_evidence(error), {
+                "exception_class": expected, "errno": None, "http_status": None})
+        error = urllib.error.URLError(OSError("secret"))
+        error.reason.errno = 10**1000
+        self.assertEqual(cache.exception_evidence(error), {
+            "exception_class": "URLError", "cause_class": "OSError", "errno": None, "http_status": None})
+
+    def test_download_cross_segment_checksum_mismatch_is_terminal(self):
+        client, pin, path = self.download_fixture()
+        first = Response(b"fi")
+        second = ScriptedResponse([b"xturX"], status=206, headers={"Content-Range": "bytes 2-6/7"})
+        client.open = mock.Mock(side_effect=[first, second])
+        with mock.patch.object(cache.time, "sleep"), \
+                self.assertRaisesRegex(cache.CacheMiss, "checksum_mismatch") as failed:
+            client.download(pin, path)
+        self.assertEqual(path.read_bytes(), b"fixturX")
+        self.assertEqual(failed.exception.details["download_partial_bytes"], 7)
+        self.assertEqual(client.open.call_count, 2)
+        self.assertFalse(failed.exception.details["retry_exhausted"])
+        self.assertTrue(first.closed and second.closed)
+
+    def test_download_short_reads_resume_but_never_exceed_three_attempts(self):
+        client, pin, path = self.download_fixture()
+        responses = [Response(b"f"), ScriptedResponse([b"i"], status=206, headers={"Content-Range": "bytes 1-6/7"}),
+                     ScriptedResponse([b"x"], status=206, headers={"Content-Range": "bytes 2-6/7"})]
+        client.open = mock.Mock(side_effect=responses)
+        with mock.patch.object(cache.time, "sleep") as sleep, \
+                self.assertRaisesRegex(cache.CacheMiss, "network_unavailable") as failed:
+            client.download(pin, path)
+        self.assertEqual(client.open.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(path.read_bytes(), b"fix")
+        self.assertEqual([call.kwargs["offset"] for call in client.open.call_args_list], [0, 1, 2])
+        self.assertEqual([entry["bytes_written"] for entry in failed.exception.details["retry_attempts"]], [1, 2, 3])
+        self.assertTrue(failed.exception.details["retry_exhausted"])
+        self.assertTrue(all(response.closed for response in responses))
+
+    def test_download_multiple_read_timeouts_exhaust_bounded_attempts(self):
+        client, pin, path = self.download_fixture()
+        responses = [ScriptedResponse([b"f", TimeoutError(errno.ETIMEDOUT, "secret")]),
+                     ScriptedResponse([b"i", TimeoutError(errno.ETIMEDOUT, "secret")], status=206,
+                                      headers={"Content-Range": "bytes 1-6/7"}),
+                     ScriptedResponse([b"x", TimeoutError(errno.ETIMEDOUT, "secret")], status=206,
+                                      headers={"Content-Range": "bytes 2-6/7"})]
+        client.open = mock.Mock(side_effect=responses)
+        with mock.patch.object(cache.time, "sleep") as sleep, \
+                self.assertRaisesRegex(cache.CacheMiss, "network_unavailable") as failed:
+            client.download(pin, path)
+        self.assertEqual(client.open.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(path.read_bytes(), b"fix")
+        entries = failed.exception.details["retry_attempts"]
+        self.assertEqual([entry["exception_class"] for entry in entries], ["TimeoutError"] * 3)
+        self.assertEqual([entry["bytes_written"] for entry in entries], [1, 2, 3])
+        self.assertTrue(all(response.closed for response in responses))
+        self.assertTrue(failed.exception.details["retry_exhausted"])
+
+    def test_download_changing_ranges_across_three_attempts_verify_whole_file(self):
+        client, pin, path = self.download_fixture()
+        responses = [ScriptedResponse([b"f", http.client.IncompleteRead(b"i", 5)]),
+                     ScriptedResponse([http.client.IncompleteRead(b"xt", 3)], status=206,
+                                      headers={"Content-Range": "bytes 2-6/7"}),
+                     ScriptedResponse([b"ure"], status=206, headers={"Content-Range": "bytes 4-6/7"})]
+        requests, redirects = self.redirected_download(client, responses)
+        with mock.patch.object(cache.time, "sleep"):
+            self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual([request.get_header("Range") for request in requests[1::2]],
+                         [None, "bytes=2-", "bytes=4-"])
+        self.assertEqual(len({request.full_url for request in requests[1::2]}), 3)
+        self.assertEqual(path.read_bytes(), b"fixture")
+        self.assertEqual(cache.sha256(path), digest(b"fixture"))
+        self.assertTrue(all(response.closed for response in [*responses, *redirects]))
+
+    def test_download_complete_incomplete_read_partial_is_verified_in_same_attempt(self):
+        client, pin, path = self.download_fixture()
+        response = ScriptedResponse([b"fi", http.client.IncompleteRead(b"xture", 1)])
+        client.open = mock.Mock(return_value=response)
+        with mock.patch.object(cache.time, "sleep") as sleep:
+            self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual(path.read_bytes(), b"fixture")
+        sleep.assert_not_called()
+        self.assertTrue(response.closed)
+
+    def test_download_incomplete_read_partial_cannot_exceed_expected_size(self):
+        client, pin, path = self.download_fixture()
+        response = ScriptedResponse([b"fi", http.client.IncompleteRead(b"xture-extra", 1)])
+        client.open = mock.Mock(return_value=response)
+        with self.assertRaisesRegex(cache.CacheMiss, "download_size_mismatch") as failed:
+            client.download(pin, path)
+        self.assertEqual(path.read_bytes(), b"fi")
+        self.assertEqual(failed.exception.details["download_partial_bytes"], path.stat().st_size)
+        self.assertEqual(client.open.call_count, 1)
+        self.assertTrue(response.closed)
+
+    def test_download_preexisting_file_and_previous_call_are_never_resumed(self):
+        client, pin, path = self.download_fixture()
+        path.write_bytes(b"fixture")
+        client.open = mock.Mock(side_effect=lambda *args, **kwargs: Response(b"fi"))
+        with mock.patch.object(cache.time, "sleep"), self.assertRaisesRegex(cache.CacheMiss, "network_unavailable"):
+            client.download(pin, path)
+        self.assertEqual(client.open.call_args_list[0].kwargs["offset"], 0)
+        self.assertEqual(path.read_bytes(), b"fi")
+        client.open = mock.Mock(return_value=Response(b"fixture"))
+        self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual(client.open.call_args.kwargs["offset"], 0)
+        self.assertEqual(path.read_bytes(), b"fixture")
+
+    def test_download_disk_failure_only_counts_confirmed_writes(self):
+        client, pin, path = self.download_fixture()
+        response = ScriptedResponse([b"fi", b"xture"])
+        client.open = mock.Mock(return_value=response)
+        with mock.patch.object(cache, "require_space", side_effect=[None, cache.CacheMiss("insufficient_disk_space")]), \
+                self.assertRaisesRegex(cache.CacheMiss, "insufficient_disk_space") as failed:
+            client.download(pin, path)
+        self.assertEqual(path.read_bytes(), b"fi")
+        self.assertEqual(failed.exception.details["download_partial_bytes"], 2)
+        self.assertEqual(failed.exception.details["retry_attempts"][0]["phase"], "download_write")
+        self.assertTrue(response.closed)
+
+    def test_download_file_write_failure_keeps_hash_and_count_at_confirmed_bytes(self):
+        client, pin, path = self.download_fixture()
+        response = Response(b"fixture")
+        client.open = mock.Mock(return_value=response)
+        output = path.open("wb", buffering=0)
+        self.addCleanup(output.close)
+        writer = mock.Mock(wraps=output)
+        writer.__enter__ = mock.Mock(return_value=writer)
+        writer.__exit__ = mock.Mock(side_effect=lambda *args: output.close())
+        writes = [0]
+
+        def write(chunk):
+            writes[0] += 1
+            if writes[0] == 1:
+                return output.write(chunk[:2])
+            raise OSError(errno.ENOSPC, "secret disk path")
+
+        writer.write.side_effect = write
+        with mock.patch.object(Path, "open", return_value=writer), \
+                self.assertRaisesRegex(cache.CacheMiss, "cache_unusable_OSError") as failed:
+            client.download(pin, path)
+        self.assertEqual(path.read_bytes(), b"fi")
+        self.assertEqual(failed.exception.details["download_partial_bytes"], 2)
+        self.assertEqual(failed.exception.details["retry_attempts"][0]["errno"], errno.ENOSPC)
+        self.assertEqual(failed.exception.details["retry_attempts"][0]["bytes_written"], 2)
+        self.assertEqual(client.open.call_count, 1)
+        self.assertTrue(output.closed and response.closed)
+
+    def test_download_partial_file_writes_update_full_digest(self):
+        client, pin, path = self.download_fixture()
+        client.open = mock.Mock(return_value=Response(b"fixture"))
+        output = path.open("wb", buffering=0)
+        self.addCleanup(output.close)
+        writer = mock.Mock(wraps=output)
+        writer.__enter__ = mock.Mock(return_value=writer)
+        writer.__exit__ = mock.Mock(side_effect=lambda *args: output.close())
+        writer.write.side_effect = lambda chunk: output.write(chunk[:2])
+        with mock.patch.object(Path, "open", return_value=writer):
+            self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual(path.read_bytes(), b"fixture")
+        self.assertEqual(writer.write.call_count, 4)
+        self.assertTrue(output.closed)
+
+    def test_download_open_file_failure_is_diagnosed_without_network(self):
+        client, pin, path = self.download_fixture()
+        client.open = mock.Mock()
+        with mock.patch.object(Path, "open", side_effect=OSError(errno.EACCES, "secret")), \
+                self.assertRaisesRegex(cache.CacheMiss, "cache_unusable_OSError") as failed:
+            client.download(pin, path)
+        entry = failed.exception.details["retry_attempts"][0]
+        self.assertEqual(entry["errno"], errno.EACCES)
+        self.assertEqual(entry["phase"], "download_prepare")
+        self.assertEqual(entry["bytes_written"], 0)
+        client.open.assert_not_called()
+
+    def test_download_local_timeouts_are_fatal_at_each_file_operation(self):
+        for phase in ("open", "space", "write", "seek", "truncate", "close"):
+            for exception_type in (TimeoutError, ConnectionResetError):
+                with self.subTest(phase=phase, exception_type=exception_type):
+                    client, pin, path = self.download_fixture()
+                    first = ScriptedResponse([b"fi", TimeoutError("network")])
+                    second = Response(b"fixture")
+                    third = ScriptedResponse([b"xture"], status=206,
+                                             headers={"Content-Range": "bytes 2-6/7"})
+                    client.open = mock.Mock(side_effect=[first, second, third])
+                    output = path.open("wb", buffering=0)
+                    self.addCleanup(output.close)
+                    writer = mock.Mock(wraps=output)
+                    writer.__enter__ = mock.Mock(return_value=writer)
+                    writer.__exit__ = mock.Mock(side_effect=lambda *args: output.close())
+                    error = exception_type(errno.ETIMEDOUT, "secret disk path")
+                    opens = mock.patch.object(Path, "open", return_value=writer)
+                    space = mock.patch.object(cache, "require_space")
+                    with opens as open_file, space as check_space, mock.patch.object(cache.time, "sleep") as sleep:
+                        if phase == "open":
+                            open_file.side_effect = error
+                        elif phase == "space":
+                            check_space.side_effect = error
+                        elif phase == "write":
+                            writer.write.side_effect = error
+                        elif phase in ("seek", "truncate"):
+                            method = getattr(output, phase)
+                            calls = [0]
+
+                            def reset(*args):
+                                calls[0] += 1
+                                if calls[0] == 2:
+                                    raise error
+                                return method(*args)
+
+                            getattr(writer, phase).side_effect = reset
+                        else:
+                            def close(*args):
+                                output.close()
+                                raise error
+
+                            writer.__exit__.side_effect = close
+                        with self.assertRaisesRegex(cache.CacheMiss, "cache_unusable_OSError") as failed:
+                            client.download(pin, path)
+                    entry = failed.exception.details["retry_attempts"][-1]
+                    self.assertEqual(entry["exception_class"], exception_type.__name__)
+                    self.assertFalse(failed.exception.details["retry_exhausted"])
+                    self.assertEqual(failed.exception.details["download_partial_bytes"], path.stat().st_size)
+                    self.assertEqual(entry["bytes_written"], path.stat().st_size)
+                    self.assertLessEqual(client.open.call_count, 2)
+                    self.assertLessEqual(sleep.call_count, 1)
+                    if phase == "open":
+                        output.close()
+                    self.assertTrue(output.closed)
+                    for response in (first, second, third):
+                        response.close()
+
+    def test_download_truncate_timeout_does_not_retry_from_wrong_file_position(self):
+        client, pin, path = self.download_fixture()
+        responses = [Response(b"fi"), Response(b"fixture"), ScriptedResponse(
+            [b"xture"], status=206, headers={"Content-Range": "bytes 2-6/7"})]
+        client.open = mock.Mock(side_effect=responses)
+        output = path.open("wb", buffering=0)
+        self.addCleanup(output.close)
+        writer = mock.Mock(wraps=output)
+        writer.__enter__ = mock.Mock(return_value=writer)
+        writer.__exit__ = mock.Mock(side_effect=lambda *args: output.close())
+        calls = [0]
+
+        def truncate(*args):
+            calls[0] += 1
+            if calls[0] == 2:
+                raise TimeoutError("secret disk timeout")
+            return output.truncate(*args)
+
+        writer.truncate.side_effect = truncate
+        with mock.patch.object(Path, "open", return_value=writer), mock.patch.object(cache.time, "sleep"), \
+                self.assertRaisesRegex(cache.CacheMiss, "cache_unusable_OSError") as failed:
+            client.download(pin, path)
+        self.assertEqual(client.open.call_count, 2)
+        self.assertEqual(path.read_bytes(), b"fi")
+        self.assertEqual(failed.exception.details["download_partial_bytes"], 2)
+        self.assertEqual(failed.exception.details["retry_attempts"][-1]["phase"], "download_reset")
+        self.assertTrue(output.closed and responses[0].closed and responses[1].closed)
+        responses[2].close()
+
+    def test_download_local_mutation_then_timeout_reconciles_size_and_invalidates_hash(self):
+        for mutation in ("truncate", "write"):
+            with self.subTest(mutation=mutation):
+                client, pin, path = self.download_fixture()
+                responses = [Response(b"fi"), Response(b"fixture")]
+                client.open = mock.Mock(side_effect=responses)
+                output = path.open("wb", buffering=0)
+                self.addCleanup(output.close)
+                writer = mock.Mock(wraps=output)
+                writer.__enter__ = mock.Mock(return_value=writer)
+                writer.__exit__ = mock.Mock(side_effect=lambda *args: output.close())
+                calls = [0]
+
+                def mutate(*args):
+                    calls[0] += 1
+                    method = getattr(output, mutation)
+                    if mutation == "truncate" and calls[0] == 1:
+                        return method(*args)
+                    if mutation == "write":
+                        output.write(args[0][:1])
+                    else:
+                        output.truncate(0)
+                    raise TimeoutError(errno.ETIMEDOUT, "secret post-mutation timeout")
+
+                getattr(writer, mutation).side_effect = mutate
+                with mock.patch.object(Path, "open", return_value=writer), mock.patch.object(cache.time, "sleep"), \
+                        self.assertRaisesRegex(cache.CacheMiss, "cache_unusable_OSError") as failed:
+                    client.download(pin, path)
+                expected = 0 if mutation == "truncate" else 1
+                self.assertEqual(path.stat().st_size, expected)
+                self.assertEqual(failed.exception.details["download_partial_bytes"], expected)
+                self.assertEqual(failed.exception.details["retry_attempts"][-1]["bytes_written"], expected)
+                self.assertEqual(client.open.call_count, 2 if mutation == "truncate" else 1)
+                self.assertTrue(output.closed)
+                for response in responses:
+                    response.close()
+
+    def test_download_close_timeout_during_failed_cleanup_is_fatal_and_preserves_evidence(self):
+        client, pin, path = self.download_fixture()
+        response = ScriptedResponse([b"fi", TimeoutError("network")])
+        client.open = mock.Mock(side_effect=[response, TimeoutError("network"), TimeoutError("network")])
+        output = path.open("wb", buffering=0)
+        self.addCleanup(output.close)
+        writer = mock.Mock(wraps=output)
+        writer.__enter__ = mock.Mock(return_value=writer)
+
+        def close(*args):
+            output.close()
+            raise TimeoutError(errno.ETIMEDOUT, "secret close path")
+
+        writer.__exit__ = mock.Mock(side_effect=close)
+        with mock.patch.object(Path, "open", return_value=writer), mock.patch.object(cache.time, "sleep"), \
+                self.assertRaisesRegex(cache.CacheMiss, "cache_unusable_OSError") as failed:
+            client.download(pin, path)
+        entries = failed.exception.details["retry_attempts"]
+        self.assertEqual(len(entries), 3)
+        self.assertEqual(entries[-1]["phase"], "download_request")
+        self.assertEqual(entries[-1]["cleanup_failure"]["phase"], "download_close")
+        self.assertEqual(entries[-1]["cleanup_failure"]["exception_class"], "TimeoutError")
+        self.assertEqual(entries[-1]["cleanup_failure"]["bytes_written"], 2)
+        self.assertEqual(path.read_bytes(), b"fi")
+        self.assertEqual(client.open.call_count, 3)
+        self.assertTrue(output.closed and response.closed)
+
+    def test_download_read_timeout_does_not_retry_after_disk_reset_failure(self):
+        client, pin, path = self.download_fixture()
+        response = ScriptedResponse([b"fi", TimeoutError("network")])
+        client.open = mock.Mock(side_effect=[response, Response(b"fixture")])
+        output = path.open("wb", buffering=0)
+        self.addCleanup(output.close)
+        writer = mock.Mock(wraps=output)
+        writer.__enter__ = mock.Mock(return_value=writer)
+        writer.__exit__ = mock.Mock(side_effect=lambda *args: output.close())
+        writes = [0]
+
+        def write(chunk):
+            writes[0] += 1
+            if writes[0] > 1:
+                raise ConnectionResetError(errno.ECONNRESET, "secret disk reset")
+            return output.write(chunk)
+
+        writer.write.side_effect = write
+        with mock.patch.object(Path, "open", return_value=writer), mock.patch.object(cache.time, "sleep"), \
+                self.assertRaisesRegex(cache.CacheMiss, "cache_unusable_OSError") as failed:
+            client.download(pin, path)
+        self.assertEqual(path.read_bytes(), b"")
+        self.assertEqual(failed.exception.details["download_partial_bytes"], 0)
+        self.assertEqual(failed.exception.details["retry_attempts"][-1]["bytes_written"], 0)
+        self.assertEqual(failed.exception.details["retry_attempts"][-1]["phase"], "download_write")
+        self.assertEqual(client.open.call_count, 2)
+        self.assertTrue(output.closed)
+
+    def test_download_final_file_size_and_position_must_match_confirmed_writes(self):
+        for mismatch in ("position", "size"):
+            with self.subTest(mismatch=mismatch):
+                client, pin, path = self.download_fixture()
+                client.open = mock.Mock(return_value=Response(b"fixture"))
+                output = path.open("wb", buffering=0)
+                self.addCleanup(output.close)
+                writer = mock.Mock(wraps=output)
+                writer.__enter__ = mock.Mock(return_value=writer)
+                writer.__exit__ = mock.Mock(side_effect=lambda *args: output.close())
+                if mismatch == "position":
+                    writer.tell.return_value = 5
+                else:
+                    writer.tell.side_effect = lambda: (output.truncate(5), 7)[1]
+                with mock.patch.object(Path, "open", return_value=writer), \
+                        self.assertRaisesRegex(cache.CacheMiss, "download_size_mismatch"):
+                    client.download(pin, path)
+                self.assertEqual(client.open.call_count, 1)
+                self.assertTrue(output.closed)
+
+    def test_download_chunked_framing_partial_is_not_appended_as_body(self):
+        client, pin, path = self.download_fixture()
+        body = io.BytesIO(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nfi\r")
+        sock = mock.Mock()
+        sock.makefile.return_value = body
+        first = http.client.HTTPResponse(sock)
+        first.begin()
+        self.assertTrue(first.chunked)
+        second = ScriptedResponse([b"xture"], status=206, headers={"Content-Range": "bytes 2-6/7"})
+        client.open = mock.Mock(side_effect=[first, second])
+        with mock.patch.object(cache.time, "sleep"):
+            self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual(client.open.call_args.kwargs["offset"], 2)
+        self.assertEqual(path.read_bytes(), b"fixture")
+        self.assertEqual(cache.sha256(path), digest(b"fixture"))
+        self.assertTrue(first.closed and second.closed and body.closed)
+
+    def test_download_unknown_exception_is_terminal_and_does_not_leak_name(self):
+        client, pin, path = self.download_fixture()
+        error = type("secret" * 1000, (RuntimeError,), {})("https://secret?sig=secret")
+        client.open = mock.Mock(side_effect=error)
+        with mock.patch.object(cache.time, "sleep") as sleep, \
+                self.assertRaisesRegex(cache.CacheMiss, "network_error") as failed:
+            client.download(pin, path)
+        self.assertEqual(failed.exception.details["retry_attempts"][0]["exception_class"], "Exception")
+        self.assertNotIn("secret", json.dumps(failed.exception.details))
+        self.assertEqual(client.open.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_download_unexpected_response_status_closes_body(self):
+        for status in (201, 206, 416):
+            with self.subTest(status=status):
+                client, pin, path = self.download_fixture()
+                response = ScriptedResponse([b"fixture"], status=status)
+                client.opener.open = mock.Mock(return_value=response)
+                with self.assertRaisesRegex(cache.CacheMiss, "unexpected_http_status") as failed:
+                    client.download(pin, path)
+                self.assertTrue(response.closed)
+                self.assertEqual(failed.exception.details["retry_attempts"][0]["http_status"], status)
+                self.assertEqual(path.read_bytes(), b"")
+
+    def test_download_deadline_limits_every_redirect_connection_and_read(self):
+        client, pin, path = self.download_fixture()
+        now = [0.0]
+        requests = []
+        body = io.BytesIO(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nfixture")
+        body.raw = mock.Mock()
+        sock = mock.Mock()
+        sock.makefile.return_value = body
+        response = http.client.HTTPResponse(sock)
+        response.begin()
+        response.read1 = mock.Mock(wraps=response.read1)
+
+        def open_request(request, timeout):
+            requests.append((request, timeout))
+            if len(requests) == 1:
+                now[0] = 2690
+                raise urllib.error.HTTPError(request.full_url, 302, "redirect", {
+                    "Location": "https://x.blob.core.windows.net/file"}, io.BytesIO())
+            now[0] = 2695
+            return response
+
+        client.opener.open = open_request
+        with mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]):
+            self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual([timeout for _, timeout in requests], [60, 10])
+        self.assertEqual(body.raw._sock.settimeout.call_args, mock.call(5))
+        self.assertGreater(response.read1.call_count, 0)
+        self.assertTrue(response.closed and body.closed)
+
+    def test_download_httpresponse_read1_premature_eof_resumes_with_range(self):
+        client, pin, path = self.download_fixture()
+        body = io.BytesIO(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nfi")
+        body.raw = mock.Mock()
+        sock = mock.Mock()
+        sock.makefile.return_value = body
+        first = http.client.HTTPResponse(sock)
+        first.begin()
+        first.read1 = mock.Mock(wraps=first.read1)
+        second = ScriptedResponse([b"xture"], status=206, headers={"Content-Range": "bytes 2-6/7"})
+        client.open = mock.Mock(side_effect=[first, second])
+        with mock.patch.object(cache.time, "sleep"):
+            self.assertEqual(client.download(pin, path), 7)
+        self.assertEqual(client.open.call_args.kwargs["offset"], 2)
+        self.assertGreater(first.read1.call_count, 0)
+        self.assertEqual(path.read_bytes(), b"fixture")
+        self.assertTrue(first.closed and second.closed and body.closed)
+
+    def test_download_deadline_caps_retry_wait_and_stops_opening_requests(self):
+        client, pin, path = self.download_fixture()
+        now = [0.0]
+
+        def open_response(*args, **kwargs):
+            now[0] = 2699.5
+            raise TimeoutError("secret")
+
+        def sleep(delay):
+            now[0] += delay
+
+        client.open = mock.Mock(side_effect=open_response)
+        with mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]), \
+                mock.patch.object(cache.time, "sleep", side_effect=sleep) as wait, \
+                self.assertRaisesRegex(cache.CacheMiss, "download_timeout") as failed:
+            client.download(pin, path)
+        self.assertEqual(now[0], 2700)
+        wait.assert_called_once_with(0.5)
+        self.assertEqual(client.open.call_count, 1)
+        self.assertEqual(failed.exception.details["download_partial_bytes"], 0)
+        self.assertEqual(cache.ATTEMPTS, 3)
+        self.assertEqual(cache.DOWNLOAD_SECONDS, 2700)
+
+    def test_download_deadline_detects_but_cannot_interrupt_drip_response_headers(self):
+        client, pin, path = self.download_fixture()
+        now = [0.0]
+        wire = b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nX-Pad: " + b"x" * 61 + b"\r\n\r\nfixture"
+
+        class DripHeaders(io.BytesIO):
+            def readline(self, limit=-1):
+                line = bytearray()
+                while limit < 0 or len(line) < limit:
+                    byte = super().read(1)
+                    if not byte:
+                        break
+                    now[0] += 30
+                    line.extend(byte)
+                    if byte == b"\n":
+                        break
+                return bytes(line)
+
+        body = DripHeaders(wire)
+        sock = mock.Mock()
+        sock.makefile.return_value = body
+        response = http.client.HTTPResponse(sock)
+
+        def open_request(request, timeout):
+            self.assertEqual(timeout, 60)
+            response.begin()
+            return response
+
+        client.opener.open = mock.Mock(side_effect=open_request)
+        with mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]), \
+                self.assertRaisesRegex(cache.CacheMiss, "download_timeout") as failed:
+            client.download(pin, path)
+        self.assertEqual(now[0], 3240)
+        self.assertEqual(failed.exception.details["download_partial_bytes"], 0)
+        self.assertEqual(client.opener.open.call_count, 1)
+        self.assertTrue(response.closed and body.closed)
+
+    def test_download_deadline_detects_but_cannot_interrupt_multiaddress_connect(self):
+        client, pin, path = self.download_fixture()
+        now = [0.0]
+        connections = [mock.Mock(), mock.Mock()]
+        addresses = [(cache.socket.AF_INET, cache.socket.SOCK_STREAM, 6, "", ("192.0.2.1", 443)),
+                     (cache.socket.AF_INET, cache.socket.SOCK_STREAM, 6, "", ("192.0.2.2", 443))]
+        redirect = urllib.error.HTTPError(cache.API, 302, "redirect", {
+            "Location": "https://x.blob.core.windows.net/file"}, io.BytesIO())
+
+        def connect(address):
+            now[0] += 10
+            raise TimeoutError("fixture connect")
+
+        for connection in connections:
+            connection.connect.side_effect = connect
+
+        def open_request(request, timeout):
+            if request.full_url.startswith(cache.API):
+                now[0] = 2690
+                raise redirect
+            self.assertEqual(timeout, 10)
+            with mock.patch.object(cache.socket, "getaddrinfo", return_value=addresses), \
+                    mock.patch.object(cache.socket, "socket", side_effect=connections):
+                return create_connection(("fixture.invalid", 443), timeout=timeout)
+
+        client.opener.open = mock.Mock(side_effect=open_request)
+        with mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]), \
+                self.assertRaisesRegex(cache.CacheMiss, "download_timeout") as failed:
+            client.download(pin, path)
+        self.assertEqual(now[0], 2710)
+        self.assertEqual(failed.exception.details["download_partial_bytes"], 0)
+        self.assertEqual(client.opener.open.call_count, 2)
+        for connection in connections:
+            connection.settimeout.assert_called_once_with(10)
+            connection.close.assert_called_once()
+        self.assertTrue(redirect.closed)
+
+    def test_download_expired_redirect_chain_closes_response_and_stops(self):
+        client, pin, path = self.download_fixture()
+        now = [0.0]
+        redirect = urllib.error.HTTPError(cache.API, 302, "redirect", {
+            "Location": "https://x.blob.core.windows.net/file"}, io.BytesIO())
+
+        def open_request(request, timeout):
+            now[0] = 2700
+            raise redirect
+
+        client.opener.open = mock.Mock(side_effect=open_request)
+        with mock.patch.object(cache.time, "monotonic", side_effect=lambda: now[0]), \
+                self.assertRaisesRegex(cache.CacheMiss, "download_timeout"):
+            client.download(pin, path)
+        self.assertEqual(client.opener.open.call_count, 1)
+        self.assertTrue(redirect.closed)
 
     def test_fetch_retains_partial_download_evidence_after_cleanup(self):
         client = self.fixture_client()

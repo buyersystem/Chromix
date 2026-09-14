@@ -121,6 +121,49 @@ if [ "${CHROMIX_USE_UPSTREAM_CACHE:-0}" = 1 ]; then
     CHROMIX_CACHE_TIMEOUT_SECONDS="$CACHE_TIMEOUT_SECONDS" bash "$REPO/build/posix/fetch-upstream-cache.sh" \
       --platform "$PLATFORM" --arch "$ARCH" --destination "$UPSTREAM_CACHE_DIR" ||
       die "required upstream cache fetch failed"
+    python3 - "$UPSTREAM_CACHE_DIR" "$PLATFORM" "$ARCH" <<'PY' || die "required upstream cache fetch did not produce a verified hit"
+import json
+import math
+import os
+from pathlib import Path
+import stat
+import sys
+
+cache = Path(os.path.abspath(Path(sys.argv[1]).expanduser()))
+try:
+    descriptor = os.open(cache / "result.json", os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError
+        raw = stream.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024:
+        raise ValueError
+    result = json.loads(raw)
+    if (not isinstance(result, dict) or result.get("owner") != "chromix-upstream-cache-v1"
+            or result.get("destination") != str(cache)
+            or result.get("platform") != sys.argv[2] or result.get("arch") != sys.argv[3]):
+        raise ValueError
+except (OSError, ValueError, UnicodeError, RecursionError):
+    print("upstream cache: missing or invalid fetch receipt", file=sys.stderr)
+    sys.exit(1)
+if result.get("status") != "hit":
+    reason = result.get("reason")
+    safe_reasons = {"unavailable", "network_unavailable", "cache_timeout", "download_timeout",
+                    "insufficient_disk_space", "checksum_mismatch", "download_size_mismatch",
+                    "invalid_content_range", "download_write_failed", "unexpected_http_status",
+                    "cache_unusable_OSError", "network_error", "artifact_expired", "artifact_mismatch"}
+    safe_reasons.update(f"github_http_{code}" for code in (401, 403, 404, 408, 410, 429, 500, 502, 503, 504))
+    reason = reason if isinstance(reason, str) and reason in safe_reasons else "cache_miss"
+    fields = []
+    for name in ("download_partial_bytes", "download_expected_bytes", "download_timeout_seconds",
+                 "duration_seconds"):
+        value = result.get(name)
+        if type(value) in (int, float) and 0 <= value <= 10**15 and math.isfinite(value):
+            fields.append(f"{name}={value}")
+    print(f"upstream cache: required fetch failed: {reason}" +
+          ("; " + ", ".join(fields) if fields else ""), file=sys.stderr)
+    sys.exit(1)
+PY
     python3 "$REPO/tools/restore_upstream_cache.py" --phase restore \
       --platform "$PLATFORM" --arch "$ARCH" --workdir "$WORK" \
       --cache-dir "$UPSTREAM_CACHE_DIR" || die "required upstream cache restore helper failed"

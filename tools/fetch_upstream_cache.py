@@ -28,6 +28,8 @@ import os
 import posixpath
 import re
 import shutil
+import socket
+import ssl
 import stat
 import struct
 import subprocess
@@ -41,6 +43,7 @@ import urllib.request
 import zipfile
 import zlib
 from collections import deque
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
@@ -208,12 +211,57 @@ def valid_url(url, api_only=False):
         raise CacheMiss("unsafe_download_url") from exc
 
 
+def http_status(value):
+    return value if type(value) is int and 100 <= value <= 599 else None
+
+
+def exception_evidence(exc):
+    # Labels are constants; exception messages, class names and response headers are untrusted.
+    classes = ((urllib.error.HTTPError, "HTTPError"), (urllib.error.URLError, "URLError"),
+               (http.client.IncompleteRead, "IncompleteRead"),
+               (http.client.RemoteDisconnected, "RemoteDisconnected"),
+               (http.client.BadStatusLine, "BadStatusLine"),
+               (http.client.HTTPException, "HTTPException"),
+               (ssl.SSLCertVerificationError, "SSLCertVerificationError"), (ssl.SSLError, "SSLError"),
+               (socket.gaierror, "gaierror"), (TimeoutError, "TimeoutError"),
+               (ConnectionResetError, "ConnectionResetError"),
+               (ConnectionAbortedError, "ConnectionAbortedError"), (BrokenPipeError, "BrokenPipeError"),
+               (ConnectionRefusedError, "ConnectionRefusedError"), (ConnectionError, "ConnectionError"),
+               (OSError, "OSError"), (CacheMiss, "CacheMiss"))
+
+    def label(error):
+        return next((name for kind, name in classes if isinstance(error, kind)), "Exception")
+
+    evidence = {"exception_class": label(exc), "errno": None, "http_status": None}
+    cause = exc.reason if isinstance(exc, urllib.error.URLError) else None
+    if isinstance(cause, BaseException):
+        evidence["cause_class"] = label(cause)
+    for error in (exc, cause):
+        number = getattr(error, "errno", None) if isinstance(error, OSError) else None
+        if type(number) is int and -65535 <= number <= 65535:
+            evidence["errno"] = number
+    if isinstance(exc, urllib.error.HTTPError):
+        evidence["http_status"] = http_status(exc.code)
+    return evidence
+
+
+def request_timeout(deadline=None):
+    if deadline is None:
+        return TIMEOUT
+    remaining = deadline - time.monotonic()
+    require(remaining > 0, "download_timeout")
+    return min(TIMEOUT, remaining)
+
+
 class GitHub:
+    LOCAL_DOWNLOAD_PHASES = ("download_prepare", "download_write", "download_reset",
+                             "download_verify_file", "download_close")
+
     def __init__(self, token=None):
         self.token = token if token is not None else os.environ.get("GH_TOKEN", "")
         self.opener = urllib.request.build_opener(NoRedirect())
 
-    def open(self, url, download=False):
+    def open(self, url, download=False, *, offset=0, deadline=None, state=None):
         valid_url(url, api_only=True)
         for hop in range(6):
             headers = {"User-Agent": OWNER, "Accept": "application/vnd.github+json",
@@ -223,16 +271,30 @@ class GitHub:
                 headers["Authorization"] = "Bearer " + self.token
             if hop:
                 headers = {"User-Agent": OWNER}
+            blob = urllib.parse.urlsplit(url).hostname != "api.github.com"
+            ranged = download and blob and offset > 0
+            if ranged:
+                headers["Range"] = f"bytes={offset}-"
+            if state is not None:
+                state["phase"] = "blob_request" if blob else "api_request"
+                state["http_status"] = None
             try:
-                response = self.opener.open(urllib.request.Request(url, headers=headers), timeout=TIMEOUT)
-                if response.status != 200:
+                response = self.opener.open(urllib.request.Request(url, headers=headers),
+                                            timeout=request_timeout(deadline))
+                if state is not None:
+                    state["http_status"] = http_status(response.status)
+                if response.status != 200 and not (ranged and response.status == 206):
                     response.close()
                     raise CacheMiss("unexpected_http_status")
                 return response
             except urllib.error.HTTPError as exc:
-                location = exc.headers.get("Location")
-                code = exc.code
-                exc.close()
+                try:
+                    location = exc.headers.get("Location")
+                    code = exc.code
+                finally:
+                    exc.close()
+                if state is not None:
+                    state["http_status"] = http_status(code)
                 if download and code in (301, 302, 303, 307, 308) and location:
                     url = urllib.parse.urljoin(url, location)
                     valid_url(url)
@@ -240,61 +302,224 @@ class GitHub:
                 raise
         raise CacheMiss("too_many_redirects")
 
-    def retry(self, operation):
-        for attempt in range(ATTEMPTS):
+    def retry(self, operation, *, state=None, deadline=None):
+        state = state if state is not None else {"phase": "metadata_request", "bytes_written": 0}
+        attempts = []
+        state["retry_attempts"] = attempts
+        for attempt in range(1, ATTEMPTS + 1):
+            started = time.monotonic()
+            state.update(attempt=attempt, attempt_started=started)
+            state["http_status"] = None
+            state["phase"] = "download_request" if deadline is not None else "metadata_request"
             try:
+                if deadline is not None:
+                    if started >= deadline:
+                        state["phase"] = "download_deadline"
+                    require(started < deadline, "download_timeout")
                 return operation()
-            except urllib.error.HTTPError as exc:
-                if exc.code not in (408, 429, 500, 502, 503, 504) or attempt == ATTEMPTS - 1:
-                    raise CacheMiss(f"github_http_{exc.code}") from exc
-            except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as exc:
-                if attempt == ATTEMPTS - 1:
-                    raise CacheMiss("network_unavailable") from exc
-            time.sleep(2**attempt)
+            except Exception as exc:
+                finished = time.monotonic()
+                evidence = exception_evidence(exc)
+                if not isinstance(exc, urllib.error.HTTPError):
+                    evidence["http_status"] = state.get("http_status")
+                evidence.update(attempt=attempt, phase=state["phase"],
+                                bytes_written=state["bytes_written"],
+                                elapsed_seconds=round(max(0, finished - started), 3))
+                attempts.append(evidence)
+                local_failure = state["phase"] in self.LOCAL_DOWNLOAD_PHASES
+                if local_failure:
+                    retryable = False
+                    error = exc if isinstance(exc, CacheMiss) else CacheMiss("cache_unusable_OSError")
+                elif isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
+                    status = evidence["http_status"]
+                    retryable = status in (408, 429, 500, 502, 503, 504)
+                    error = CacheMiss(f"github_http_{status}" if status else "github_http_error")
+                elif isinstance(exc, CacheMiss):
+                    retryable, error = False, exc
+                elif isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError,
+                                      http.client.HTTPException, ssl.SSLError, socket.gaierror)):
+                    retryable, error = True, CacheMiss("network_unavailable")
+                elif isinstance(exc, OSError):
+                    retryable, error = False, CacheMiss("cache_unusable_OSError")
+                else:
+                    retryable, error = False, CacheMiss("network_error")
+                if not local_failure and deadline is not None and finished >= deadline:
+                    retryable, error = False, CacheMiss("download_timeout")
+                error.details.update(retry_attempts=attempts,
+                                     retry_exhausted=retryable and attempt == ATTEMPTS)
+                if not retryable or attempt == ATTEMPTS:
+                    if error is exc:
+                        raise
+                    raise error from exc
+                delay = 2**(attempt - 1)
+                if deadline is not None:
+                    delay = min(delay, max(0, deadline - finished))
+                time.sleep(delay)
 
     def json(self, path):
+        state = {"phase": "metadata_request", "bytes_written": 0}
+
         def request():
-            with self.open(API + path) as response:
+            with self.open(API + path, state=state) as response:
+                state["phase"] = "metadata_read"
                 data = response.read(4 * CHUNK + 1)
                 require(len(data) <= 4 * CHUNK, "oversized_api_response")
+                state["phase"] = "metadata_decode"
                 try:
                     return json.loads(data)
                 except (ValueError, UnicodeError) as exc:
                     raise CacheMiss("invalid_api_response") from exc
-        return self.retry(request)
+        return self.retry(request, state=state)
 
     def download(self, pin, path):
         artifact = pin["artifact"]
+        expected = artifact["size_in_bytes"]
         url = f"{API}/repos/{pin['repository']}/actions/artifacts/{artifact['id']}/zip"
         deadline = time.monotonic() + DOWNLOAD_SECONDS
         size = 0
+        result = hashlib.sha256()
+        state = {"phase": "download_prepare", "bytes_written": 0}
+
+        def write_chunk(chunk):
+            nonlocal size
+            state["phase"] = "download_write"
+            require(size + len(chunk) <= expected, "download_size_mismatch")
+            require_space(path.parent, len(chunk))
+            remaining = memoryview(chunk)
+            while remaining:
+                request_timeout(deadline)
+                written = output.write(remaining)
+                require(type(written) is int and 0 < written <= len(remaining), "download_write_failed")
+                result.update(remaining[:written])
+                size += written
+                state["bytes_written"] = size
+                remaining = remaining[written:]
+
+        output = None
+        files = ExitStack()
+
+        def close_output():
+            try:
+                files.close()
+            except Exception as exc:
+                state["phase"] = "download_close"
+                reconcile_file()
+                entry = exception_evidence(exc)
+                entry.update(attempt=state.get("attempt", 1), phase="download_close",
+                             bytes_written=size,
+                             elapsed_seconds=round(max(0, time.monotonic() - state.get("attempt_started", deadline)), 3))
+                entries = state.get("retry_attempts", [])
+                if entries and entries[-1]["attempt"] == entry["attempt"]:
+                    entries[-1]["cleanup_failure"] = entry
+                else:
+                    entries.append(entry)
+                raise CacheMiss("cache_unusable_OSError", details={
+                    "retry_attempts": entries, "retry_exhausted": False,
+                }) from exc
+
+        def reconcile_file():
+            nonlocal size, result
+            if output is None or state["phase"] not in self.LOCAL_DOWNLOAD_PHASES:
+                return
+            # Local failures invalidate the digest even if the file size is unchanged.
+            result = None
+            try:
+                actual = os.fstat(output.fileno()).st_size
+            except (OSError, ValueError):
+                state["file_size_confirmed"] = False
+            else:
+                state["file_size_confirmed"] = True
+                if actual != size:
+                    size = actual
+                    state["bytes_written"] = size
 
         def request():
-            nonlocal size
-            require(time.monotonic() < deadline, "download_timeout")
-            result = hashlib.sha256()
-            with self.open(url, download=True) as response, path.open("wb") as output:
-                size = 0
+            nonlocal size, result, output
+            state["phase"] = "download_prepare"
+            if output is None:
+                request_timeout(deadline)
+                # Only this invocation's writes and hash state can be resumed.
+                output = files.enter_context(path.open("wb", buffering=0))
+            state["phase"] = "download_request"
+            request_timeout(deadline)
+            offset = size
+            with self.open(url, download=True, offset=offset, deadline=deadline, state=state) as response:
+                state["phase"] = "download_response"
+                state["http_status"] = http_status(response.status)
+                if response.status == 206:
+                    value = response.headers.get("Content-Range")
+                    match = re.fullmatch(r"bytes ([0-9]{1,20})-([0-9]{1,20})/([0-9]{1,20})", value) \
+                        if type(value) is str and len(value) <= 80 else None
+                    require(offset > 0 and match is not None, "invalid_content_range")
+                    start, end, total = map(int, match.groups())
+                    require(start == offset and start <= end == expected - 1 and total == expected,
+                            "invalid_content_range")
+                    length = response.headers.get("Content-Length")
+                    if length is not None:
+                        require(type(length) is str and re.fullmatch(r"[0-9]{1,20}", length)
+                                and int(length) == expected - offset, "invalid_content_range")
+                else:
+                    require(response.status == 200, "unexpected_http_status")
+                    # A server ignoring Range returns a new complete representation.
+                    state["phase"] = "download_reset"
+                    output.seek(0)
+                    output.truncate()
+                    size, result = 0, hashlib.sha256()
+                    state["bytes_written"] = 0
                 while True:
-                    require(time.monotonic() < deadline, "download_timeout")
-                    chunk = response.read(CHUNK)
+                    state["phase"] = "download_read"
+                    timeout = request_timeout(deadline)
+                    if isinstance(response, http.client.HTTPResponse):
+                        sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+                        if sock is not None:
+                            sock.settimeout(timeout)
+                        # read1 avoids waiting to fill CHUNK across many socket reads.
+                        read = response.read1
+                    else:
+                        read = response.read
+                    try:
+                        chunk = read(CHUNK)
+                    except http.client.IncompleteRead as exc:
+                        # HTTPResponse.read1 partials may contain chunk framing, not body bytes.
+                        if exc.partial and not isinstance(response, http.client.HTTPResponse):
+                            write_chunk(exc.partial)
+                        state["phase"] = "download_read"
+                        if size == expected:
+                            break
+                        raise
                     if not chunk:
                         break
-                    size += len(chunk)
-                    require(size <= artifact["size_in_bytes"], "download_size_mismatch")
-                    result.update(chunk)
-                    require_space(path.parent, len(chunk))
-                    output.write(chunk)
-            if size != artifact["size_in_bytes"]:
-                raise http.client.IncompleteRead(b"", artifact["size_in_bytes"] - size)
-            require("sha256:" + result.hexdigest() == artifact["digest"], "checksum_mismatch")
+                    write_chunk(chunk)
+                state["phase"] = "download_verify"
+                request_timeout(deadline)
+                if size != expected:
+                    raise http.client.IncompleteRead(b"", expected - size)
+                require("sha256:" + result.hexdigest() == artifact["digest"], "checksum_mismatch")
+                state["phase"] = "download_verify_file"
+                require(output.tell() == size and os.fstat(output.fileno()).st_size == size,
+                        "download_size_mismatch")
+            state["phase"] = "download_close"
+            files.close()
             return size
+        def attempt():
+            try:
+                return request()
+            except Exception:
+                reconcile_file()
+                raise
+
         try:
-            return self.retry(request)
+            try:
+                return self.retry(attempt, state=state, deadline=deadline)
+            finally:
+                close_output()
         except CacheMiss as error:
             error.details.update(download_partial_bytes=size,
-                                 download_expected_bytes=artifact["size_in_bytes"],
+                                 download_expected_bytes=expected,
                                  download_timeout_seconds=DOWNLOAD_SECONDS)
+            if state.get("file_size_confirmed") is False:
+                error.details["download_file_size_confirmed"] = False
             raise
 
 

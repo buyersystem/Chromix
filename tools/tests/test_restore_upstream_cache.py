@@ -139,8 +139,11 @@ class RestoreUpstreamCacheTest(unittest.TestCase):
             "id": pin["run_id"], "head_sha": pin["head_sha"], "head_branch": pin["head_branch"],
             "repository_id": pin["repository_id"], "head_repository_id": pin["repository_id"]})
         client = fetcher.GitHub("fixture-token")
-        client.open = mock.Mock(side_effect=[io.BytesIO(json.dumps(run).encode()),
-                                            io.BytesIO(json.dumps(metadata).encode()), io.BytesIO(outer)])
+        responses = [io.BytesIO(json.dumps(run).encode()),
+                     io.BytesIO(json.dumps(metadata).encode()), io.BytesIO(outer)]
+        for response in responses:
+            response.status = 200
+        client.open = mock.Mock(side_effect=responses)
         shutil.rmtree(self.cache)
         with mock.patch.object(fetcher, "require_space"), \
                 mock.patch("sys.stderr", new=io.StringIO()), \

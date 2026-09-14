@@ -110,16 +110,83 @@ class PosixRequiredCacheTest(FullCacheFixture, unittest.TestCase):
                                    "GITHUB_OUTPUT": str(self.root / "outputs")})
 
     def test_miss_disk_shortage_and_timeout_never_prepare_or_snapshot(self):
-        for reason in ("unavailable", "insufficient_disk_space", "cache_timeout"):
+        for reason in ("unavailable", "insufficient_disk_space", "cache_timeout", "network_unavailable"):
             with self.subTest(reason=reason):
                 self.seed(reason=reason)
                 result = self.run_stage()
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("restore receipt missing", result.stderr)
+                self.assertIn(f"required fetch failed: {reason}", result.stderr)
+                self.assertNotIn("restore receipt missing", result.stderr)
                 self.assertEqual(json.loads((self.cache / "result.json").read_text())["reason"], reason)
-                self.assertEqual(self.called(), ["fetch", "restore"])
+                self.assertEqual(self.called(), ["fetch"])
                 self.assertFalse((self.work / "src").exists())
                 self.calls.unlink()
+
+    def test_miss_summary_excludes_untrusted_strings_and_reports_safe_progress(self):
+        self.seed(reason="network_unavailable")
+        receipt = self.cache / "result.json"
+        original = json.loads(receipt.read_text())
+        for reason in ("network_unavailable", "https://blob.example/?sig=SECRET", ["SECRET"]):
+            with self.subTest(reason=reason):
+                value = {**original, "reason": reason, "download_partial_bytes": 2228224000,
+                         "download_expected_bytes": 12291676644, "download_timeout_seconds": 2700,
+                         "duration_seconds": 546.872, "token": "SECRET",
+                         "phase": "SECRET", "download_attempts": [{"error": "SECRET"}]}
+                receipt.write_text(json.dumps(value))
+                result = self.run_stage()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("download_partial_bytes=2228224000", result.stderr)
+                self.assertIn("duration_seconds=546.872", result.stderr)
+                self.assertNotIn("SECRET", result.stdout + result.stderr)
+                self.assertEqual(self.called(), ["fetch"])
+                self.calls.unlink()
+
+    def test_invalid_fetch_receipt_stops_before_restore(self):
+        for problem in ("missing", "malformed", "array", "owner", "destination", "platform",
+                        "arch", "symlink", "fifo", "oversized"):
+            with self.subTest(problem=problem):
+                self.seed(reason="network_unavailable")
+                receipt = self.cache / "result.json"
+                original = json.loads(receipt.read_text())
+                if problem in ("owner", "destination", "platform", "arch"):
+                    receipt.write_text(json.dumps({**original, problem: "wrong"}))
+                elif problem in ("malformed", "array", "oversized"):
+                    receipt.write_text({"malformed": "{", "array": "[]", "oversized": " " * (1024 * 1024 + 1)}[problem])
+                else:
+                    receipt.unlink()
+                    if problem == "symlink":
+                        outside = self.root / "outside.json"
+                        outside.write_text(json.dumps(original))
+                        receipt.symlink_to(outside)
+                    elif problem == "fifo":
+                        os.mkfifo(receipt)
+                result = self.run_stage()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("missing or invalid fetch receipt", result.stderr)
+                self.assertEqual(self.called(), ["fetch"])
+                self.assertFalse((self.work / "src").exists())
+                self.calls.unlink()
+                if receipt.exists() or receipt.is_symlink():
+                    receipt.unlink()
+
+    def test_fetch_hit_uses_fetcher_destination_normalization(self):
+        self.seed()
+        (self.root / "existing").mkdir()
+        self.env["RUNNER_TEMP"] = str(self.root / "existing" / "..")
+        result = self.run_stage()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.called(), ["fetch", "restore", "verify", "prepare", "ninja", "snapshot"])
+
+    def test_fetch_miss_never_bypasses_restore_identity_verification(self):
+        self.seed()
+        receipt = self.cache / "result.json"
+        value = json.loads(receipt.read_text())
+        value["manifest"]["sha256"] = "0" * 64
+        receipt.write_text(json.dumps(value))
+        result = self.run_stage()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.called(), ["fetch", "restore"])
+        self.assertFalse((self.work / "src/.chromix-upstream-restored.json").exists())
 
     def test_insufficient_budget_fails_without_fetch_or_handoff(self):
         result = self.run_stage(minutes=60)
