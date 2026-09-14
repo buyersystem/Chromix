@@ -140,13 +140,16 @@ def extract_archive(archive, manifest, dest, arch):
         seen = {}
         reserved = re.compile(r'^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)', re.I)
         for item in members:
-            raw = item.filename.rstrip('/')
+            # ZipInfo normalizes backslashes on Windows and truncates at NUL.
+            # Validate the original name, not a platform-repaired alias.
+            raw = item.orig_filename.rstrip('/')
             path = PurePosixPath(raw)
-            if (not raw or '\0' in item.orig_filename or '\\' in raw or path.is_absolute() or raw != path.as_posix()
+            if (item.filename != item.orig_filename or not raw or '\0' in raw
+                    or '\\' in raw or path.is_absolute() or raw != path.as_posix()
                     or path.parts[0] != 'chromix' or any(
                         part in ('.', '..') or part[-1:] in (' ', '.') or reserved.match(part)
                         or re.search(r'[\x00-\x1f\x7f:<>"|?*]', part) for part in path.parts)):
-                raise VerificationError(f'unsafe Windows archive path: {item.filename!r}')
+                raise VerificationError(f'unsafe Windows archive path: {item.orig_filename!r}')
             mode = item.external_attr >> 16
             if (stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR)
                     or (stat.S_IFMT(mode) == stat.S_IFDIR and not item.is_dir())

@@ -20,6 +20,7 @@ from . import device_pool as pool
 from ._device_host import host_inventory
 from ._device_headers import header_errors
 from ._device_probe import probe_source, probe_hash
+from ._socks_auth import apply_native_socks_auth
 from . import _device_fonts as fonts
 
 PROBE = Path(__file__).with_name('device_probe.js')
@@ -288,6 +289,7 @@ def launch_measured(options, *, asynchronous=False, **kwargs):
     browser = context = None
     try:
         launch = dict(executable_path=str(binary), headless=headless, args=prepared['args'], chromium_sandbox=True)
+        apply_native_socks_auth({}, launch, prepared['args'])
         if directory is None:
             browser = pw.chromium.launch(**launch)
             context = browser.new_context(no_viewport=True, service_workers='allow')
@@ -334,6 +336,7 @@ async def _launch_async(options, kwargs):
     browser = context = None
     try:
         launch = dict(executable_path=str(binary), headless=headless, args=prepared['args'], chromium_sandbox=True)
+        apply_native_socks_auth({}, launch, prepared['args'])
         if directory is None:
             browser = await pw.chromium.launch(**launch)
             context = await browser.new_context(no_viewport=True, service_workers='allow')

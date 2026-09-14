@@ -189,11 +189,17 @@ def apply_font_env(executable: str | os.PathLike,
 
     Caller-provided ``env`` entries always win over the generated ones.
     """
+    # Keep the font-table parser importable as a standalone, stdlib-only module.
+    # Launch-specific credential handling is only needed when assembling env.
+    from ._socks_auth import has_native_socks_env, without_native_socks_env
+
     font_env = linux_font_env(executable, fonts_dir)
     user_env = launch_kwargs.get("env")
-    if not font_env and user_env is None:
+    if not font_env and user_env is None and not has_native_socks_env(os.environ):
         return
-    merged = dict(os.environ)
+    # Do not reintroduce credentials scrubbed by the launch auth assembler.
+    # Its explicitly configured, endpoint-bound env still wins below.
+    merged = without_native_socks_env(os.environ)
     merged.update(font_env)
     if user_env:
         merged.update(user_env)

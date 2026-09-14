@@ -75,6 +75,9 @@ def archive_fixture(root, arch="arm64", extras=()):
                 if path.is_file():
                     output.write(path, path.relative_to(bundle.parent).as_posix())
             for name, payload in extras:
+                if isinstance(name, str):
+                    mode = stat.S_IFDIR | 0o755 if name.endswith('/') else stat.S_IFREG | 0o644
+                    name = member_info(name, mode)
                 output.writestr(name, payload)
     manifest = root / "SHA256SUMS"
     update_manifest(archive, manifest)
@@ -99,6 +102,9 @@ def corrupt_member(archive, name):
 
 def member_info(name, mode):
     item = zipfile.ZipInfo(name)
+    # ZipInfo normalizes backslashes on Windows. Preserve the exact archive
+    # input instead of accidentally repairing an unsafe fixture while writing.
+    item.filename = item.orig_filename = name
     item.create_system = 3
     item.external_attr = mode << 16
     return item
@@ -397,10 +403,28 @@ def test_archive_corrupt_file_crc_is_rejected_even_with_matching_sha(tmp_path):
 ])
 def test_archive_rejects_unsafe_windows_paths_before_writing(tmp_path, name):
     archive, manifest, dest = archive_fixture(tmp_path, extras=[(name, b"unsafe")])
+    with zipfile.ZipFile(archive) as container:
+        assert any(item.orig_filename == name for item in container.infolist())
     with pytest.raises(verify.VerificationError, match="unsafe Windows archive path"):
         verify.extract_archive(archive, manifest, dest, "arm64")
     assert not dest.exists()
     assert not (tmp_path / "outside").exists()
+
+
+@pytest.mark.parametrize("name", ["chromix\\outside", "chromix/dir\\outside"])
+def test_archive_rejects_original_name_when_decoder_normalizes_slashes(tmp_path, monkeypatch, name):
+    archive, manifest, dest = archive_fixture(tmp_path, extras=[(name, b"unsafe")])
+    original = zipfile.ZipInfo.__init__
+
+    def normalizing_decoder(item, *args, **kwargs):
+        original(item, *args, **kwargs)
+        # Exercise Windows' decoder behavior even on a POSIX CI runner.
+        item.filename = item.filename.replace("\\", "/")
+
+    monkeypatch.setattr(zipfile.ZipInfo, "__init__", normalizing_decoder)
+    with pytest.raises(verify.VerificationError, match="unsafe Windows archive path"):
+        verify.extract_archive(archive, manifest, dest, "arm64")
+    assert not dest.exists()
 
 
 @pytest.mark.parametrize("names", [

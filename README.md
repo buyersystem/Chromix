@@ -209,6 +209,9 @@ environment variables.
 ## Node SDK
 
 The Node wrapper uses `playwright-core` and exposes the matching camelCase API.
+A separate `@xiaoxiaofeihh/chromix/puppeteer` entry point uses an installed
+`puppeteer-core` driver. Both SDKs also support explicit encrypted Cookie
+migration. See the [SDK additions and native verification boundaries](docs/functionality-followup.md).
 
 Install from npm:
 

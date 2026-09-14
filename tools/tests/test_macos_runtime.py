@@ -758,6 +758,19 @@ elif name == "build_bindgen.py":
         raise SystemExit("unexpected bindgen rebuild")
     if not Path(os.environ["LOADER_LINK"]).is_file():
         raise SystemExit("bindgen build lacks loader link")
+elif name == "verify_patch_stack.py":
+    repo, work = Path(os.environ["FIXTURE_REPO"]), Path(os.environ["FIXTURE_WORK"])
+    assert args[1:-1] == ["--src", str(work / "src"), "--repo", str(repo),
+                         "--core", str(work / "tooling/ungoogled-chromium"),
+                         "--platform-tooling", str(work / "tooling/ungoogled-chromium-macos"),
+                         "--platform", "macos", "--output"]
+    report = Path(args[-1])
+    assert report.parent == work / "fingerprint-diagnostics"
+    assert report.name.startswith("source-") and report.suffix == ".json"
+    if os.environ.get("FAIL_SOURCE_CHECK") == "1":
+        raise SystemExit("fixture source verification failed")
+    # This tests shell propagation, not real patch/source verification.
+    report.write_text(json.dumps({"fixture_only": True, "status": "simulated-source-check"}))
 elif name == "-":
     pass
 elif name not in ("prepare-ungoogled.sh", "gn", "ninja", "merge_gn_args.py"):
@@ -804,6 +817,7 @@ class MacOSRuntimeShellTest(unittest.TestCase):
         self.env = {key: value for key, value in os.environ.items()
                     if not key.startswith("DYLD_") and key not in ("BASH_ENV", "ENV")}
         self.env.update(PATH=str(self.bin) + os.pathsep + os.environ["PATH"], CALL_LOG=str(self.log),
+                        FIXTURE_REPO=str(self.repo), FIXTURE_WORK=str(self.work),
                         CHROMIX_APPLY_DOMAIN_SUBSTITUTION="0", CHROMIX_JOBS="1", GITHUB_ACTIONS="false")
 
     def executable(self, path):
@@ -860,9 +874,27 @@ class MacOSRuntimeShellTest(unittest.TestCase):
                 calls = self.calls()
                 self.assertEqual(calls[0][0], "prepare-ungoogled.sh")
                 self.assertIn("prepare_restored_build.py", [name for name, _, _ in calls])
+                names = [name for name, _, _ in calls]
+                self.assertEqual(names.count("verify_patch_stack.py"), 1)
+                self.assertLess(names.index("verify_patch_stack.py"), names.index("merge_gn_args.py"))
                 self.assertEqual([name for name, _, _ in calls[-3:]], ["gn", "ninja", "ninja"])
                 self.assertTrue(all(env == {} for _, _, env in calls))
                 self.assertEqual(self.object.stat().st_mtime_ns, self.before)
+                self.assertEqual(json.loads((self.work / "fingerprint-diagnostics/source-final.json").read_text()),
+                                 {"fixture_only": True, "status": "simulated-source-check"})
+
+    def test_failed_source_check_blocks_gn_ninja_and_final_source_receipt(self):
+        self.configure("arm64")
+        self.env["FAIL_SOURCE_CHECK"] = "1"
+        result = self.run_script("build/macos/build.sh", str(self.work), "arm64")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("fixture source verification failed", result.stderr)
+        calls = self.calls()
+        self.assertEqual(calls[-1][0], "verify_patch_stack.py")
+        self.assertFalse(any(name in ("merge_gn_args.py", "gn", "ninja") for name, _, _ in calls))
+        self.assertTrue(all(env == {} for _, _, env in calls))
+        self.assertFalse((self.work / "fingerprint-diagnostics/source-final.json").exists())
+        self.assertEqual(self.object.stat().st_mtime_ns, self.before)
 
     def test_retrieval_preserves_clean_child_and_parent_environments(self):
         self.configure("x64")

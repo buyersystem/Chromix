@@ -58,6 +58,9 @@ CI 另负责同一构建的 package 校验和 source receipt 关联。
 | runtime | CDP 几何、真实 OOPIF、时间、生命周期、音频及显式 fake media |
 | display_backend | 无初始 CDP viewport，要求 launch UXR 后端生效，再覆盖/缩放 |
 | transport | 回环 full ClientHello、ALPN、H2 SETTINGS/伪首部、JS/header |
+| sdk_cookies | 两个独立浏览器进程的加密 Cookie 迁移、属性回读及 sibling context 隔离 |
+| socks_auth | 原生 RFC 1929 TCP、window/iframe/worker、错误密码与认证降级拒绝 |
+| font_provenance | 实际 shaped-run typeface 表摘要与 SFNT/TTC 文件关联；不证明栅格等价 |
 | render | ImageBitmap、导出快照、worker ownership、WebGL loss、WebGPU boundaries |
 
 每项默认 240 秒，可配置 30–1800 秒。Windows 使用 gated child + kill-on-close
@@ -74,7 +77,7 @@ GitHub run 的 producer receipt，报告明确标为 `producer-receipt-only`。
 
 - `status=failed`：至少一项错误，退出非零。
 - `status=incomplete`：必需检查通过，optional 能力有明确 gap。
-- `ci_gate_passed=true`：非 control、source/binary 身份通过、七项完整执行且无
+- `ci_gate_passed=true`：非 control、source/binary 身份通过、十项完整执行且无
   required failure。允许记录的 optional gap，不表示完整设备验收。
 - `full_acceptance=false`：没有真实硬件、font-file/glyph 或外部 proxy/DNS/
   QUIC/TURN 的完整证据，不自动升级为全量验收。
@@ -98,7 +101,14 @@ python -X utf8 tools/check_patches.py
 npm test --prefix sdk/node
 ```
 
-这些是算法、验证器和编排测试，不是 Chromium 编译。Chrome 153 control 完整跑完
-七项：device、TLS/H2、extended render 通过，identity/Canvas 和两种 runtime 模式
+这些是算法、验证器和编排测试，不是 Chromium 编译。此前 Chrome 153 control 完整跑完
+当时的七项：device、TLS/H2、extended render 通过，identity/Canvas 和两种 runtime 模式
 失败。真实 OOPIF 屏幕/DPR 断言保留失败；stock Chrome 本身不实现 launch UXR
 后端。结果不能作为匹配 Chromix 152 的验收通过。
+
+新增三项的独立 stock 对照及最终聚焦测试见
+[functionality-followup.md](functionality-followup.md)。字体关联 gap 从原始摘要和
+文件记录重新计算；重复的 family/script 样本、零 glyph count 和无效文件凭据
+不能算有效证据。Cookie 必须保留测试夹具的 host-only/domain、有效期、HttpOnly、
+priority 和 CHIPS 属性，而非只保留四个名字。SOCKS 拒绝路径即使没有应用请求，
+只要错误密码认证成功或降级后发送了 CONNECT，也会失败。

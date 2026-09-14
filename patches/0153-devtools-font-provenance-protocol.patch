@@ -1,0 +1,14 @@
+diff --git a/third_party/blink/public/devtools_protocol/domains/CSS.pdl b/third_party/blink/public/devtools_protocol/domains/CSS.pdl
+--- a/third_party/blink/public/devtools_protocol/domains/CSS.pdl
++++ b/third_party/blink/public/devtools_protocol/domains/CSS.pdl
+@@ -453,6 +453,10 @@
+       boolean isCustomFont
+       # Amount of glyphs that were rendered with this font.
+       number glyphCount
++      # Chromix: digest of tables from the actual shaped-run typeface, not its name.
++      experimental optional string fontTableHash
++      # Chromix: canonicalization algorithm; absent when the tables are unavailable.
++      experimental optional string fontTableHashAlgorithm
+ 
+   # Information about font variation axes for variable fonts
+   type FontVariationAxis extends object

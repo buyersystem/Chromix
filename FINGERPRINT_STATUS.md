@@ -4,9 +4,38 @@ This record tracks the implementation requested by `/root/fingerprint-p0-p2-back
 
 ## Acceptance rules
 
+### 2026-09-14 follow-up — SDK functionality, native SOCKS auth and font provenance
+
+The series now contains **157 patches**. `0151`–`0153` add DevTools digests
+of the actual shaped-run typeface tables; the independent SFNT/TTC collector
+binds these to file hashes without treating names or duplicate paths as proof.
+`0154`–`0157` add native RFC 1929 SOCKS5 TCP authentication, network-service
+endpoint binding and gtests. SDK launch environments carry credentials, not argv
+or page authentication; UDP ASSOCIATE remains unimplemented.
+
+Node now has a native Puppeteer subpath and shared persistent seeds. Both SDKs
+provide explicit authenticated Cookie export/import with cross-language scrypt /
+AES-256-GCM envelopes. This is not an OSCrypt/portable-profile database mode.
+
+Acceptance now runs ten suites, adding `sdk_cookies`, `socks_auth` and
+`font_provenance`. Native source hunks, shim tests and stock-browser SDK controls
+do not establish a matching Chromix build or qualified physical device.
+The complete 157-patch affected-file stack passes reverse/forward verification;
+new patches apply with zero fuzz and zero offsets to independently acquired
+Chromium 152 inputs. Full Windows repository testing remains non-green; see
+[implementation, evidence and remaining work](docs/functionality-followup.md).
+Final Windows-focused regression: **1127 passed, 18 skipped**. Linux tool and
+Python SDK regression: **4898 passed, 343 skipped**; Node SDK: **368 passed,
+4 skipped** on Windows and **372 passed, 0 skipped** on Linux. These include the
+preserved Windows ARM64 update from `aa57cbe`. The standalone font-parser import
+regression and Windows ZIP original-name validation are fixed; neither requires
+weakening the source or cache gates. The acceptance gate recomputes missing/
+ambiguous font bindings from raw evidence and checks Cookie fixture semantics
+and SOCKS rejection wires.
+
 ### 2026-09-14 update — native Canvas upload/readback repairs
 
-The current source series contains **150 patches**. `0149` physically sets
+At this earlier checkpoint the source series contained **150 patches**. `0149` physically sets
 opaque upload alpha in a private clipped ImageData copy (RGBA/BGRA8, F16, F32),
 without mutating script-owned RGB or input data. `0150` clips mailbox-backed
 readback, retains the destination stride, preserves OOB padding, and checks
@@ -38,8 +67,8 @@ dependency-shim execution do not establish native Chromium/Skia/GPU acceptance.
 Details, commands and artifact paths: [Canvas chain](docs/canvas-chain.md).
 The [pinned CloakBrowser comparison](docs/cloakbrowser-functionality-comparison.md)
 distinguishes public SDK behavior from unpublished C++ patches and identifies
-Puppeteer, transparent-proxy, portable-cookie and native SOCKS/UDP gaps without
-claiming empty-flag compatibility.
+the remaining Puppeteer measured-admission, transparent-proxy, native portable-cookie
+and SOCKS/UDP boundaries without claiming empty-flag compatibility.
 
 ### 2026-09-13 update — render evidence and Win64 cache repair
 
@@ -265,7 +294,7 @@ A standalone C++ test with stubs checks the extracted algorithm or getter contra
 | Codecs / MSE / EME | MediaCapabilities filters intersect native results, including WebRTC callbacks and missing-history fallback; EME fallback retains key-system access. Mixed recording configs also check their audio codec. MediaRecorder MIME queries remain native, and synchronous encoder-start failure restores inactive state. A shared codec policy across playback, MSE, EME, WebRTC and actual decoding remains open. Queries and standalone callback tests do not verify a real encoder/decoder. |
 | Storage | Renderer-only quota replacement remains removed. Patch 0129 adds launch-local browser quota policy for estimates, bucket allocation and writes; DevTools overrides win and usage/individual limits remain native. Enforcement, persistence and IndexedDB/Cache partitioning need matching-browser tests. |
 | Network Information | Removed RTT/downlink-only overrides so getters, cached state, effectiveType, saveData and native change events share the notifier again. Real network transitions and any future notifier-level test policy remain unverified. |
-| Font provenance | Native font selection; legacy whitelist/substitution/fallback require synthetic-test opt-in. Public Windows metric alignment on Linux requires an actual matching family/table. Probe v3 collection/live admission includes CDP faces and glyph counts alongside installed file inventories. DirectWrite equivalence and file-to-glyph binding remain open. |
+| Font provenance | Native font selection; legacy whitelist/substitution/fallback require synthetic-test opt-in. Public Windows metric alignment on Linux requires an actual matching family/table. `0151`–`0153` add actual shaped-run table digests; an independent SFNT/TTC collector binds content to file hashes/faces and preserves ambiguous matches. Matching-native-build verification, per-glyph/variation mapping and DirectWrite/rasterization equivalence remain open. |
 | Plugins / MIME / PDF | A reported PDF plugin cannot create a missing/disabled viewer. Verify actual PDF display and extension exposure. |
 | Input / device capabilities | Keyboard map overrides do not change actual key/code input. Touch/pointer CSS, gamepad, orientation, motion, and sensors remain open. |
 | CSS media features | Existing overrides cover selected preferences, not full gamut/HDR rendering, print media, scrollbars, and layout. |
@@ -281,7 +310,7 @@ A standalone C++ test with stubs checks the extracted algorithm or getter contra
 | HTTP/2 | Real initial SETTINGS and pseudo-header order compared across contexts; priority/flow control under load remains open. |
 | HTTP/3 / QUIC | Transport parameters and connection retry behavior require packet-level verification. |
 | HTTP headers | UA, Accept-Language and high-entropy hints checked against JS over owned HTTP/TLS fixtures. Accept-Encoding/decoder, proxy and external-route matrices remain open. |
-| DNS / proxy / connection reuse | SDK GeoIP/auto metadata uses the effective HTTP/HTTPS/SOCKS proxy without environment bypass or direct fallback. Proxied launches restrict non-proxied UDP. Metadata SOCKS support does not extend Chromium proxy capabilities. Verify actual routes, IPv4/IPv6, reuse and bare-browser startup auto; TLS/HTTP personas remain unimplemented. |
+| DNS / proxy / connection reuse | SDK GeoIP/auto metadata uses the effective HTTP/HTTPS/SOCKS proxy without environment bypass or direct fallback. Proxied launches restrict non-proxied UDP. `0154`–`0157` separately implement native SOCKS5 TCP authentication and endpoint-bound launch credentials; matching browser acceptance is still pending. UDP ASSOCIATE, actual routes, IPv4/IPv6, reuse and bare-browser startup auto remain open; TLS/HTTP personas remain unimplemented. |
 | Date / timezone / DST / Temporal | Explicit New York DST and optional Temporal checks added; default timezone initialization, host changes and full zone/calendar matrix remain open. |
 | Timer quantization | No unified persona quantization for Date.now, performance.now, RAF and IdleCallback. |
 | Page lifecycle | Native freeze/resume and history observations added; BFCache absence stays unobserved, not guaranteed acceptance or a custom policy. |

@@ -84,6 +84,7 @@ class PlatformWorkflowTest(unittest.TestCase):
                          "${{ (inputs.use_upstream_cache || inputs.upstream_run_id != '') && '1' || '0' }}")
         stage = next(step for step in workflow['jobs']['build-1']['steps'] if step.get('id') == 'stage')
         self.assertEqual(stage['env']['USE_UPSTREAM_CACHE'], '${{ inputs.use_upstream_cache }}')
+        self.assertEqual(stage['env']['UPSTREAM_RUN_ID'], "${{ inputs.upstream_run_id }}")
         self.assertIn('resume_run_id', events(workflow)['workflow_dispatch']['inputs'])
         paths = events(workflow)['push']['paths']
         self.assertIn('build/windows/**', paths)

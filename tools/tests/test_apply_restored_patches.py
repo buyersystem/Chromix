@@ -475,8 +475,8 @@ def test_real_series_parses_without_donor_execution():
         transformed, entries = arp.transform_patch(raw, set(), [])
         assert transformed == raw
         assert entries
-    assert len(names) == 150
-    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 151)]
+    assert len(names) == 157
+    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 158)]
 
 
 def patch_stub(root, name, *, compatible):

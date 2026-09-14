@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync,
 import { dirname, join, resolve, extname } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { hasNativeSocksEnv, withoutNativeSocksEnv } from "./_socks_auth.js";
 
 const FONT_SUFFIXES = new Set([".ttf", ".otf", ".ttc"]);
 
@@ -196,6 +197,6 @@ export function linuxFontEnv(executable, fontsDir) {
 
 export function fontLaunchEnv(executable, userEnv, fontsDir) {
   const fontEnv = linuxFontEnv(executable, fontsDir);
-  if (Object.keys(fontEnv).length === 0 && userEnv === undefined) return undefined;
-  return { ...process.env, ...fontEnv, ...(userEnv || {}) };
+  if (Object.keys(fontEnv).length === 0 && userEnv === undefined && !hasNativeSocksEnv(process.env)) return undefined;
+  return { ...withoutNativeSocksEnv(process.env), ...fontEnv, ...(userEnv || {}) };
 }

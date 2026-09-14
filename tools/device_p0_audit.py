@@ -21,7 +21,7 @@ ATOMIC = launch.bounded('''async () => {
   } finally { worker.terminate(); }
 }''')
 
-FONT_NODES = '''() => {
+FONT_NODES = '''async () => {
   const container=document.createElement('div');container.id='p0-fonts';
   const texts=['Aa09','\\u4e2d\\u6587','\\u{1f600}','\\u2211','\\u0378'];
   for(const family of ['serif','sans-serif','monospace','system-ui']) {
@@ -32,8 +32,24 @@ FONT_NODES = '''() => {
     }
   }
   document.body.appendChild(container);
+  // CDP reports shaped layout runs, not merely inserted DOM nodes. Force
+  // layout and settle font loading before requesting platform-font usage.
+  container.getBoundingClientRect();
+  await document.fonts.ready;
+  container.getBoundingClientRect();
   return Array.from(container.children).map(e=>({text:e.textContent,family:e.style.fontFamily}));
 }'''
+
+
+def font_sample_errors(samples):
+    expected = [(family, text)
+                for family in ('serif', 'sans-serif', 'monospace', 'system-ui')
+                for text in ('Aa09', '\u4e2d\u6587', '\U0001f600', '\u2211', '\u0378')]
+    if not isinstance(samples, list) or any(not isinstance(row, dict) for row in samples):
+        return ['invalid font source samples']
+    if [(row.get('family'), row.get('text')) for row in samples] != expected:
+        return ['font source family/script matrix incomplete']
+    return []
 
 
 def font_sources(context, page):

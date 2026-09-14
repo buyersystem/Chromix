@@ -1,0 +1,140 @@
+{
+  "chromium_version": "152.0.7977.82",
+  "source": "https://chromium.googlesource.com/chromium/src/+/refs/tags/152.0.7977.82",
+  "sources": {
+    "0151": {
+      "target": "third_party/blink/renderer/core/inspector/inspector_css_agent.h",
+      "upstream_sha256": "f35f93c4f4c7a75886839bfbb27465dd9d838b5fd759f91a95142ed2f478a131",
+      "sections": [
+        {
+          "line": 83,
+          "text": "class StyleRuleKeyframes;\nclass StyleRuleUsageTracker;\n\nclass CORE_EXPORT InspectorCSSAgent final\n    : public InspectorBaseAgent<protocol::CSS::Metainfo>,\n      public InspectorDOMAgent::DOMListener,\n"
+        },
+        {
+          "line": 447,
+          "text": "\n  void CollectPlatformFontsForLayoutObject(\n      LayoutObject*,\n      HashMap<std::pair<int, String>, std::pair<int, String>>*,\n      unsigned descendants_depth);\n\n  InspectorStyleSheet* BindStyleSheet(CSSStyleSheet*);\n"
+        }
+      ]
+    },
+    "0152": {
+      "target": "third_party/blink/renderer/core/inspector/inspector_css_agent.cc",
+      "upstream_sha256": "50eb7664d1e9e1fdb5fe783cdcaf3a8a61947aa15d1283a3fd71fa7fe3fab360",
+      "sections": [
+        {
+          "line": 25,
+          "text": "\n#include \"third_party/blink/renderer/core/inspector/inspector_css_agent.h\"\n\n#include <optional>\n#include <utility>\n\n#include \"base/check_deref.h\"\n#include \"third_party/blink/public/common/metrics/document_update_reason.h\"\n#include \"third_party/blink/renderer/core/animation/animation_utils.h\"\n#include \"third_party/blink/renderer/core/animation/css/css_animation.h\"\n"
+        },
+        {
+          "line": 258,
+          "text": "  return uniq_rules;\n}\n\nvoid CollectPlatformFontsFromRunFontDataList(\n    const HeapVector<ShapeResult::RunFontData>& run_font_data_list,\n    HashMap<std::pair<int, String>, std::pair<int, String>>* font_stats) {\n  for (const auto& run_font_data : run_font_data_list) {\n    const auto* simple_font_data = run_font_data.font_data_.Get();\n    String family_name = simple_font_data->PlatformData().FontFamilyName();\n"
+        },
+        {
+          "line": 271,
+          "text": "    if (postscript_name.IsNull()) {\n      postscript_name = \"\";\n    }\n    auto font_key = std::make_pair(simple_font_data->IsCustomFont() ? 1 : 0,\n                                   postscript_name);\n    auto font_stats_it = font_stats->find(font_key);\n    if (font_stats_it == font_stats->end()) {\n      font_stats->insert(\n          font_key, std::make_pair(run_font_data.glyph_count_, family_name));\n    } else {\n      font_stats_it->value.first += run_font_data.glyph_count_;\n    }\n  }\n}\n"
+        },
+        {
+          "line": 2752,
+          "text": "\nvoid InspectorCSSAgent::CollectPlatformFontsForLayoutObject(\n    LayoutObject* layout_object,\n    HashMap<std::pair<int, String>, std::pair<int, String>>* font_stats,\n    unsigned descendants_depth) {\n  if (!layout_object->IsText()) {\n    if (!descendants_depth)\n"
+        },
+        {
+          "line": 2804,
+          "text": "  if (!response.IsSuccess())\n    return response;\n\n  // Key: {isCustomFont, postscript_name}\n  // Value: {glyph_count (which accumulates), family_name}\n  HashMap<std::pair<int, String>, std::pair<int, String>> font_stats;\n  LayoutObject* root = node->GetLayoutObject();\n  if (root) {\n    // Iterate upto two layers deep.\n"
+        },
+        {
+          "line": 2816,
+          "text": "  *platform_fonts =\n      std::make_unique<protocol::Array<protocol::CSS::PlatformFontUsage>>();\n  for (auto& font : font_stats) {\n    std::pair<int, String>& font_description = font.key;\n    std::pair<int, String>& font_value = font.value;\n    bool is_custom_font = font_description.first == 1;\n    (*platform_fonts)\n        ->emplace_back(protocol::CSS::PlatformFontUsage::create()\n                           .setFamilyName(font_value.second)\n                           .setPostScriptName(font_description.second)\n                           .setIsCustomFont(is_custom_font)\n                           .setGlyphCount(font_value.first)\n                           .build());\n  }\n  return protocol::Response::Success();\n}\n"
+        }
+      ]
+    },
+    "0153": {
+      "target": "third_party/blink/public/devtools_protocol/domains/CSS.pdl",
+      "upstream_sha256": "be7724f102548c0bf5054d11e47a5663b1776e18012e887159222e09a0692e07",
+      "sections": [
+        {
+          "line": 453,
+          "text": "      boolean isCustomFont\n      # Amount of glyphs that were rendered with this font.\n      number glyphCount\n\n  # Information about font variation axes for variable fonts\n  type FontVariationAxis extends object\n"
+        }
+      ]
+    },
+    "0154": {
+      "target": "net/socket/socks5_client_socket.h",
+      "upstream_sha256": "8499da6562771d8de8cd782f30324dec2d43cee2aa1b486c5ec568f3e6dacc33",
+      "sections": [
+        {
+          "line": 9,
+          "text": "#include <stdint.h>\n\n#include <memory>\n#include <string>\n\n#include \"base/memory/scoped_refptr.h\"\n"
+        },
+        {
+          "line": 28,
+          "text": "class GrowableIOBuffer;\n\n// This StreamSocket is used to setup a SOCKSv5 handshake with a socks proxy.\n// Currently no SOCKSv5 authentication is supported.\nclass NET_EXPORT_PRIVATE SOCKS5ClientSocket : public StreamSocket {\n public:\n  // |destination| contains the hostname and port to which the socket above will\n  // communicate to via the SOCKS layer.\n  //\n"
+        },
+        {
+          "line": 39,
+          "text": "  // proxy side.\n  SOCKS5ClientSocket(std::unique_ptr<StreamSocket> transport_socket,\n                     const HostPortPair& destination,\n                     const NetworkTrafficAnnotationTag& traffic_annotation);\n\n  SOCKS5ClientSocket(const SOCKS5ClientSocket&) = delete;\n  SOCKS5ClientSocket& operator=(const SOCKS5ClientSocket&) = delete;\n"
+        },
+        {
+          "line": 82,
+          "text": "    STATE_GREET_WRITE_COMPLETE,\n    STATE_GREET_READ,\n    STATE_GREET_READ_COMPLETE,\n    STATE_HANDSHAKE_WRITE,\n    STATE_HANDSHAKE_WRITE_COMPLETE,\n    STATE_HANDSHAKE_READ,\n"
+        },
+        {
+          "line": 108,
+          "text": "  void OnReadWriteComplete(CompletionOnceCallback callback, int result);\n\n  int DoLoop(int last_io_result);\n  int DoHandshakeRead();\n  int DoHandshakeReadComplete(int result);\n  int DoHandshakeWrite();\n"
+        },
+        {
+          "line": 144,
+          "text": "  bool was_ever_used_ = false;\n\n  const HostPortPair destination_;\n\n  NetLogWithSource net_log_;\n\n"
+        }
+      ]
+    },
+    "0155": {
+      "target": "net/socket/socks5_client_socket.cc",
+      "upstream_sha256": "1c9cce1820cedd40675aae9097bcbd832f7bd18984c7e5abc6ba5a4b07a00f14",
+      "sections": [
+        {
+          "line": 1,
+          "text": "// Copyright 2012 The Chromium Authors\n// Use of this source code is governed by a BSD-style license that can be\n// found in the LICENSE file.\n\n#include \"net/socket/socks5_client_socket.h\"\n\n#include <stdint.h>\n\n#include <array>\n#include <utility>\n\n#include \"base/compiler_specific.h\"\n#include \"base/format_macros.h\"\n#include \"base/functional/bind.h\"\n#include \"base/functional/callback_helpers.h\"\n#include \"base/numerics/byte_conversions.h\"\n#include \"base/numerics/safe_conversions.h\"\n#include \"base/strings/string_util.h\"\n#include \"base/trace_event/trace_event.h\"\n#include \"net/base/io_buffer.h\"\n#include \"net/base/sys_addrinfo.h\"\n#include \"net/log/net_log.h\"\n#include \"net/log/net_log_event_type.h\"\n#include \"net/traffic_annotation/network_traffic_annotation.h\"\n\nnamespace net {\n\nconst unsigned int SOCKS5ClientSocket::kGreetReadHeaderSize = 2;\nconst unsigned int SOCKS5ClientSocket::kWriteHeaderSize = 10;\nconst unsigned int SOCKS5ClientSocket::kReadHeaderSize = 5;\nconst uint8_t SOCKS5ClientSocket::kSOCKS5Version = 0x05;\nconst uint8_t SOCKS5ClientSocket::kTunnelCommand = 0x01;\nconst uint8_t SOCKS5ClientSocket::kNullByte = 0x00;\n\nstatic_assert(sizeof(struct in_addr) == 4, \"incorrect system size of IPv4\");\nstatic_assert(sizeof(struct in6_addr) == 16, \"incorrect system size of IPv6\");\n\nSOCKS5ClientSocket::SOCKS5ClientSocket(\n    std::unique_ptr<StreamSocket> transport_socket,\n    const HostPortPair& destination,\n    const NetworkTrafficAnnotationTag& traffic_annotation)\n    : io_callback_(base::BindRepeating(&SOCKS5ClientSocket::OnIOComplete,\n                                       base::Unretained(this))),\n      transport_socket_(std::move(transport_socket)),\n      destination_(destination),\n      net_log_(transport_socket_->NetLog()),\n      traffic_annotation_(traffic_annotation) {}\n\nSOCKS5ClientSocket::~SOCKS5ClientSocket() {\n  Disconnect();\n}\n\nint SOCKS5ClientSocket::Connect(CompletionOnceCallback callback) {\n  DCHECK(transport_socket_);\n  DCHECK_EQ(STATE_NONE, next_state_);\n  DCHECK(user_callback_.is_null());\n\n  // If already connected, then just return OK.\n  if (completed_handshake_)\n    return OK;\n\n  net_log_.BeginEvent(NetLogEventType::SOCKS5_CONNECT);\n\n  next_state_ = STATE_GREET_WRITE;\n  write_buf_.reset();\n  read_buf_.reset();\n\n  int rv = DoLoop(OK);\n  if (rv == ERR_IO_PENDING) {\n    user_callback_ = std::move(callback);\n  } else {\n    net_log_.EndEventWithNetErrorCode(NetLogEventType::SOCKS5_CONNECT, rv);\n  }\n  return rv;\n}\n\nvoid SOCKS5ClientSocket::Disconnect() {\n  completed_handshake_ = false;\n  transport_socket_->Disconnect();\n\n  // Reset other states to make sure they aren't mistakenly used later.\n  // These are the states initialized by Connect().\n  next_state_ = STATE_NONE;\n  user_callback_.Reset();\n}\n\nbool SOCKS5ClientSocket::IsConnected() const {\n  return completed_handshake_ && transport_socket_->IsConnected();\n}\n\nbool SOCKS5ClientSocket::IsConnectedAndIdle() const {\n  return completed_handshake_ && transport_socket_->IsConnectedAndIdle();\n}\n\nconst NetLogWithSource& SOCKS5ClientSocket::NetLog() const {\n  return net_log_;\n}\n\nbool SOCKS5ClientSocket::WasEverUsed() const {\n  return was_ever_used_;\n}\n\nNextProto SOCKS5ClientSocket::GetNegotiatedProtocol() const {\n  if (transport_socket_)\n    return transport_socket_->GetNegotiatedProtocol();\n  NOTREACHED();\n}\n\nbool SOCKS5ClientSocket::GetSSLInfo(SSLInfo* ssl_info) {\n  if (transport_socket_)\n    return transport_socket_->GetSSLInfo(ssl_info);\n  NOTREACHED();\n}\n\nint64_t SOCKS5ClientSocket::GetTotalReceivedBytes() const {\n  return transport_socket_->GetTotalReceivedBytes();\n}\n\nvoid SOCKS5ClientSocket::ApplySocketTag(const SocketTag& tag) {\n  return transport_socket_->ApplySocketTag(tag);\n}\n\n// Read is called by the transport layer above to read. This can only be done\n// if the SOCKS handshake is complete.\nint SOCKS5ClientSocket::Read(IOBuffer* buf,\n                             int buf_len,\n                             CompletionOnceCallback callback) {\n  DCHECK(completed_handshake_);\n  DCHECK_EQ(STATE_NONE, next_state_);\n  DCHECK(user_callback_.is_null());\n  DCHECK(!callback.is_null());\n\n  int rv = transport_socket_->Read(\n      buf, buf_len,\n      base::BindOnce(&SOCKS5ClientSocket::OnReadWriteComplete,\n                     base::Unretained(this), std::move(callback)));\n  if (rv > 0)\n    was_ever_used_ = true;\n  return rv;\n}\n\n// Write is called by the transport layer. This can only be done if the\n// SOCKS handshake is complete.\nint SOCKS5ClientSocket::Write(\n    IOBuffer* buf,\n    int buf_len,\n    CompletionOnceCallback callback,\n    const NetworkTrafficAnnotationTag& traffic_annotation) {\n  DCHECK(completed_handshake_);\n  DCHECK_EQ(STATE_NONE, next_state_);\n  DCHECK(user_callback_.is_null());\n  DCHECK(!callback.is_null());\n\n  int rv = transport_socket_->Write(\n      buf, buf_len,\n      base::BindOnce(&SOCKS5ClientSocket::OnReadWriteComplete,\n                     base::Unretained(this), std::move(callback)),\n      traffic_annotation);\n  if (rv > 0)\n    was_ever_used_ = true;\n  return rv;\n}\n\nint SOCKS5ClientSocket::SetReceiveBufferSize(int32_t size) {\n  return transport_socket_->SetReceiveBufferSize(size);\n}\n\nint SOCKS5ClientSocket::SetSendBufferSize(int32_t size) {\n  return transport_socket_->SetSendBufferSize(size);\n}\n\nvoid SOCKS5ClientSocket::DoCallback(int result) {\n  DCHECK_NE(ERR_IO_PENDING, result);\n  DCHECK(!user_callback_.is_null());\n\n  // Since Run() may result in Read being called,\n  // clear user_callback_ up front.\n  std::move(user_callback_).Run(result);\n}\n\nvoid SOCKS5ClientSocket::OnIOComplete(int result) {\n  DCHECK_NE(STATE_NONE, next_state_);\n  int rv = DoLoop(result);\n  if (rv != ERR_IO_PENDING) {\n    net_log_.EndEvent(NetLogEventType::SOCKS5_CONNECT);\n    DoCallback(rv);\n  }\n}\n\nvoid SOCKS5ClientSocket::OnReadWriteComplete(CompletionOnceCallback callback,\n                                             int result) {\n  DCHECK_NE(ERR_IO_PENDING, result);\n  DCHECK(!callback.is_null());\n\n  if (result > 0)\n    was_ever_used_ = true;\n  std::move(callback).Run(result);\n}\n\nint SOCKS5ClientSocket::DoLoop(int last_io_result) {\n  DCHECK_NE(next_state_, STATE_NONE);\n  int rv = last_io_result;\n  do {\n    State state = next_state_;\n    next_state_ = STATE_NONE;\n    switch (state) {\n      case STATE_GREET_WRITE:\n        DCHECK_EQ(OK, rv);\n        net_log_.BeginEvent(NetLogEventType::SOCKS5_GREET_WRITE);\n        rv = DoGreetWrite();\n        break;\n      case STATE_GREET_WRITE_COMPLETE:\n        rv = DoGreetWriteComplete(rv);\n        net_log_.EndEventWithNetErrorCode(NetLogEventType::SOCKS5_GREET_WRITE,\n                                          rv);\n        break;\n      case STATE_GREET_READ:\n        DCHECK_EQ(OK, rv);\n        net_log_.BeginEvent(NetLogEventType::SOCKS5_GREET_READ);\n        rv = DoGreetRead();\n        break;\n      case STATE_GREET_READ_COMPLETE:\n        rv = DoGreetReadComplete(rv);\n        net_log_.EndEventWithNetErrorCode(NetLogEventType::SOCKS5_GREET_READ,\n                                          rv);\n        break;\n      case STATE_HANDSHAKE_WRITE:\n        DCHECK_EQ(OK, rv);\n        net_log_.BeginEvent(NetLogEventType::SOCKS5_HANDSHAKE_WRITE);\n        rv = DoHandshakeWrite();\n        break;\n      case STATE_HANDSHAKE_WRITE_COMPLETE:\n        rv = DoHandshakeWriteComplete(rv);\n        net_log_.EndEventWithNetErrorCode(\n            NetLogEventType::SOCKS5_HANDSHAKE_WRITE, rv);\n        break;\n      case STATE_HANDSHAKE_READ:\n        DCHECK_EQ(OK, rv);\n        net_log_.BeginEvent(NetLogEventType::SOCKS5_HANDSHAKE_READ);\n        rv = DoHandshakeRead();\n        break;\n      case STATE_HANDSHAKE_READ_COMPLETE:\n        rv = DoHandshakeReadComplete(rv);\n        net_log_.EndEventWithNetErrorCode(\n            NetLogEventType::SOCKS5_HANDSHAKE_READ, rv);\n        break;\n      default:\n        NOTREACHED() << \"bad state\";\n    }\n  } while (rv != ERR_IO_PENDING && next_state_ != STATE_NONE);\n  return rv;\n}\n\nstatic constexpr std::array<uint8_t, 3> kSOCKS5GreetWriteData{\n    0x05, 0x01, 0x00};  // no authentication\n\nint SOCKS5ClientSocket::DoGreetWrite() {\n  // Since we only have 1 byte to send the hostname length in, if the\n  // URL has a hostname longer than 255 characters we can't send it.\n  if (0xFF < destination_.host().size()) {\n    net_log_.AddEvent(NetLogEventType::SOCKS_HOSTNAME_TOO_BIG);\n    return ERR_SOCKS_CONNECTION_FAILED;\n  }\n\n  if (!write_buf_) {\n    auto greet_buffer =\n        base::MakeRefCounted<WrappedIOBuffer>(kSOCKS5GreetWriteData);\n    write_buf_ = base::MakeRefCounted<DrainableIOBuffer>(\n        std::move(greet_buffer), greet_buffer->size());\n  }\n\n  next_state_ = STATE_GREET_WRITE_COMPLETE;\n  return transport_socket_->Write(write_buf_.get(),\n                                  write_buf_->BytesRemaining(), io_callback_,\n                                  traffic_annotation_);\n}\n\nint SOCKS5ClientSocket::DoGreetWriteComplete(int result) {\n  if (result < 0)\n    return result;\n\n  write_buf_->DidConsume(result);\n  if (write_buf_->BytesRemaining() == 0) {\n    write_buf_.reset();\n    next_state_ = STATE_GREET_READ;\n  } else {\n    next_state_ = STATE_GREET_WRITE;\n  }\n  return OK;\n}\n\nint SOCKS5ClientSocket::DoGreetRead() {\n  next_state_ = STATE_GREET_READ_COMPLETE;\n  if (!read_buf_) {\n    read_buf_ = base::MakeRefCounted<GrowableIOBuffer>();\n    read_buf_->SetCapacity(kGreetReadHeaderSize);\n  }\n  return transport_socket_->Read(read_buf_.get(),\n                                 read_buf_->RemainingCapacity(), io_callback_);\n}\n\nint SOCKS5ClientSocket::DoGreetReadComplete(int result) {\n  if (result < 0)\n    return result;\n\n  if (result == 0) {\n    net_log_.AddEvent(\n        NetLogEventType::SOCKS_UNEXPECTEDLY_CLOSED_DURING_GREETING);\n    return ERR_SOCKS_CONNECTION_FAILED;\n  }\n\n  read_buf_->set_offset(read_buf_->offset() + result);\n  if (read_buf_->RemainingCapacity() > 0) {\n    next_state_ = STATE_GREET_READ;\n    return OK;\n  }\n\n  // Got the greet data.\n  base::span<uint8_t> read_data = read_buf_->span_before_offset();\n\n  if (read_data[0] != kSOCKS5Version) {\n    net_log_.AddEventWithIntParams(NetLogEventType::SOCKS_UNEXPECTED_VERSION,\n                                   \"version\", read_data[0]);\n    return ERR_SOCKS_CONNECTION_FAILED;\n  }\n  if (read_data[1] != 0x00) {\n    net_log_.AddEventWithIntParams(NetLogEventType::SOCKS_UNEXPECTED_AUTH,\n                                   \"method\", read_data[1]);\n    return ERR_SOCKS_CONNECTION_FAILED;\n  }\n\n  read_buf_.reset();\n  next_state_ = STATE_HANDSHAKE_WRITE;\n  return OK;\n}\n\nscoped_refptr<DrainableIOBuffer> SOCKS5ClientSocket::BuildHandshakeWriteBuffer()\n    const {\n  std::vector<uint8_t> handshake;\n  handshake.reserve(7 + destination_.host().size());\n\n  handshake.push_back(kSOCKS5Version);\n  handshake.push_back(kTunnelCommand);  // Connect command\n  handshake.push_back(kNullByte);       // Reserved null\n\n  handshake.push_back(kEndPointDomain);  // The type of the address.\n\n  // First add the size of the hostname, followed by the hostname. The length of\n  // the hostname must fit within one byte.\n  const auto& host = destination_.host();\n  handshake.push_back(base::checked_cast<uint8_t>(host.size()));\n  handshake.insert(handshake.end(), host.begin(), host.end());\n\n  auto nw_port = base::U16ToBigEndian(destination_.port());\n  handshake.insert(handshake.end(), nw_port.begin(), nw_port.end());\n\n  auto base_buffer = base::MakeRefCounted<VectorIOBuffer>(std::move(handshake));\n  return base::MakeRefCounted<DrainableIOBuffer>(std::move(base_buffer),\n                                                 base_buffer->size());\n}\n\n// Writes the SOCKS handshake data to the underlying socket connection.\nint SOCKS5ClientSocket::DoHandshakeWrite() {\n  next_state_ = STATE_HANDSHAKE_WRITE_COMPLETE;\n\n  if (!write_buf_) {\n    write_buf_ = BuildHandshakeWriteBuffer();\n  }\n\n  return transport_socket_->Write(write_buf_.get(),\n                                  write_buf_->BytesRemaining(), io_callback_,\n                                  traffic_annotation_);\n}\n\nint SOCKS5ClientSocket::DoHandshakeWriteComplete(int result) {\n  if (result < 0)\n    return result;\n\n  // We ignore the case when result is 0, since the underlying Write\n  // may return spurious writes while waiting on the socket.\n\n  write_buf_->DidConsume(result);\n  if (write_buf_->BytesRemaining() == 0) {\n    write_buf_.reset();\n    next_state_ = STATE_HANDSHAKE_READ;\n  } else {\n    next_state_ = STATE_HANDSHAKE_WRITE;\n  }\n\n  return OK;\n}\n\nint SOCKS5ClientSocket::DoHandshakeRead() {\n  next_state_ = STATE_HANDSHAKE_READ_COMPLETE;\n\n  if (!read_buf_) {\n    read_buf_ = base::MakeRefCounted<GrowableIOBuffer>();\n    read_buf_->SetCapacity(kReadHeaderSize);\n  }\n\n  return transport_socket_->Read(read_buf_.get(),\n                                 read_buf_->RemainingCapacity(), io_callback_);\n}\n\nint SOCKS5ClientSocket::DoHandshakeReadComplete(int result) {\n  if (result < 0)\n    return result;\n\n  // The underlying socket closed unexpectedly.\n  if (result == 0) {\n    net_log_.AddEvent(\n        NetLogEventType::SOCKS_UNEXPECTEDLY_CLOSED_DURING_HANDSHAKE);\n    return ERR_SOCKS_CONNECTION_FAILED;\n  }\n\n  read_buf_->set_offset(read_buf_->offset() + result);\n\n  // When the first few bytes are read, check how many more are required\n  // and accordingly increase them\n  if (read_buf_->offset() == kReadHeaderSize) {\n    base::span<uint8_t> read_data = read_buf_->span_before_offset();\n\n    if (read_data[0] != kSOCKS5Version || read_data[2] != kNullByte) {\n      net_log_.AddEventWithIntParams(NetLogEventType::SOCKS_UNEXPECTED_VERSION,\n                                     \"version\", read_data[0]);\n      return ERR_SOCKS_CONNECTION_FAILED;\n    }\n    if (read_data[1] != 0x00) {\n      net_log_.AddEventWithIntParams(NetLogEventType::SOCKS_SERVER_ERROR,\n                                     \"error_code\", read_data[1]);\n      return ERR_SOCKS_CONNECTION_FAILED;\n    }\n\n    // We check the type of IP/Domain the server returns and accordingly\n    // increase the size of the response. For domains, we need to read the\n    // size of the domain, so the initial request size is upto the domain\n    // size. Since for IPv4/IPv6 the size is fixed and hence no 'size' is\n    // read, we substract 1 byte from the additional request size.\n    SocksEndPointAddressType address_type =\n        static_cast<SocksEndPointAddressType>(read_data[3]);\n    int additional_bytes_expected = 0;\n    if (address_type == kEndPointDomain) {\n      additional_bytes_expected += read_data[4];\n    } else if (address_type == kEndPointResolvedIPv4) {\n      additional_bytes_expected += sizeof(struct in_addr) - 1;\n    } else if (address_type == kEndPointResolvedIPv6) {\n      additional_bytes_expected += sizeof(struct in6_addr) - 1;\n    } else {\n      net_log_.AddEventWithIntParams(\n          NetLogEventType::SOCKS_UNKNOWN_ADDRESS_TYPE, \"address_type\",\n          read_data[3]);\n      return ERR_SOCKS_CONNECTION_FAILED;\n    }\n\n    additional_bytes_expected += 2;  // for the port.\n    // Update capacity.\n    read_buf_->SetCapacity(kReadHeaderSize + additional_bytes_expected);\n    next_state_ = STATE_HANDSHAKE_READ;\n    return OK;\n  }\n\n  // When the final bytes are read, setup handshake. We ignore the rest\n  // of the response since they represent the SOCKSv5 endpoint and have\n  // no use when doing a tunnel connection.\n  if (read_buf_->RemainingCapacity() == 0) {\n    completed_handshake_ = true;\n    read_buf_.reset();\n    next_state_ = STATE_NONE;\n    return OK;\n  }\n\n  next_state_ = STATE_HANDSHAKE_READ;\n  return OK;\n}\n\nint SOCKS5ClientSocket::GetPeerAddress(IPEndPoint* address) const {\n  return transport_socket_->GetPeerAddress(address);\n}\n\nint SOCKS5ClientSocket::GetLocalAddress(IPEndPoint* address) const {\n  return transport_socket_->GetLocalAddress(address);\n}\n\n}  // namespace net\n"
+        }
+      ]
+    },
+    "0156": {
+      "target": "net/socket/socks_connect_job.cc",
+      "upstream_sha256": "51dd1df07f0b04e50db182804d4db0396d1f00da01679cd7d2bebeac1c47bd09",
+      "sections": [
+        {
+          "line": 7,
+          "text": "#include <memory>\n#include <utility>\n\n#include \"base/functional/bind.h\"\n#include \"net/base/net_errors.h\"\n#include \"net/log/net_log_source_type.h\"\n#include \"net/log/net_log_with_source.h\"\n"
+        },
+        {
+          "line": 19,
+          "text": "#include \"net/socket/transport_connect_job.h\"\n\nnamespace net {\n\n// SOCKSConnectJobs will time out if the SOCKS handshake takes longer than this.\nstatic constexpr base::TimeDelta kSOCKSConnectJobTimeout = base::Seconds(30);\n"
+        },
+        {
+          "line": 172,
+          "text": "}\n\nint SOCKSConnectJob::DoSOCKSConnect() {\n  next_state_ = STATE_SOCKS_CONNECT_COMPLETE;\n\n  // Add a SOCKS connection on top of the tcp socket.\n  if (socks_params_->is_socks_v5()) {\n    socket_ = std::make_unique<SOCKS5ClientSocket>(\n        transport_connect_job_->PassSocket(), socks_params_->destination(),\n        socks_params_->traffic_annotation());\n  } else {\n    auto socks_socket = std::make_unique<SOCKSClientSocket>(\n        transport_connect_job_->PassSocket(), socks_params_->destination(),\n"
+        },
+        {
+          "line": 189,
+          "text": "    socket_ = std::move(socks_socket);\n  }\n  transport_connect_job_.reset();\n  return socket_->Connect(\n      base::BindOnce(&SOCKSConnectJob::OnIOComplete, base::Unretained(this)));\n}\n"
+        }
+      ]
+    },
+    "0157": {
+      "target": "net/socket/socks5_client_socket_unittest.cc",
+      "upstream_sha256": "0286f01cf81d358144e1d8a1446f1914655afa3410cd0d4d005ca186bb6570fb",
+      "sections": [
+        {
+          "line": 59,
+          "text": "      base::span<const MockWrite> writes,\n      std::string_view hostname,\n      int port,\n      NetLog* net_log);\n\n  void SetUp() override;\n\n"
+        },
+        {
+          "line": 91,
+          "text": "    base::span<const MockWrite> writes,\n    std::string_view hostname,\n    int port,\n    NetLog* net_log) {\n  TestCompletionCallback callback;\n  data_ = std::make_unique<StaticSocketDataProvider>(reads, writes);\n  auto tcp_sock = std::make_unique<MockTCPClientSocket>(address_list_, net_log,\n"
+        },
+        {
+          "line": 108,
+          "text": "  // non-owning pointer to it.\n  return std::make_unique<SOCKS5ClientSocket>(std::move(tcp_sock),\n                                              HostPortPair(hostname, port),\n                                              TRAFFIC_ANNOTATION_FOR_TESTS);\n}\n\n// Tests a complete SOCKS5 handshake and the disconnection.\n"
+        }
+      ]
+    }
+  }
+}

@@ -27,6 +27,7 @@ Issues = "https://github.com/xiaozhou26/Chromix/issues"
 [project.optional-dependencies]
 playwright = ["playwright"]
 measured = ["playwright", "Pillow>=10"]
+cookies = ["cryptography>=42"]
 
 [project.scripts]
 chromix = "chromix.__main__:main"

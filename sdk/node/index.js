@@ -14,12 +14,12 @@
 // the engine's --uxr-* persona switches by patch 0036.
 //
 // Intentional differences: licenseKey is accepted and ignored (one open tier),
-// geoip uses ip-api.com instead of a local GeoLite2 database, and there is no
-// puppeteer subpath (use the playwright surface).
+// geoip uses ip-api.com instead of a local GeoLite2 database.
+// Puppeteer has a separate, native-driver entry point at ./puppeteer.
 import { randomBytes } from "node:crypto";
 import { existsSync, rmSync, readdirSync } from "node:fs";
-import { link, mkdir, open, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { profileSeed } from "./_profile.js";
 import {
   VERSION as BROWSER_VERSION, CHANNELS, CACHE, hostFor, resolvePlatform, ensureNative,
   binaryPath, bundleComplete,
@@ -30,6 +30,8 @@ import { normalizeFingerprintArgs } from "./_fingerprint.js";
 import { extractProxyUrl, geoipHttp, networkArgs, splitProxy, lookupProxy as proxyForLookup,
   resolveWebrtcArgs } from "./_network.js";
 import { launchMeasured, measuredOptions } from "./_device_pool.js";
+import { nativeSocksConfig, nativeSocksEnv, hasNativeSocksEnv } from "./_socks_auth.js";
+export { exportCookies, importCookies, encryptCookies, decryptCookies } from "./cookies.js";
 
 // One geometry pick per options object, shared by buildLaunchOptions and
 // buildContextOptions (launchPersistentContext calls them separately).
@@ -126,36 +128,6 @@ export function getDefaultStealthArgs() {
   const base = [`--fingerprint=${seed}`];
   const platform = { linux: "linux", win32: "windows", darwin: "macos" }[process.platform];
   return platform ? [...base, `--fingerprint-platform=${platform}`] : base;
-}
-
-const PROFILE_SEED_FILE = ".chromix-fingerprint-seed";
-
-async function readProfileSeed(path) {
-  const data = await readFile(path, "utf8");
-  const seed = Number(data);
-  if (!Number.isInteger(seed) || seed < 1 || seed > 0xFFFFFFFF || data !== `${seed}\n`)
-    throw new Error(`Invalid Chromix profile seed file: ${path}`);
-  return seed;
-}
-
-async function profileSeed(userDataDir) {
-  const path = join(userDataDir, PROFILE_SEED_FILE);
-  try { return await readProfileSeed(path); }
-  catch (error) { if (error.code !== "ENOENT") throw error; }
-  await mkdir(userDataDir, { recursive: true });
-  const seed = randomBytes(4).readUInt32LE(0) || 1;
-  const temporary = join(userDataDir, `${PROFILE_SEED_FILE}.${randomBytes(16).toString("hex")}`);
-  const stream = await open(temporary, "wx", 0o600);
-  try {
-    try {
-      await stream.writeFile(`${seed}\n`, "ascii");
-      await stream.sync();
-    } finally { await stream.close(); }
-    // Publish a complete file without replacing a concurrent winner.
-    try { await link(temporary, path); }
-    catch (error) { if (error.code !== "EEXIST") throw error; }
-    return await readProfileSeed(path);
-  } finally { await unlink(temporary); }
 }
 
 export function buildArgs({ stealthArgs = true, extraArgs = [], timezone, locale,
@@ -274,6 +246,8 @@ export function buildContextOptions(options = {}) {
   // Context-level locale/timezoneId would route through CDP emulation — strip
   // them and route through the binary flags instead (same policy as CloakBrowser).
   const { locale, timezoneId, ...ctx } = options.contextOptions || {};
+  if (nativeSocksConfig(ctx.proxy).auth)
+    throw new Error("Authenticated SOCKS5 is browser-launch-scoped; set the top-level proxy, not contextOptions.proxy");
   if (locale !== undefined || timezoneId !== undefined)
     console.warn("[chromix] contextOptions.locale/timezoneId ignored — use top-level locale/timezone (binary flag)");
   // Explicit synthetic viewport wins over the UI-strip template. Keep screen
@@ -303,13 +277,20 @@ export async function buildLaunchOptions(options = {}) {
   const headless = effectiveHeadless(options);
   const proxy = splitProxy(launchProxy(options));
   const persona = personaGeometryFor(options);
+  const nativeProxy = nativeSocksConfig(proxy, persona.args);
+  if (nativeSocksConfig(options.contextOptions?.proxy).auth)
+    throw new Error("Authenticated SOCKS5 is browser-launch-scoped; set the top-level proxy, not contextOptions.proxy");
+  if (hasNativeSocksEnv(options.launchOptions?.env))
+    throw new Error("Use proxy for native SOCKS5 credentials, not a raw authentication environment variable");
   const lookupProxy = splitProxy(options.geoip
     ? proxyForLookup(persona.args, geoipProxy(options)) : geoipProxy(options));
   let args = networkArgs(persona.args, proxy || lookupProxy);
   const { timezone, locale, exitIp } = await maybeResolveGeoip(
     options.geoip, lookupProxy, options.timezone ?? options.timezoneId, options.locale, args);
   args = await resolveWebrtcArgs(args, lookupProxy, { exitIp, geoip: options.geoip, lookup: geoipHttp });
-  const binary = await ensureBinary(options);
+  const binary = options.launchOptions?.executablePath ?? await ensureBinary(options);
+  if (typeof binary !== "string" || !existsSync(binary))
+    throw new Error("executablePath must name an existing browser executable");
   // Widevine / DRM: auto-enable when a CDM is present; CLOAKBROWSER_WIDEVINE=0 opts out.
   if (process.env.CLOAKBROWSER_WIDEVINE !== "0" && !(args || []).some((a) => a.startsWith("--uxr-widevine-cdm"))) {
     const cdm = findWidevineCdm();
@@ -344,13 +325,15 @@ export async function buildLaunchOptions(options = {}) {
       startMaximized: options.startMaximized ?? true,
     });
   }
-  const env = fontLaunchEnv(binary, options.launchOptions?.env, options.fontsDir);
+  const fontEnv = fontLaunchEnv(binary, options.launchOptions?.env, options.fontsDir);
+  const env = nativeSocksEnv(fontEnv, nativeProxy.auth);
+  if (nativeProxy.auth) chromeArgs = chromeArgs.filter(arg => !/^--proxy-server(?:=|$)/.test(arg));
   return {
     executablePath: binary,
     headless,
     ignoreDefaultArgs: ["--enable-automation"],
     ...options.launchOptions,
-    ...(proxy ? { proxy } : {}),
+    ...(nativeProxy.proxy ? { proxy: nativeProxy.proxy } : {}),
     args: chromeArgs,
     ...(env ? { env } : {}),
   };
@@ -535,14 +518,16 @@ export async function launchContext(options = {}) {
   options = { ...options };
   const chromium = await loadChromium();
   const browser = await chromium.launch(await buildLaunchOptions(options));
-  const ctx = await browser.newContext(buildContextOptions(options));
+  let ctx;
+  try { ctx = await browser.newContext(buildContextOptions(options)); }
+  catch (error) { await browser.close(); throw error; }
   if (options.humanize) {
     const cfg = resolveHumanConfig(options.humanPreset, options.humanConfig);
     const np = ctx.newPage.bind(ctx);
     ctx.newPage = async (...a) => humanizePage(await np(...a), cfg);
   }
   const origClose = ctx.close.bind(ctx);
-  ctx.close = async (...a) => { await origClose(...a); await browser.close(); };
+  ctx.close = async (...a) => { try { await origClose(...a); } finally { await browser.close(); } };
   return ctx;
 }
 

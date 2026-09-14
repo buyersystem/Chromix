@@ -33,6 +33,8 @@ from .api import (
     maybe_resolve_geoip,
     resolve_human_config,
 )
+from .cookies import (export_cookies, import_cookies, export_cookies_async,
+                      import_cookies_async, encrypt_cookies, decrypt_cookies)
 
 __version__ = "152.0.7977.82"
 
@@ -43,4 +45,6 @@ __all__ = [
     "get_default_stealth_args", "ensure_binary", "clear_cache",
     "binary_info", "check_for_update", "HumanConfig", "resolve_human_config",
     "__version__",
+    "export_cookies", "import_cookies", "export_cookies_async", "import_cookies_async",
+    "encrypt_cookies", "decrypt_cookies",
 ]

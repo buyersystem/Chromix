@@ -29,6 +29,9 @@ SUITES = (
     ('runtime', 'fingerprint_runtime_audit.py', ()),
     ('display_backend', 'fingerprint_runtime_audit.py', ('--persona-backend',)),
     ('transport', 'fingerprint_transport_audit.py', ()),
+    ('sdk_cookies', 'sdk_cookie_audit.py', ()),
+    ('socks_auth', 'socks5_browser_audit.py', ()),
+    ('font_provenance', 'font_provenance_audit.py', ()),
     ('render', 'fingerprint_render_audit.py', ()),
 )
 
@@ -125,6 +128,7 @@ def optional_gaps(value, path=''):
 def assess_suite(name, report, expected_hash, expected_version):
     """Revalidate raw observations; do not trust a saved top-level 'passed'."""
     errors = []
+    derived_gaps = []
     if not isinstance(report, dict):
         return ['suite report must be an object'], []
     browser = report.get('browser', {})
@@ -180,6 +184,26 @@ def assess_suite(name, report, expected_hash, expected_version):
         elif name == 'transport':
             from fingerprint_transport_audit import assess
             errors.extend(assess(report)[0])
+        elif name == 'sdk_cookies':
+            from sdk_cookie_audit import assess
+            errors.extend(assess(report))
+        elif name == 'socks_auth':
+            from socks5_browser_audit import assess
+            errors.extend(assess(report))
+        elif name == 'font_provenance':
+            from chromix._font_provenance import bind_font_sources
+            from device_p0_audit import font_sample_errors
+            samples = report['samples']
+            errors.extend(font_sample_errors(samples))
+            binding = bind_font_sources(samples, report['files'])
+            errors.extend(binding['errors'])
+            # A saved binding/status is only a summary. Missing native hashes,
+            # unmatched files and ambiguous faces remain gaps when recomputed.
+            derived_gaps.extend(optional_gaps(binding, 'binding'))
+            if report.get('inventory_errors'):
+                derived_gaps.append('inventory_errors')
+            if not any(font.get('fontTableHash') for sample in samples for font in sample.get('platformFonts', [])):
+                errors.append('native DevTools font provenance extension absent')
         elif name == 'render':
             from fingerprint_render_audit import assess
             if len(report['runs']) != 2:
@@ -190,7 +214,7 @@ def assess_suite(name, report, expected_hash, expected_version):
             errors.append('unknown suite')
     except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
         errors.append('invalid or missing raw observation: ' + str(error))
-    return errors, optional_gaps(report)
+    return errors, sorted(set(optional_gaps(report) + derived_gaps))
 
 
 def run(args):
@@ -199,7 +223,8 @@ def run(args):
               'status': 'failed', 'ci_gate_passed': False, 'full_acceptance': False,
               'errors': [], 'gaps': [], 'suites': [], 'control': args.control,
               'qualification': {'physical_devices': 'not_attested', 'external_routes': 'not_tested',
-                                'font_file_to_glyph_binding': 'not_tested', 'quic': 'not_tested'}}
+                                'font_file_to_glyph_binding': 'see_font_provenance_suite; not_rasterization_attestation',
+                                'quic': 'not_tested'}}
     try:
         original = binary_identity(args.browser)
         report['browser'] = original

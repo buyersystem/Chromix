@@ -68,6 +68,9 @@ CDM discovery is not supported; an x64 CDM is not reused for ARM64.
 | `ensure_binary` / `clear_cache` / `binary_info` / `check_for_update` | Binary management |
 | `HumanConfig` / `resolve_human_config` | Behavioral-layer config (`default` / `careful` presets) |
 | `ProxySettings` | Playwright-shaped proxy TypedDict |
+| `export_cookies` / `import_cookies` | Explicit encrypted migration between live Chromium contexts |
+| `export_cookies_async` / `import_cookies_async` | Async Cookie migration variants |
+| `encrypt_cookies` / `decrypt_cookies` | Node-compatible authenticated Cookie envelope |
 
 Options (`headless, proxy, args, stealth_args, timezone, locale, geoip, humanize,
 human_preset, human_config, extension_paths, license_key, browser_version,
@@ -124,6 +127,27 @@ regional settings; omit them for a native-persona comparison. `noise=false`
 keeps identity seeds and disables existing perturbation paths, not four new
 Canvas/WebGL/audio/client-rect noise implementations.
 
+### Encrypted Cookie migration
+
+Install the optional cryptography extra: `pip install 'chromix[cookies]'`.
+
+```python
+import os
+from chromix import export_cookies, import_cookies
+
+passphrase = os.environ['COOKIE_PASSPHRASE']
+export_cookies(source_context, 'cookies.enc', passphrase=passphrase)
+import_cookies(empty_destination_context, 'cookies.enc', passphrase=passphrase)
+```
+
+The AES-GCM/scrypt format interoperates with Node. Passphrases contain 12–1024
+UTF-8 bytes; exports never replace an existing file. Imports require an empty
+context, skip expired entries, preserve host-only/domain, CHIPS and security
+attributes, and compare browser readback. No existing Cookies are cleared.
+CDP writes are not transactional: failure may leave partial contents. This is
+live-context migration, not OSCrypt or portable profile-database encryption.
+See the [format and evidence boundaries](../../docs/functionality-followup.md).
+
 ### Measured device launch
 
 `launch_context(device_pool={"host": "record.json", "records": ["record.json"],
@@ -177,9 +201,14 @@ operations to the configured endpoint.
 GeoIP is metadata, not a routing mechanism. The lookup uses the effective
 HTTP/HTTPS/SOCKS proxy and does not inherit environment proxies or `NO_PROXY`
 bypasses. Failed lookups do not fall back to the host connection. Metadata
-transport supports SOCKS4/4a/5/5h, including SOCKS5 credentials. This does not
-add SOCKS authentication or every URL alias to Chromium/Playwright's proxy
-backend. SOCKS5/4a resolve destination names at the proxy; SOCKS4 uses local
+transport supports SOCKS4/4a/5/5h, including SOCKS5 credentials; that transport
+alone does not extend Chromium's proxy backend. A browser rebuilt with patches
+`0154`–`0157` also supports native SOCKS5 TCP authentication through the SDK's
+high-level `proxy` option. Endpoint-bound credentials travel in its launch
+environment, not argv or origin HTTP auth. Unrelated launches scrub inherited
+auth, including Windows case aliases; font environment merging cannot restore
+it. UDP ASSOCIATE and matching-native-build acceptance remain open.
+SOCKS5/4a metadata lookups resolve destination names at the proxy; SOCKS4 uses local
 IPv4 DNS. Single raw `--proxy-server` routes are supported for lookup;
 PAC/auto-detect, route lists, empty raw proxies, raw proxy credentials and
 conflicting `--no-proxy-server` are rejected. If raw `--proxy-server` and a
@@ -223,7 +252,7 @@ python -m chromix clear-cache
 1. `license_key` is accepted and ignored (one open tier).
 2. `geoip` queries ip-api.com over HTTP instead of a local GeoLite2 database;
    explicit `timezone=` / `locale=` always win.
-3. No `cloakbrowser/puppeteer` subpath — use the Playwright surface.
+3. Python uses Playwright; the Node SDK also provides a native `/puppeteer` adapter.
 4. Widevine is enabled automatically when a CDM is present (installed Chrome,
    `CLOAKBROWSER_WIDEVINE_CDM`, or `python -m chromix widevine`).
 

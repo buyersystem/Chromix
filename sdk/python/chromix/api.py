@@ -32,6 +32,7 @@ from ._binary import (
     _CACHE, _CHANNELS, _binary_path, _bundle_complete, _download, _host, resolve_platform,
 )
 from ._fonts import apply_font_env, font_dir_whitelist_arg
+from ._socks_auth import native_socks_config, apply_native_socks_auth
 from ._persona import ensure_persona_geometry
 from ._fingerprint import normalize_fingerprint_args
 from ._network import (
@@ -303,6 +304,7 @@ def _prepare(headless, proxy, args, stealth_args, timezone, locale, geoip,
              release_channel=None, fonts_dir=None):
     args = _network_args(args, proxy)
     proxy_kwargs, proxy_extra = _resolve_proxy_config(proxy)
+    native_socks_config(proxy, args)  # validate before GeoIP, driver or download
     lookup_proxy = _lookup_proxy(args, proxy) if geoip else proxy
     timezone, locale, exit_ip = maybe_resolve_geoip(geoip, lookup_proxy, timezone, locale, args)
     args = _resolve_webrtc_args(args, lookup_proxy, exit_ip=exit_ip, geoip=geoip,
@@ -430,6 +432,7 @@ def launch(headless: bool = True,
         headless, proxy, args, stealth_args, timezone, locale, geoip,
         extension_paths, start_maximized=not _suppress_maximize,
         browser_version=browser_version, release_channel=release_channel, fonts_dir=fonts_dir)
+    apply_native_socks_auth(proxy_kwargs, kwargs, chrome_args)
     apply_font_env(binary, kwargs, fonts_dir=fonts_dir)
 
     pw = sync_playwright().start()
@@ -472,6 +475,7 @@ async def launch_async(headless: bool = True,
         headless, proxy, args, stealth_args, timezone, locale, geoip,
         extension_paths, start_maximized=True,
         browser_version=browser_version, release_channel=release_channel, fonts_dir=fonts_dir)
+    apply_native_socks_auth(proxy_kwargs, kwargs, chrome_args)
     apply_font_env(binary, kwargs, fonts_dir=fonts_dir)
     pw = await async_playwright().start()
     try:
@@ -568,7 +572,11 @@ def launch_context(headless: bool = True,
                      _suppress_maximize=True, fonts_dir=fonts_dir, **browser_kwargs)
     ctx_kwargs = _split_context_kwargs(viewport, locale, color_scheme, user_agent, kwargs,
                                        geometry=browser._chromix_geometry, headless=headless)
-    ctx = browser.new_context(**ctx_kwargs)
+    try:
+        ctx = browser.new_context(**ctx_kwargs)
+    except Exception:
+        browser.close()
+        raise
     orig_close = ctx.close
 
     def _close_ctx(*a, **kw):
@@ -611,6 +619,7 @@ def launch_persistent_context(user_data_dir: str | os.PathLike,
     ctx_kwargs = _split_context_kwargs(viewport, locale, color_scheme, user_agent, kwargs,
                                        geometry=geometry, headless=headless)
     launch_kwargs = {"env": ctx_kwargs.pop("env")} if "env" in ctx_kwargs else {}
+    apply_native_socks_auth(proxy_kwargs, launch_kwargs, chrome_args)
     apply_font_env(binary, launch_kwargs, fonts_dir=fonts_dir)
     pw = sync_playwright().start()
     try:
@@ -663,6 +672,7 @@ async def launch_context_async(**kw: Any) -> Any:
     launch_kwargs = dict(proxy_kwargs)
     if "env" in ctx_kwargs:
         launch_kwargs["env"] = ctx_kwargs.pop("env")
+    apply_native_socks_auth(launch_kwargs, launch_kwargs, chrome_args)
     apply_font_env(binary, launch_kwargs, fonts_dir=fonts_dir)
     pw = await async_playwright().start()
     try:
@@ -723,6 +733,7 @@ async def launch_persistent_context_async(**kw: Any) -> Any:
                                            "browser_version", "release_channel")},
                                        geometry=geometry, headless=headless)
     launch_kwargs = {"env": ctx_kwargs.pop("env")} if "env" in ctx_kwargs else {}
+    apply_native_socks_auth(proxy_kwargs, launch_kwargs, chrome_args)
     apply_font_env(binary, launch_kwargs, fonts_dir=fonts_dir)
     pw = await async_playwright().start()
     try:

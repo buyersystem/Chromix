@@ -56,7 +56,7 @@ class PosixUpstreamCacheTest(unittest.TestCase):
 
     def run_restored_builder(self, platform, arch, *, fail_tools=False, host_arch=None,
                              restored=True, system=None, missing_gn=False, incompatible_gn=False,
-                             incomplete_tools=False, build_profile=None):
+                             incomplete_tools=False, build_profile=None, fail_source=False):
         with tempfile.TemporaryDirectory(prefix="restored build ") as directory:
             root = Path(directory)
             repo, work, binaries = root / "repo", root / "work", root / "bin"
@@ -76,6 +76,25 @@ class PosixUpstreamCacheTest(unittest.TestCase):
                 target = repo / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(REPO / relative, target)
+            # The production source gate predates this shell fixture. Model its
+            # CLI/result explicitly, never bypass it in the real build script.
+            (repo / "tools/verify_patch_stack.py").write_text(f'''import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+tooling = 'ungoogled-chromium-' + ('portablelinux' if {platform!r} == 'linux' else 'macos')
+assert args[:-1] == ['--src', {str(src)!r}, '--repo', {str(repo)!r},
+                    '--core', {str(work / 'tooling/ungoogled-chromium')!r},
+                    '--platform-tooling', str(Path({str(work)!r}) / 'tooling' / tooling),
+                    '--platform', {platform!r}, '--output']
+report = Path(args[-1])
+assert report.parent == Path({str(work)!r}) / 'fingerprint-diagnostics'
+assert report.name.startswith('source-') and report.suffix == '.json'
+with open(os.environ['CALL_LOG'], 'a') as output:
+    output.write('source-check\\n')
+if {fail_source!r}:
+    raise SystemExit(23)
+report.write_text(json.dumps({{'fixture_only': True, 'status': 'simulated-source-check'}}))
+''')
             # Selection is explicit here; these shell fixtures do not contain native binaries or real logs.
             (repo / "tools/restore_ninja.py").write_text(f'''import os, sys
 from pathlib import Path
@@ -165,7 +184,7 @@ path.chmod(0o755)
             rejected = platform == "linux" and (
                 system != "Linux" or (host_arch, arch) not in (("x64", "x64"), ("arm64", "arm64"), ("x64", "arm64"))
                 or (host_arch != arch and not restored))
-            expected_rc = 2 if rejected else 19 if fail_tools else 1 if incomplete_tools else 0
+            expected_rc = 2 if rejected else 19 if fail_tools else 1 if incomplete_tools else 23 if fail_source else 0
             for _ in range(1 if expected_rc else 2):
                 result = subprocess.run([str(BASH32 if BASH32.exists() else shutil.which("bash")),
                                          str(repo / builder), str(work), arch],
@@ -180,14 +199,23 @@ path.chmod(0o755)
                 self.assertEqual(log.read_text().splitlines(), ["prepare", "ninja-guard", "tools"])
                 if incomplete_tools:
                     self.assertIn("cold cross builds are unsupported", result.stderr)
+            elif fail_source:
+                self.assertEqual(log.read_text().splitlines(), ["prepare", "ninja-guard", "tools", "source-check"])
+                self.assertFalse((work / "fingerprint-diagnostics/source-final.json").exists())
+                self.assertEqual((out / "args.gn").read_text(),
+                                 'symbol_level = 2\nchrome_pgo_phase = 2\nupstream_extra = true\n')
+                if missing_gn:
+                    self.assertFalse((out / "gn").exists())
             else:
-                iteration = ["prepare", "ninja-guard", "tools", "gn", "ninja", "evidence-before", "ninja", "evidence-after"]
+                iteration = ["prepare", "ninja-guard", "tools", "source-check", "gn", "ninja", "evidence-before", "ninja", "evidence-after"]
                 if platform == "linux" and host_arch == arch:
                     iteration.append("chrome-version")
                 expected_calls = iteration * 2
                 if missing_gn or incompatible_gn:
-                    expected_calls.insert(3, "bootstrap-gn")
+                    expected_calls.insert(4, "bootstrap-gn")
                 self.assertEqual(log.read_text().splitlines(), expected_calls)
+                self.assertEqual(json.loads((work / "fingerprint-diagnostics/source-final.json").read_text()),
+                                 {"fixture_only": True, "status": "simulated-source-check"})
                 self.assertEqual((out / "gn").read_text(), gn_script)
                 if host_arch != arch:
                     self.assertIn("runtime validation deferred to the required native ARM64 job", result.stdout)
@@ -219,6 +247,12 @@ path.chmod(0o755)
             for arch in ("x64", "arm64"):
                 with self.subTest(platform=platform, arch=arch):
                     self.run_restored_builder(platform, arch)
+
+    def test_source_verification_failure_blocks_gn_bootstrap_and_all_four_builders(self):
+        for platform in ("linux", "macos"):
+            for arch in ("x64", "arm64"):
+                with self.subTest(platform=platform, arch=arch):
+                    self.run_restored_builder(platform, arch, fail_source=True, missing_gn=True)
 
     def test_fast_profile_reaches_gn_on_both_builds_and_resumes(self):
         for platform, arch, host in (("linux", "x64", "x64"), ("linux", "arm64", "x64"),

@@ -1,0 +1,129 @@
+name: fingerprint-contracts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'patches/**'
+      - 'sdk/**'
+      - 'tools/**'
+      - 'CHROMIUM_VERSION'
+      - '.github/workflows/fingerprint-contracts.yml'
+  pull_request:
+    paths:
+      - 'patches/**'
+      - 'sdk/**'
+      - 'tools/**'
+      - 'CHROMIUM_VERSION'
+      - '.github/workflows/fingerprint-contracts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fingerprint-contracts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    name: SDK and extracted-method contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: sdk/node/package-lock.json
+
+      - name: GNU patch on macOS
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: brew install gpatch
+
+      - name: Native test tools on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          'C:\Program Files\LLVM\bin' >> $env:GITHUB_PATH
+          'C:\Program Files\Git\usr\bin' >> $env:GITHUB_PATH
+
+      - name: Install SDK test dependencies (no browser download)
+        run: python -m pip install pytest pytest-subtests tzdata psutil './sdk/python[cookies,measured]'
+      - run: npm ci --ignore-scripts --prefix sdk/node
+
+      - name: Independently fetch and hash pinned source preimages
+        shell: python
+        run: |
+          import base64, hashlib, json, os, re, shutil, urllib.request
+          from pathlib import Path, PurePosixPath
+          compiler = shutil.which('clang++')
+          if not compiler or not (shutil.which('gpatch') or shutil.which('patch')):
+              raise SystemExit('Clang and GNU patch are required, not optional skips')
+          version = Path('CHROMIUM_VERSION').read_text().strip()
+          root = Path(os.environ['RUNNER_TEMP']) / 'chromix-contract-preimages'
+          root.mkdir(exist_ok=False)
+          targets = {}
+          for name in ('followup_native_sources.json', 'canvas_native_paths.json'):
+              evidence = json.loads((Path('tools/tests/fixtures') / name).read_text(encoding='utf-8'))
+              assert evidence['chromium_version'] == version
+              for row in evidence['sources'].values():
+                  path, digest = row['target'], row['upstream_sha256']
+                  parts = PurePosixPath(path).parts
+                  assert parts and not PurePosixPath(path).is_absolute() and '..' not in parts
+                  assert '\\' not in path and ':' not in path and re.fullmatch('[0-9a-f]{64}', digest)
+                  assert path not in targets or targets[path] == digest
+                  targets[path] = digest
+          for path, digest in targets.items():
+              url = f'https://chromium.googlesource.com/chromium/src/+/refs/tags/{version}/{path}?format=TEXT'
+              with urllib.request.urlopen(url, timeout=60) as response:
+                  encoded = response.read(16 * 1024 * 1024 + 1)
+              assert len(encoded) <= 16 * 1024 * 1024
+              data = base64.b64decode(encoded, validate=True)
+              assert hashlib.sha256(data).hexdigest() == digest, path
+              output = root / path
+              output.parent.mkdir(parents=True, exist_ok=True)
+              with output.open('xb') as stream:
+                  stream.write(data)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as stream:
+              stream.write(f'CXX={compiler}\nCHROMIX_FOLLOWUP_UPSTREAM_ROOT={root}\nCHROMIX_CANVAS_UPSTREAM_ROOT={root}\n')
+          Path('source-preimages.json').write_text(json.dumps({
+              'chromium_version': version, 'files': targets,
+              'qualification': 'independent source inputs, not Chromium build or browser acceptance'}, indent=2), encoding='utf-8')
+
+      - name: Lint the complete patch series
+        run: python -X utf8 tools/check_patches.py
+      - name: Python, source and extracted-method regression (not native Chromium)
+        run: >-
+          python -X utf8 -m pytest -q
+          tools/tests/test_followup_native.py tools/tests/test_font_provenance.py
+          tools/tests/test_font_correctness.py
+          tools/tests/test_verify_windows_bundle.py
+          tools/tests/test_functionality_audits.py tools/tests/test_fingerprint_acceptance.py
+          tools/tests/test_device_p0.py tools/tests/test_canvas_native_paths.py
+          sdk/python/tests --junitxml=contracts-python.xml
+      - name: Node SDK regression
+        if: ${{ !cancelled() }}
+        run: npm test --prefix sdk/node
+      - name: Upload contract diagnostics, separate from browser releases
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fingerprint-contracts-${{ matrix.os }}
+          path: |
+            source-preimages.json
+            contracts-python.xml
+          if-no-files-found: warn

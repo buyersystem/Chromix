@@ -1,0 +1,68 @@
+diff --git a/net/socket/socks5_client_socket.h b/net/socket/socks5_client_socket.h
+--- a/net/socket/socks5_client_socket.h
++++ b/net/socket/socks5_client_socket.h
+@@ -9,6 +9,7 @@
+ #include <stdint.h>
+ 
+ #include <memory>
++#include <optional>
+ #include <string>
+ 
+ #include "base/memory/scoped_refptr.h"
+@@ -28,9 +29,14 @@
+ class GrowableIOBuffer;
+ 
+ // This StreamSocket is used to setup a SOCKSv5 handshake with a socks proxy.
+-// Currently no SOCKSv5 authentication is supported.
++// Supports no-auth and explicit RFC 1929 username/password authentication.
+ class NET_EXPORT_PRIVATE SOCKS5ClientSocket : public StreamSocket {
+  public:
++  struct Credentials {
++    std::string username;
++    std::string password;
++  };
++
+   // |destination| contains the hostname and port to which the socket above will
+   // communicate to via the SOCKS layer.
+   //
+@@ -39,7 +45,8 @@
+   // proxy side.
+   SOCKS5ClientSocket(std::unique_ptr<StreamSocket> transport_socket,
+                      const HostPortPair& destination,
+-                     const NetworkTrafficAnnotationTag& traffic_annotation);
++                     const NetworkTrafficAnnotationTag& traffic_annotation,
++                     std::optional<Credentials> credentials = std::nullopt);
+ 
+   SOCKS5ClientSocket(const SOCKS5ClientSocket&) = delete;
+   SOCKS5ClientSocket& operator=(const SOCKS5ClientSocket&) = delete;
+@@ -82,6 +89,10 @@
+     STATE_GREET_WRITE_COMPLETE,
+     STATE_GREET_READ,
+     STATE_GREET_READ_COMPLETE,
++    STATE_AUTH_WRITE,
++    STATE_AUTH_WRITE_COMPLETE,
++    STATE_AUTH_READ,
++    STATE_AUTH_READ_COMPLETE,
+     STATE_HANDSHAKE_WRITE,
+     STATE_HANDSHAKE_WRITE_COMPLETE,
+     STATE_HANDSHAKE_READ,
+@@ -108,6 +119,11 @@
+   void OnReadWriteComplete(CompletionOnceCallback callback, int result);
+ 
+   int DoLoop(int last_io_result);
++  int DoAuthWrite();
++  int DoAuthWriteComplete(int result);
++  int DoAuthRead();
++  int DoAuthReadComplete(int result);
++  scoped_refptr<DrainableIOBuffer> BuildAuthWriteBuffer() const;
+   int DoHandshakeRead();
+   int DoHandshakeReadComplete(int result);
+   int DoHandshakeWrite();
+@@ -144,6 +160,7 @@
+   bool was_ever_used_ = false;
+ 
+   const HostPortPair destination_;
++  const std::optional<Credentials> credentials_;
+ 
+   NetLogWithSource net_log_;
+ 

@@ -149,3 +149,10 @@ patches/0147-webgl-context-backend-identity.patch
 patches/0148-webgpu-native-adapter-identity.patch
 patches/0149-canvas-opaque-image-data-upload.patch
 patches/0150-canvas-mailbox-readback-geometry.patch
+patches/0151-devtools-font-provenance-declaration.patch
+patches/0152-devtools-font-provenance-implementation.patch
+patches/0153-devtools-font-provenance-protocol.patch
+patches/0154-socks5-auth-declaration.patch
+patches/0155-socks5-auth-handshake.patch
+patches/0156-socks5-auth-network-service.patch
+patches/0157-socks5-auth-native-tests.patch

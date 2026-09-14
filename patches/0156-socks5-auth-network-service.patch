@@ -1,0 +1,93 @@
+diff --git a/net/socket/socks_connect_job.cc b/net/socket/socks_connect_job.cc
+--- a/net/socket/socks_connect_job.cc
++++ b/net/socket/socks_connect_job.cc
+@@ -7,7 +7,10 @@
+ #include <memory>
+ #include <utility>
+ 
++#include "base/environment.h"
+ #include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "net/base/proxy_server.h"
+ #include "net/base/net_errors.h"
+ #include "net/log/net_log_source_type.h"
+ #include "net/log/net_log_with_source.h"
+@@ -19,6 +22,48 @@
+ #include "net/socket/transport_connect_job.h"
+ 
+ namespace net {
++
++namespace {
++
++// Browser-launch-scoped configuration inherited by the network service. Keep
++// credentials out of argv and bind them to one canonical proxy endpoint; this
++// is not an HTTP-auth cache and must not answer origin authentication prompts.
++int ReadSocks5Credentials(
++    const TransportSocketParams::Endpoint& destination,
++    std::optional<SOCKS5ClientSocket::Credentials>* credentials) {
++  auto raw = base::Environment::Create()->GetVar("CHROMIX_SOCKS5_AUTH");
++  if (!raw || raw->empty()) {
++    return OK;
++  }
++  if (raw->size() > 4096) {
++    return ERR_INVALID_ARGUMENT;
++  }
++  auto value = base::JSONReader::ReadDict(*raw, base::JSON_PARSE_RFC);
++  if (!value || value->size() != 5 || value->FindInt("version") != 1) {
++    return ERR_INVALID_ARGUMENT;
++  }
++  const auto* host = value->FindString("host");
++  const auto port = value->FindInt("port");
++  const auto* username = value->FindString("username");
++  const auto* password = value->FindString("password");
++  if (!host || !port || *port <= 0 || *port > 65535 || !username || !password ||
++      username->empty() || username->size() > 255 || password->empty() ||
++      password->size() > 255) {
++    return ERR_INVALID_ARGUMENT;
++  }
++  const auto server = ProxyServer::FromSchemeHostAndPort(
++      ProxyServer::SCHEME_SOCKS5, *host, static_cast<uint16_t>(*port));
++  const auto* endpoint = std::get_if<HostPortPair>(&destination);
++  if (!server.is_valid() || !endpoint) {
++    return ERR_INVALID_ARGUMENT;
++  }
++  if (server.host_port_pair() == *endpoint) {
++    *credentials = SOCKS5ClientSocket::Credentials{*username, *password};
++  }
++  return OK;
++}
++
++}  // namespace
+ 
+ // SOCKSConnectJobs will time out if the SOCKS handshake takes longer than this.
+ static constexpr base::TimeDelta kSOCKSConnectJobTimeout = base::Seconds(30);
+@@ -172,13 +217,19 @@
+ }
+ 
+ int SOCKSConnectJob::DoSOCKSConnect() {
+-  next_state_ = STATE_SOCKS_CONNECT_COMPLETE;
+ 
+   // Add a SOCKS connection on top of the tcp socket.
+   if (socks_params_->is_socks_v5()) {
++    std::optional<SOCKS5ClientSocket::Credentials> credentials;
++    const int result = ReadSocks5Credentials(
++        socks_params_->transport_params()->destination(), &credentials);
++    if (result != OK) {
++      transport_connect_job_.reset();
++      return result;
++    }
+     socket_ = std::make_unique<SOCKS5ClientSocket>(
+         transport_connect_job_->PassSocket(), socks_params_->destination(),
+-        socks_params_->traffic_annotation());
++        socks_params_->traffic_annotation(), std::move(credentials));
+   } else {
+     auto socks_socket = std::make_unique<SOCKSClientSocket>(
+         transport_connect_job_->PassSocket(), socks_params_->destination(),
+@@ -189,6 +240,7 @@
+     socket_ = std::move(socks_socket);
+   }
+   transport_connect_job_.reset();
++  next_state_ = STATE_SOCKS_CONNECT_COMPLETE;
+   return socket_->Connect(
+       base::BindOnce(&SOCKSConnectJob::OnIOComplete, base::Unretained(this)));
+ }

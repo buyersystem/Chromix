@@ -76,6 +76,54 @@ require the matching asset in the selected release or `CHROMIX_DOWNLOAD_HOST`;
 SDK support alone does not publish an ARM64 browser. Windows ARM64 Widevine
 CDM discovery is not supported; an x64 CDM is not reused for ARM64.
 
+## Puppeteer
+
+Install a `puppeteer-core` version compatible with your Node runtime, then use
+the separate native adapter (no Playwright driver is required):
+
+```javascript
+import { launchContext } from '@xiaoxiaofeihh/chromix/puppeteer';
+
+const context = await launchContext({
+  executablePath: process.env.CHROMIX_BROWSER_PATH,
+  args: ['--fingerprint=42'],
+});
+try {
+  const page = await context.newPage();
+  await page.goto('https://example.com');
+} finally {
+  await context.close(); // also closes this entry point's owned browser
+}
+```
+
+Exports `launch`, `launchContext`, `launchPersistentContext`, `connect` and
+`buildLaunchOptions`. Persistent profiles share the Playwright seed format.
+The default `defaultViewport` is `null`; explicit `launchOptions` are Puppeteer
+options, not Playwright `contextOptions`. `connect` cannot change launch identity;
+failed connection preparation disconnects without closing the caller's browser.
+Humanized wheel calls keep Puppeteer's `{deltaX, deltaY}` API. Measured device
+admission and browser-wide HTTP proxy authentication are not implemented here.
+
+## Encrypted Cookie migration
+
+```javascript
+import { exportCookies, importCookies } from '@xiaoxiaofeihh/chromix/cookies';
+
+const options = { passphrase: process.env.COOKIE_PASSPHRASE };
+await exportCookies(sourceContext, 'cookies.enc', options);
+await importCookies(emptyDestinationContext, 'cookies.enc', options);
+```
+
+Accepts live Chromium Playwright or Puppeteer contexts. The same functions,
+plus `encryptCookies` / `decryptCookies`, are exported from the root and
+`/puppeteer`. The authenticated AES-GCM/scrypt file format interoperates with
+Python; the passphrase must contain 12–1024 UTF-8 bytes. Exports never overwrite
+an existing file. Imports require an empty context, preserve CHIPS/host-only and
+security attributes, skip expired entries and verify readback. Import failure
+can leave partial contents; there is no destructive clearing or rollback.
+This is not a native OSCrypt/profile-database portability switch. See the
+[complete format and evidence boundaries](../../docs/functionality-followup.md).
+
 ## Options
 
 CloakBrowser options work unchanged: `headless, proxy, args, stealthArgs,
@@ -153,7 +201,7 @@ Environment variables: `CLOAKBROWSER_BINARY_PATH`, `CLOAKBROWSER_VERSION`,
 
 1. `licenseKey` is accepted and ignored (one open tier).
 2. `geoip` queries ip-api.com instead of a local GeoLite2 database.
-3. No `cloakbrowser/puppeteer` subpath is provided; use the Playwright surface.
+3. Puppeteer uses `@xiaoxiaofeihh/chromix/puppeteer`, with the boundaries above.
 4. Widevine/DRM is enabled automatically when a CDM is present (installed
    Chrome or `CLOAKBROWSER_WIDEVINE_CDM`); on Linux, fetch one with
    `python -m chromix widevine`.
@@ -178,8 +226,14 @@ GeoIP is metadata, not a routing mechanism. The lookup uses the effective
 HTTP/HTTPS/SOCKS proxy, including `launchOptions.proxy` overrides, and does not
 inherit environment proxies or `NO_PROXY` bypasses. Failed lookups do not
 fall back to the host connection. Metadata transport supports SOCKS4/4a/5/5h
-and SOCKS5 credentials. This does not add SOCKS authentication or every URL
-alias to Chromium/Playwright's browser proxy backend. SOCKS5/4a use remote
+and SOCKS5 credentials; that transport alone does not extend Chromium's proxy
+backend. With a browser built from patches `0154`–`0157`, the launch SDK also
+supports native SOCKS5 TCP username/password authentication via the high-level
+`proxy` option. Credentials are endpoint-bound in the launch environment, not
+argv or `page.authenticate`; context-specific SOCKS credentials are rejected.
+Unrelated launches scrub inherited auth, including Windows case aliases. There
+is no UDP ASSOCIATE implementation or matching-native-build acceptance yet.
+SOCKS5/4a metadata lookups use remote
 destination DNS; SOCKS4 uses local IPv4 DNS. Lookup accepts one raw
 `--proxy-server` route, not PAC/auto-detect, route lists, empty raw proxies,
 raw proxy credentials or a proxy conflicting with `--no-proxy-server`.

@@ -1,0 +1,81 @@
+diff --git a/net/socket/socks5_client_socket_unittest.cc b/net/socket/socks5_client_socket_unittest.cc
+--- a/net/socket/socks5_client_socket_unittest.cc
++++ b/net/socket/socks5_client_socket_unittest.cc
+@@ -59,7 +59,8 @@
+       base::span<const MockWrite> writes,
+       std::string_view hostname,
+       int port,
+-      NetLog* net_log);
++      NetLog* net_log,
++      std::optional<SOCKS5ClientSocket::Credentials> credentials = std::nullopt);
+ 
+   void SetUp() override;
+ 
+@@ -91,7 +92,8 @@
+     base::span<const MockWrite> writes,
+     std::string_view hostname,
+     int port,
+-    NetLog* net_log) {
++    NetLog* net_log,
++    std::optional<SOCKS5ClientSocket::Credentials> credentials) {
+   TestCompletionCallback callback;
+   data_ = std::make_unique<StaticSocketDataProvider>(reads, writes);
+   auto tcp_sock = std::make_unique<MockTCPClientSocket>(address_list_, net_log,
+@@ -108,7 +110,56 @@
+   // non-owning pointer to it.
+   return std::make_unique<SOCKS5ClientSocket>(std::move(tcp_sock),
+                                               HostPortPair(hostname, port),
+-                                              TRAFFIC_ANNOTATION_FOR_TESTS);
++                                              TRAFFIC_ANNOTATION_FOR_TESTS,
++                                              std::move(credentials));
++}
++
++// RFC 1929 reads may be fragmented, with synchronous or async completion.
++TEST_F(SOCKS5ClientSocketTest, UsernamePasswordHandshake) {
++  const uint8_t greet[] = {5, 1, 2};
++  const uint8_t auth[] = {1, 4, 'u', 's', 'e', 'r', 4, 'p', 'a', 's', 's'};
++  const uint8_t request[] = {5, 1, 0, 3, 9, 'l', 'o', 'c', 'a', 'l', 'h', 'o',
++                             's', 't', 0, 80};
++  const uint8_t response[] = {5, 2, 1, 0};
++  for (IoMode mode : {SYNCHRONOUS, ASYNC}) {
++    MockWrite writes[] = {MockWrite(mode, base::span(greet)), MockWrite(mode, base::span(auth)),
++                           MockWrite(mode, base::span(request))};
++    MockRead reads[] = {
++        MockRead(mode, base::span(response).subspan(0, 1)),
++        MockRead(mode, base::span(response).subspan(1, 1)),
++        MockRead(mode, base::span(response).subspan(2, 1)),
++        MockRead(mode, base::span(response).subspan(3, 1)),
++        MockRead(mode, kSOCKS5OkResponse)};
++    user_sock_ = BuildMockSocket(reads, writes, "localhost", 80, NetLog::Get(),
++                                SOCKS5ClientSocket::Credentials{"user", "pass"});
++    EXPECT_THAT(callback_.GetResult(user_sock_->Connect(callback_.callback())), IsOk());
++    EXPECT_TRUE(user_sock_->IsConnected());
++    user_sock_->Disconnect();
++    user_sock_.reset();
++  }
++}
++
++TEST_F(SOCKS5ClientSocketTest, RejectUsernamePasswordDowngrade) {
++  const uint8_t greet[] = {5, 1, 2};
++  MockWrite writes[] = {MockWrite(ASYNC, base::span(greet))};
++  MockRead reads[] = {MockRead(ASYNC, kSOCKS5GreetResponse)};
++  user_sock_ = BuildMockSocket(reads, writes, "localhost", 80, NetLog::Get(),
++                              SOCKS5ClientSocket::Credentials{"user", "pass"});
++  EXPECT_THAT(callback_.GetResult(user_sock_->Connect(callback_.callback())),
++              IsError(ERR_SOCKS_CONNECTION_FAILED));
++  EXPECT_FALSE(user_sock_->IsConnected());
++}
++
++TEST_F(SOCKS5ClientSocketTest, InvalidCredentialLengthFailsBeforeWriting) {
++  for (const auto& credentials : {
++           SOCKS5ClientSocket::Credentials{"", "pass"},
++           SOCKS5ClientSocket::Credentials{"user", ""},
++           SOCKS5ClientSocket::Credentials{std::string(256, 'x'), "pass"},
++           SOCKS5ClientSocket::Credentials{"user", std::string(256, 'x')}}) {
++    user_sock_ = BuildMockSocket({}, {}, "localhost", 80, NetLog::Get(), credentials);
++    EXPECT_THAT(user_sock_->Connect(callback_.callback()), IsError(ERR_INVALID_ARGUMENT));
++    user_sock_.reset();
++  }
+ }
+ 
+ // Tests a complete SOCKS5 handshake and the disconnection.

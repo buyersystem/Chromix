@@ -1,0 +1,28 @@
+diff --git a/third_party/blink/renderer/core/inspector/inspector_css_agent.h b/third_party/blink/renderer/core/inspector/inspector_css_agent.h
+--- a/third_party/blink/renderer/core/inspector/inspector_css_agent.h
++++ b/third_party/blink/renderer/core/inspector/inspector_css_agent.h
+@@ -83,6 +83,15 @@
+ class StyleRuleKeyframes;
+ class StyleRuleUsageTracker;
+ 
++// DevTools-only provenance of the actual typeface used by a shaped run.
++// A table digest identifies content, not rasterizer equivalence or a file path.
++struct InspectorPlatformFontUsage {
++  int glyph_count = 0;
++  String family_name;
++  String postscript_name;
++  String table_hash;
++};
++
+ class CORE_EXPORT InspectorCSSAgent final
+     : public InspectorBaseAgent<protocol::CSS::Metainfo>,
+       public InspectorDOMAgent::DOMListener,
+@@ -447,7 +456,7 @@
+ 
+   void CollectPlatformFontsForLayoutObject(
+       LayoutObject*,
+-      HashMap<std::pair<int, String>, std::pair<int, String>>*,
++      HashMap<std::pair<int, String>, InspectorPlatformFontUsage>*,
+       unsigned descendants_depth);
+ 
+   InspectorStyleSheet* BindStyleSheet(CSSStyleSheet*);
