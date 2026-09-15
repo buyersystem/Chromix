@@ -1,0 +1,16 @@
+diff --git a/media/base/supported_types.h b/media/base/supported_types.h
+index 1b81a1524494f54f32448b694b299b5e720b9176..b7c770a5727bf107e3658ab060e2d2cc53ba6695 100644
+--- a/media/base/supported_types.h
++++ b/media/base/supported_types.h
+@@ -10,6 +10,11 @@
+ #include "media/base/media_types.h"
+ 
+ namespace media {
++
++// Launch-scoped codec restriction shared by capability queries and actual
++// decoder/encoder selection. This can remove a codec, never supply a backend.
++MEDIA_EXPORT bool IsUxrVideoCodecAllowed(VideoCodec codec);
++MEDIA_EXPORT bool HasUxrVideoCodecRestrictions();
+ 
+ // These functions will attempt to delegate to MediaClient (when present) to
+ // describe what types of media are supported. When no MediaClient is provided,

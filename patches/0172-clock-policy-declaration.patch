@@ -1,0 +1,51 @@
+diff --git a/base/uxr_config.h b/base/uxr_config.h
+index 0114c87b6a4873173008bf2214d02a8f5a53510c..75abfb17f469d59f307c43728701832041535494 100644
+--- a/base/uxr_config.h
++++ b/base/uxr_config.h
+@@ -4,6 +4,7 @@
+ #ifndef BASE_UXR_CONFIG_H_
+ #define BASE_UXR_CONFIG_H_
+ 
++#include <atomic>
+ #include <cstdint>
+ #include <map>
+ #include <string>
+@@ -43,11 +44,11 @@
+ // backend contract, not an adapter identity: native APIs may select different
+ // GPUs, software paths, formats and color-management implementations.
+ struct BASE_EXPORT UxrGpuBackendPolicy {
+-  bool native = false;
++  bool native = true;
+   bool canvas_pixel_noise = false;
+-  bool canvas_text_noise = true;
++  bool canvas_text_noise = false;
+   bool canvas_bridge = false;
+-  bool capability_overrides = true;
++  bool capability_overrides = false;
+ };
+ 
+ class BASE_EXPORT UxrConfig {
+@@ -67,6 +68,14 @@
+   flat_map<std::string, std::string> Snapshot() const;
+   UxrDisplayConfig Display() const;
+   UxrGpuBackendPolicy GpuBackendPolicy() const;
++  // Optional shared, whole-millisecond grid for V8 and Blink clocks. Zero
++  // retains Chromium's native privacy resolution. Internal scheduling is not
++  // quantized; only web-exposed clock values use these helpers.
++  int64_t TimerResolutionMicroseconds() const;
++  int64_t QuantizeClockMicroseconds(int64_t value) const;
++  int64_t QuantizeClockMilliseconds(int64_t value) const;
++  // Zero means native audio. The real-time graph reads this without locks.
++  uint64_t AudioIsolationSeed() const;
+   std::string ValidationError() const;
+ 
+   bool Has(const std::string& key) const;
+@@ -94,6 +103,8 @@
+   flat_map<std::string, std::string> map_;
+   UxrDisplayConfig display_;
+   UxrGpuBackendPolicy gpu_backend_policy_;
++  std::atomic<int> timer_resolution_ms_{0};
++  std::atomic<uint64_t> audio_isolation_seed_{0};
+   bool initialized_ = false;
+   std::string validation_error_;
+ };

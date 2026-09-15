@@ -1,0 +1,22 @@
+diff --git a/third_party/blink/renderer/modules/font_access/font_access.cc b/third_party/blink/renderer/modules/font_access/font_access.cc
+index f066f2052eb0c6236b27e311afa9d72e37a0a061..e7885f5b355186e8828017ed5cbebf1eb52d72bc 100644
+--- a/third_party/blink/renderer/modules/font_access/font_access.cc
++++ b/third_party/blink/renderer/modules/font_access/font_access.cc
+@@ -3,6 +3,8 @@
+ // found in the LICENSE file.
+ 
+ #include "third_party/blink/renderer/modules/font_access/font_access.h"
++
++#include "third_party/blink/renderer/platform/fonts/font_cache.h"
+ 
+ #include <algorithm>
+ 
+@@ -154,6 +156,8 @@
+   table.ParseFromArray(mapped_mem.data(),
+                        base::checked_cast<int>(mapped_mem.size()));
+   for (const auto& element : table.fonts()) {
++    if (!FontCache::IsUxrFontFamilyAllowed(String::FromUtf8(element.family())))
++      continue;
+     // If the optional postscript name filter is set in QueryOptions,
+     // only allow items that match.
+     if (hasPostscriptNameFilter &&

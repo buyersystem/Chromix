@@ -129,3 +129,61 @@ def test_proxy_route_conflicts_and_no_proxy_precedence():
 def test_equivalent_proxy_endpoints_keep_high_level_credentials(raw, configured):
     proxy = {'server': configured, 'username': 'u', 'password': 'p'}
     assert lookup_proxy(['--proxy-server=' + raw], proxy) == proxy
+
+
+@pytest.mark.parametrize('prefix', ['--fingerprint-', '--uxr-'])
+@pytest.mark.parametrize('flag', ['timer-resolution=7', 'timer-resolution=0', 'max-touch-points=16',
+    'gpu-backend=native', 'audio-render=isolated', 'audio-seed=18446744073709551615',
+    'pointer=fine', 'hover=none', 'color-scheme=dark', 'forced-colors=active',
+    'preferred-contrast=less', 'keyboard-layout=native', 'codec-h264=disabled',
+    'codec-av1=native', 'codec-vp9=supported,smooth,power-efficient'])
+def test_backend_options_have_matching_public_and_native_syntax(prefix, flag):
+    args = [prefix + flag]
+    assert normalize_fingerprint_args(args) == args
+
+
+@pytest.mark.parametrize('flag', ['timer-resolution=+1', 'timer-resolution=1.5', 'timer-resolution=1001',
+    'max-touch-points=17', 'audio-seed=0', 'audio-seed=18446744073709551616', 'audio-render=noise',
+    'gpu-backend=software', 'hdr=high', 'color-scheme=auto', 'codec-h264=smooth',
+    'codec-h264=supported,', 'codec-vp8= supported', 'codec-vp9=supported,unknown',
+    'keyboard-layout=us', 'font-policy=restricted'])
+def test_backend_invalid_values_fail_before_launch(flag):
+    for prefix in ('--fingerprint-', '--uxr-'):
+        with pytest.raises(ValueError):
+            normalize_fingerprint_args([prefix + flag])
+
+
+def test_effective_aliases_mixed_input_and_synthetic_keyboard():
+    valid = ['--fingerprint-pointer=none', '--uxr-pointer=fine', '--fingerprint-max-touch-points=5']
+    assert normalize_fingerprint_args(valid) == valid
+    for pair in [('none', '1'), ('coarse', '0')]:
+        with pytest.raises(ValueError, match='inconsistent'):
+            normalize_fingerprint_args(['--uxr-pointer=' + pair[0], '--fingerprint-max-touch-points=' + pair[1]])
+    assert normalize_fingerprint_args(['--uxr-synthetic-device-tests=true', '--fingerprint-keyboard-layout=us'])
+
+
+def test_font_pool_unicode_spaces_and_empty_entries():
+    flags = ['--fingerprint-font-policy=restricted', '--fingerprint-font-whitelist=Arial Narrow, ＭＳ ゴシック']
+    assert normalize_fingerprint_args(flags) == flags
+    for families in ('', ',Arial', 'Arial,', 'Arial, ,Serif', 'Arial\nInjected', 'A,' * 256 + 'Z'):
+        with pytest.raises(ValueError, match='font-policy'):
+            normalize_fingerprint_args([flags[0], '--fingerprint-font-whitelist=' + families])
+
+
+def test_audio_seed_dependency_is_checked_after_launch_defaults():
+    from chromix.api import build_args
+    mode = ['--fingerprint-audio-render=isolated']
+    assert normalize_fingerprint_args(mode) == mode
+    with pytest.raises(ValueError, match='seed'):
+        build_args(False, mode)
+    assert '--fingerprint-audio-render=isolated' in build_args(True, mode)
+    assert build_args(False, mode + ['--fingerprint=42'])
+    assert build_args(False, mode + ['--fingerprint-audio-seed=42'])
+    assert '--ignore-gpu-blocklist' not in build_args(True, [], headless=False)
+    assert '--ignore-gpu-blocklist' in build_args(True, ['--ignore-gpu-blocklist'])
+
+
+@pytest.mark.parametrize('flag', ['--proxy-pac-url=https://example.test/proxy.pac', '--proxy-auto-detect'])
+def test_pac_and_auto_detect_apply_native_webrtc_restriction(flag):
+    assert network_args([flag])[-1] == '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'
+    assert network_args([flag, '--no-proxy-server']) == [flag, '--no-proxy-server']

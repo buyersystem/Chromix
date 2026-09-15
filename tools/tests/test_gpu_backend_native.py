@@ -113,6 +113,7 @@ int main(int argc, char** argv) {
   if(argc==2 && std::string(argv[1])=="freeze") {
     assert(c.SetAll({{"uxr-gpu-backend","native"}}));
     auto copy=c.GpuBackendPolicy(); copy.native=false;
+    assert(!copy.native);
     assert(c.GpuBackendPolicy().native);
     std::vector<std::thread> threads;
     for(int i=0;i<8;++i) threads.emplace_back([&] {

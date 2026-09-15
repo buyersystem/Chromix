@@ -19,6 +19,7 @@ import ssl
 import sys
 import tempfile
 import threading
+from urllib.parse import parse_qs, urlsplit
 
 from fingerprint_protocols import parse_client_hello, compare
 
@@ -33,21 +34,33 @@ HINTS = ('Sec-CH-UA-Full-Version-List, Sec-CH-UA-Platform-Version, Sec-CH-UA-Arc
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         self.request.settimeout(10)
+        connection_key = None
         try:
-            with self.server.tls.wrap_socket(self.request, server_side=True) as connection:
+            with self.server.tls.wrap_socket(self.request, server_side=True,
+                                            do_handshake_on_connect=False) as connection:
+                connection_key = id(connection)
+                with self.server.lock:
+                    self.connection_id = self.server.next_id
+                    self.server.next_id += 1
+                    self.server.connection_ids[connection_key] = self.connection_id
+                connection.do_handshake()
                 self.request = connection
                 self.handle_http2()
         except (TimeoutError, ConnectionError, ssl.SSLError, OSError):
             # Aborted speculative connections have no request evidence. An
             # actual missing connection/request is rejected by assess().
             pass
+        finally:
+            with self.server.lock:
+                self.server.connection_ids.pop(connection_key, None)
 
     def handle_http2(self):
         from h2.config import H2Configuration
         from h2.connection import H2Connection
         from h2.events import RequestReceived, RemoteSettingsChanged, ConnectionTerminated
         self.request.settimeout(10)
-        record = {'alpn': self.request.selected_alpn_protocol(), 'tls': self.request.version(),
+        record = {'id': self.connection_id, 'session_reused': self.request.session_reused,
+                  'alpn': self.request.selected_alpn_protocol(), 'tls': self.request.version(),
                   'cipher': self.request.cipher(), 'settings': [], 'requests': []}
         with self.server.lock:
             self.server.connections.append(record)
@@ -62,6 +75,7 @@ class Handler(socketserver.BaseRequestHandler):
                 if not data:
                     break
                 digest.update(data)
+                close_after_response = False
                 for event in connection.receive_data(data):
                     if isinstance(event, RemoteSettingsChanged):
                         record['settings'].append([[int(k), v.new_value] for k, v in event.changed_settings.items()])
@@ -71,29 +85,36 @@ class Handler(socketserver.BaseRequestHandler):
                         headers = [[str(k), str(v)] for k, v in event.headers]
                         record['requests'].append({'stream': event.stream_id, 'headers': headers,
                             'pseudo_order': [k for k, _ in headers if k.startswith(':')]})
-                        path = dict(headers).get(':path', '/')
-                        if path == '/echo':
-                            body = json.dumps({'headers': dict(headers)}).encode()
+                        target = urlsplit(dict(headers).get(':path', '/'))
+                        if target.path == '/echo':
+                            body = json.dumps({'headers': dict(headers), 'connection_id': self.connection_id}).encode()
                             mime = 'application/json'
+                            close_after_response = self.server.lifecycle and parse_qs(target.query).get('close') == ['1']
                         else:
                             body = b'<!doctype html><title>Owned TLS fixture</title>'
                             mime = 'text/html'
                         connection.send_headers(event.stream_id, [(':status', '200'), ('content-type', mime),
                             ('content-length', str(len(body))), ('accept-ch', HINTS), ('cache-control', 'no-store')])
                         connection.send_data(event.stream_id, body, end_stream=True)
+                        if close_after_response:
+                            record['goaway_stream'] = event.stream_id
+                            connection.close_connection(last_stream_id=event.stream_id)
+                            break
                     elif isinstance(event, ConnectionTerminated):
                         return
                 response = connection.data_to_send()
                 if response:
                     self.request.sendall(response)
+                if close_after_response:
+                    return
         except (TimeoutError, ConnectionError, ssl.SSLError, OSError) as error:
             record['close_reason'] = type(error).__name__
         finally:
             record['application_bytes_sha256'] = digest.hexdigest()
 
 
-@contextmanager
-def endpoint(directory):
+def certificate(directory):
+    """Ephemeral owned endpoint key, shared with the QUIC diagnostic server."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -106,30 +127,40 @@ def endpoint(directory):
             .not_valid_after(now + timedelta(hours=1))
             .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address('127.0.0.1'))]), critical=False)
             .sign(key, hashes.SHA256()))
-    certificate, private = directory / 'cert.pem', directory / 'key.pem'
-    certificate.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    certificate_path, private = directory / 'cert.pem', directory / 'key.pem'
+    certificate_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     private.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                          serialization.NoEncryption()))
+    spki = base64.b64encode(hashlib.sha256(key.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode('ascii')
+    return certificate_path, private, spki
+
+
+@contextmanager
+def endpoint(directory, *, tickets=False):
+    certificate_path, private, spki = certificate(directory)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     # This fixture compares full ClientHellos, not a full handshake with a
     # speculative ticket-based reconnect. Keep PSK extension 41 meaningful in
     # the comparator instead of silently removing it from observed profiles.
-    tls.options |= ssl.OP_NO_TICKET
-    tls.num_tickets = 0
-    tls.set_alpn_protocols(['h2', 'http/1.1']); tls.load_cert_chain(certificate, private)
+    if not tickets:
+        tls.options |= ssl.OP_NO_TICKET
+    tls.num_tickets = 2 if tickets else 0
+    tls.set_alpn_protocols(['h2', 'http/1.1']); tls.load_cert_chain(certificate_path, private)
     server = socketserver.ThreadingTCPServer(('127.0.0.1', 0), Handler)
     # Non-daemon handlers are joined by server_close before report serialization.
     server.daemon_threads = False
     server.connections, server.hellos, server.handshake_errors = [], [], []
     server.lock = threading.Lock()
-    server.spki = base64.b64encode(hashlib.sha256(key.public_key().public_bytes(
-        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)).digest()).decode('ascii')
+    server.spki, server.lifecycle = spki, tickets
+    server.connection_ids, server.next_id = {}, 1
     def message(_connection, direction, _version, content_type, message_type, data):
         if direction == 'read' and int(content_type) == 22 and int(message_type) == 1:
             try:
                 hello = parse_client_hello(bytes(data))
                 with server.lock:
+                    hello['connection_id'] = server.connection_ids[id(_connection)]
                     server.hellos.append(hello)
             except ValueError as error:
                 with server.lock:

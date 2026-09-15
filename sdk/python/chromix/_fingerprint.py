@@ -16,6 +16,66 @@ _INTEGERS = {
     "--fingerprint-taskbar-height": (0, 32768),
     "--fingerprint-storage-quota": (0, ((1 << 63) - 1) // (1024 * 1024)),
 }
+_PREFERENCE_BOOLEANS = {"reduced-motion", "reduced-transparency", "inverted-colors"}
+_PREFERENCE_INTEGERS = {"max-touch-points": (0, 16), "timer-resolution": (0, 1000),
+                        "audio-seed": (1, (1 << 64) - 1)}
+_PREFERENCE_ENUMS = {
+    "gpu-backend": {"native", "compatibility"},
+    "font-policy": {"native", "restricted"},
+    "audio-render": {"native", "isolated"},
+    "color-scheme": {"dark", "light"},
+    "preferred-contrast": {"more", "less", "no-preference"},
+    "forced-colors": {"active", "none", "true", "false", "1", "0"},
+    "pointer": {"fine", "coarse", "none"},
+    "hover": {"hover", "none"},
+    "hdr": {"native"},
+    "keyboard-layout": {"native", "us", "en-US"},
+}
+_CODECS = {"codec-h264", "codec-vp8", "codec-vp9", "codec-av1", "codec-hevc"}
+
+
+def _valid_codec(value):
+    if value in ("", "native", "disabled"):
+        return True
+    tokens = value.split(",")
+    return "supported" in tokens and set(tokens) <= {"supported", "smooth", "power-efficient"}
+
+
+def _preference(key):
+    for prefix in ("--fingerprint-", "--uxr-"):
+        if key.startswith(prefix):
+            return key[len(prefix):]
+    return ""
+
+
+def _validate_preferences(args, *, final=False):
+    # Match Chromium's last-switch semantics and native-alias precedence.
+    switches = dict(arg.partition("=")[::2] for arg in args)
+    def value(name):
+        return switches.get("--uxr-" + name, switches.get("--fingerprint-" + name))
+    pointer, hover, touch = value("pointer"), value("hover"), value("max-touch-points")
+    touch = int(touch) if touch is not None else None
+    if ((pointer == "none" and touch is not None and touch > 0)
+            or (pointer == "coarse" and touch == 0)
+            or (pointer == "none" and hover == "hover")):
+        raise ValueError("inconsistent pointer, hover and max-touch-points")
+    keyboard = value("keyboard-layout")
+    if keyboard not in (None, "native") and switches.get("--uxr-synthetic-device-tests") != "true":
+        raise ValueError("keyboard-layout overrides require synthetic device tests; use native for real input")
+    if value("font-policy") == "restricted":
+        families = value("font-whitelist") or ""
+        entries = families.split(",")
+        if (not families or len(families.encode("utf-8")) > 4096 or len(entries) > 256
+                or any(not entry.strip(" \t") for entry in entries)
+                or re.search(r"[\x00-\x08\x0a-\x1f\x7f]", families)):
+            raise ValueError("restricted font-policy requires 1 to 256 comma-separated installed font families")
+    if final and value("audio-render") == "isolated" and not fingerprint_off(args):
+        seed = value("audio-seed") or switches.get("--uxr-fingerprint-seed")
+        if seed is None:
+            if "--fingerprint" not in switches:
+                raise ValueError("isolated audio requires --fingerprint or a nonzero audio seed")
+        elif not re.fullmatch(r"[0-9]+", seed) or not 1 <= int(seed) < (1 << 64):
+            raise ValueError("isolated audio requires a nonzero uint64 seed")
 
 
 def fingerprint_off(args):
@@ -23,13 +83,32 @@ def fingerprint_off(args):
     return bool(modes and modes[-1] in OFF_VALUES)
 
 
-def normalize_fingerprint_args(args):
+def normalize_fingerprint_args(args, *, final=False):
     result = []
     for arg in args or []:
         if not isinstance(arg, str) or "\0" in arg:
             raise ValueError("browser arguments must be strings without NUL")
         key, equal, value = arg.partition("=")
-        if key == "--fingerprint":
+        preference = _preference(key)
+        if preference in _PREFERENCE_BOOLEANS:
+            low = value.lower()
+            if low in OFF_VALUES:
+                arg = key + "=false"
+            elif low in ("", "true", "1", "on", "enable", "enabled"):
+                arg = key + "=true"
+            else:
+                raise ValueError(f"{key} requires a boolean")
+        elif preference in _PREFERENCE_INTEGERS:
+            minimum, maximum = _PREFERENCE_INTEGERS[preference]
+            if not re.fullmatch(r"[0-9]+", value) or not minimum <= int(value) <= maximum:
+                raise ValueError(f"{key} requires an integer in [{minimum}, {maximum}]")
+        elif preference in _PREFERENCE_ENUMS:
+            if value not in _PREFERENCE_ENUMS[preference]:
+                raise ValueError(f"{key} requires one of {', '.join(sorted(_PREFERENCE_ENUMS[preference]))}")
+        elif preference in _CODECS:
+            if not _valid_codec(value):
+                raise ValueError(f"{key} requires native, disabled or supported[,smooth][,power-efficient]")
+        elif key == "--fingerprint":
             if value.lower() in OFF_VALUES:
                 arg = "--fingerprint=off"
             elif value and (not re.fullmatch(r"[0-9]+", value) or not 1 <= int(value) < (1 << 64)):
@@ -67,4 +146,5 @@ def normalize_fingerprint_args(args):
         result.append(arg)
     if fingerprint_off(result):
         result = [arg for arg in result if arg.partition("=")[0] != "--fingerprint-platform"]
+    _validate_preferences(result, final=final)
     return result

@@ -1,0 +1,97 @@
+diff --git a/third_party/blink/renderer/platform/fonts/font_cache.cc b/third_party/blink/renderer/platform/fonts/font_cache.cc
+index 986b20ecf90622cb0b52e5f4330b700b3e54b2de..8ab8b5e917d80a14919e0aa036534bd9cf6df2d2 100644
+--- a/third_party/blink/renderer/platform/fonts/font_cache.cc
++++ b/third_party/blink/renderer/platform/fonts/font_cache.cc
+@@ -100,6 +100,8 @@
+ }
+ 
+ const char* UxrSystemFontSubstitute(const AtomicString& family) {
++  if (!base::UxrConfig::GetInstance().Get("uxr-font-policy").empty())
++    return nullptr;
+   if (base::UxrConfig::GetInstance().Get("uxr-synthetic-device-tests") != "true")
+     return nullptr;
+   const std::string persona =
+@@ -139,6 +141,9 @@
+ }
+ 
+ bool UxrFontFamilyAllowed(const AtomicString& family) {
++  // Explicit policy uses the resolved family below, not the requested alias.
++  if (!base::UxrConfig::GetInstance().Get("uxr-font-policy").empty())
++    return true;
+   if (base::UxrConfig::GetInstance().Get("uxr-synthetic-device-tests") != "true")
+     return true;
+   if (family.empty() || UxrFontFamilyIsGeneric(family))
+@@ -299,8 +304,47 @@
+   }
+ #endif
+ 
+-  return font_platform_data_cache_.GetOrCreateFontPlatformData(
++  const FontPlatformData* data = font_platform_data_cache_.GetOrCreateFontPlatformData(
+       this, font_description, creation_params, alternate_font_name);
++  if (data && !IsUxrFontFamilyAllowed(data->FontFamilyName()))
++    return nullptr;
++  return data;
++}
++
++bool FontCache::IsUxrFontFamilyAllowed(const String& family) {
++  const auto& config = base::UxrConfig::GetInstance();
++  if (config.Get("uxr-font-policy") != "restricted")
++    return true;
++  const std::string actual = family.Utf8();
++  for (const auto& entry : base::SplitString(config.Get("uxr-font-whitelist"), ",",
++                                            base::TRIM_WHITESPACE,
++                                            base::SPLIT_WANT_NONEMPTY)) {
++    if (base::EqualsCaseInsensitiveASCII(entry, actual))
++      return true;
++  }
++  return false;
++}
++
++const SimpleFontData* FontCache::UxrRestrictedLastResortFont(
++    const FontDescription& description) {
++  const auto& config = base::UxrConfig::GetInstance();
++  if (config.Get("uxr-font-policy") != "restricted")
++    return nullptr;
++  for (const auto& entry : base::SplitString(config.Get("uxr-font-whitelist"), ",",
++                                            base::TRIM_WHITESPACE,
++                                            base::SPLIT_WANT_NONEMPTY)) {
++    if (const auto* data = GetFontData(description, AtomicString(String::FromUtf8(entry)),
++                                       AlternateFontName::kNoAlternate))
++      return data;
++  }
++  // A missing installed pool must not fall back to an excluded host font, or
++  // leave Blink's mandatory last-resort font null. Skia's empty face has no
++  // host glyphs and keeps this failure bounded; no real font is fabricated.
++  const auto* empty = MakeGarbageCollected<FontPlatformData>(
++      SkTypeface::MakeEmpty(), std::string(), description.EffectiveFontSize(),
++      false, false, description.TextRendering(), ResolvedFontFeatures(),
++      description.Orientation());
++  return FontDataFromFontPlatformData(empty, description.SubpixelAscentDescent());
+ }
+ 
+ void FontCache::AcceptLanguagesChanged(const String& accept_languages) {
+@@ -377,9 +421,23 @@
+       Character::IsNonCharacter(lookup_char))
+     return nullptr;
+   base::ElapsedTimer timer;
++  if (base::UxrConfig::GetInstance().Get("uxr-font-policy") == "restricted") {
++    // Search the installed pool in explicit order. PlatformFallback may return
++    // an arbitrary host typeface; do not enter that path in restricted mode.
++    for (const auto& entry : base::SplitString(
++             base::UxrConfig::GetInstance().Get("uxr-font-whitelist"), ",",
++             base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
++      const auto* candidate = GetFontData(description, AtomicString(String::FromUtf8(entry)),
++                                          AlternateFontName::kNoAlternate);
++      if (candidate && candidate->GlyphForCharacter(lookup_char))
++        return candidate;
++    }
++    return nullptr;
++  }
+   const std::string persona = base::UxrConfig::GetInstance().Get("uxr-platform");
+   const std::string whitelist = base::UxrConfig::GetInstance().Get("uxr-font-whitelist");
+-  if (base::UxrConfig::GetInstance().Get("uxr-synthetic-device-tests") == "true" &&
++  if (base::UxrConfig::GetInstance().Get("uxr-font-policy").empty() &&
++      base::UxrConfig::GetInstance().Get("uxr-synthetic-device-tests") == "true" &&
+       (base::EqualsCaseInsensitiveASCII(persona, "windows") ||
+        base::EqualsCaseInsensitiveASCII(persona, "win32")) && whitelist.empty()) {
+     static constexpr const char* kPersonaFallbackFamilies[] = {

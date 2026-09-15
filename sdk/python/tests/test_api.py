@@ -504,6 +504,27 @@ def test_persistent_geometry_follows_saved_seed(tmp_path, offline_launch):
     assert (tmp_path / SEED_FILE).read_bytes() == b"42\n"
 
 
+@pytest.mark.parametrize("explicit", [None, "--uxr-font-whitelist=Custom", "--fingerprint-font-whitelist=Custom"])
+def test_restricted_font_directory_is_validated_after_defaults_without_hiding_user_alias(
+        tmp_path, offline_launch, monkeypatch, explicit):
+    calls = []
+    def whitelist(path):
+        calls.append(path)
+        return "--uxr-font-whitelist=Fixture"
+    monkeypatch.setattr(api, "font_dir_whitelist_arg", whitelist)
+    args = ["--fingerprint-font-policy=restricted"] + ([explicit] if explicit else [])
+    original = list(args)
+    _, effective, _, _ = api._prepare(True, None, args, False, None, None, False, None, False, fonts_dir=tmp_path)
+    assert args == original
+    if explicit:
+        assert not calls
+        assert explicit in effective
+        assert "--uxr-font-whitelist=Fixture" not in effective
+    else:
+        assert calls == [tmp_path]
+        assert "--uxr-font-whitelist=Fixture" in effective
+
+
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("kind", ["browser", "context", "persistent"])
 def test_launch_paths_share_geometry_and_fonts(tmp_path, offline_launch, monkeypatch, asynchronous, kind):

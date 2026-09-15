@@ -1,0 +1,117 @@
+diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
+index 037dead9eb725c7a5c41c9691657118b501f4bf3..c1f7a22bd8b1c215b03dc73317d76e88f695c010 100644
+--- a/third_party/blink/renderer/core/exported/web_view_impl.cc
++++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
+@@ -39,8 +39,10 @@
+ #include "base/memory/scoped_refptr.h"
+ #include "base/metrics/histogram_macros.h"
+ #include "base/observer_list.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/task/common/task_annotator.h"
+ #include "base/time/time.h"
++#include "base/uxr_config.h"
+ #include "build/build_config.h"
+ #include "cc/layers/picture_layer.h"
+ #include "components/viz/common/features.h"
+@@ -259,6 +261,93 @@
+ 
+ namespace {
+ 
++// Apply launch preferences before publishing WebSettings, widget preferences
++// and CSS invalidation. Media queries, form controls, scrollbars, animation
++// settings and navigator.maxTouchPoints then observe the same effective state.
++void ApplyUxrWebPreferences(web_pref::WebPreferences& prefs) {
++  const auto& config = base::UxrConfig::GetInstance();
++  const auto boolean = [&](const char* key, bool& value) {
++    const std::string text = config.Get(key);
++    if (text == "true" || text == "1")
++      value = true;
++    else if (text == "false" || text == "0")
++      value = false;
++  };
++  boolean("uxr-reduced-motion", prefs.prefers_reduced_motion);
++  boolean("uxr-reduced-transparency", prefs.prefers_reduced_transparency);
++  boolean("uxr-inverted-colors", prefs.inverted_colors);
++
++  const std::string scheme = config.Get("uxr-color-scheme");
++  if (scheme == "dark" || scheme == "light") {
++    prefs.preferred_color_scheme = scheme == "dark"
++        ? mojom::PreferredColorScheme::kDark
++        : mojom::PreferredColorScheme::kLight;
++    prefs.preferred_root_scrollbar_color_scheme = prefs.preferred_color_scheme;
++  }
++  const std::string contrast = config.Get("uxr-preferred-contrast");
++  if (contrast == "more")
++    prefs.preferred_contrast = mojom::PreferredContrast::kMore;
++  else if (contrast == "less")
++    prefs.preferred_contrast = mojom::PreferredContrast::kLess;
++  else if (contrast == "no-preference")
++    prefs.preferred_contrast = mojom::PreferredContrast::kNoPreference;
++
++  const std::string forced = config.Get("uxr-forced-colors");
++  if (!forced.empty()) {
++    prefs.in_forced_colors = forced == "active" || forced == "true" || forced == "1";
++    // SetInForcedColors controls actual author-style color replacement too.
++    prefs.is_forced_colors_disabled = false;
++  }
++
++  using Pointer = mojom::PointerType;
++  using Hover = mojom::HoverType;
++  const int none = static_cast<int>(Pointer::kPointerNone);
++  const int coarse = static_cast<int>(Pointer::kPointerCoarseType);
++  const int fine = static_cast<int>(Pointer::kPointerFineType);
++  const std::string pointer = config.Get("uxr-pointer");
++  if (pointer == "fine" || pointer == "coarse" || pointer == "none") {
++    prefs.primary_pointer_type = pointer == "fine" ? Pointer::kPointerFineType
++        : pointer == "coarse" ? Pointer::kPointerCoarseType : Pointer::kPointerNone;
++    prefs.available_pointer_types = static_cast<int>(prefs.primary_pointer_type);
++  }
++  int touch_points = 0;
++  if (config.GetInt("uxr-max-touch-points", &touch_points)) {
++    prefs.pointer_events_max_touch_points = touch_points;
++    prefs.touch_event_feature_detection_enabled = touch_points > 0;
++    if (touch_points > 0) {
++      prefs.available_pointer_types = (prefs.available_pointer_types & ~none) | coarse;
++      if (pointer.empty() && prefs.primary_pointer_type == Pointer::kPointerNone) {
++        prefs.primary_pointer_type = Pointer::kPointerCoarseType;
++        prefs.primary_hover_type = Hover::kHoverNone;
++      }
++    } else {
++      prefs.available_pointer_types &= ~coarse;
++      if (!prefs.available_pointer_types)
++        prefs.available_pointer_types = none;
++    }
++    if (pointer.empty() && prefs.primary_pointer_type == Pointer::kPointerCoarseType &&
++        touch_points == 0) {
++      prefs.primary_pointer_type = (prefs.available_pointer_types & fine)
++          ? Pointer::kPointerFineType : Pointer::kPointerNone;
++    }
++  } else if (!pointer.empty()) {
++    // An explicit single-pointer fixture also determines its touch capability.
++    prefs.pointer_events_max_touch_points = pointer == "coarse"
++        ? std::max(1, prefs.pointer_events_max_touch_points) : 0;
++    prefs.touch_event_feature_detection_enabled = prefs.pointer_events_max_touch_points > 0;
++  }
++  const std::string hover = config.Get("uxr-hover");
++  if (hover == "hover" || hover == "none") {
++    prefs.primary_hover_type = hover == "hover" ? Hover::kHoverHoverType : Hover::kHoverNone;
++    prefs.available_hover_types = static_cast<int>(prefs.primary_hover_type);
++  } else if (pointer == "none" || pointer == "coarse" ||
++             (config.Has("uxr-max-touch-points") &&
++              prefs.primary_pointer_type == Pointer::kPointerNone)) {
++    prefs.primary_hover_type = Hover::kHoverNone;
++    prefs.available_hover_types = static_cast<int>(Hover::kHoverNone);
++  }
++}
++
+ class EmptyEventListener final : public NativeEventListener {
+  public:
+   void Invoke(ExecutionContext* execution_context, Event*) override {}
+@@ -3898,6 +3987,7 @@
+ void WebViewImpl::UpdateWebPreferences(
+     const blink::web_pref::WebPreferences& preferences) {
+   web_preferences_ = preferences;
++  ApplyUxrWebPreferences(web_preferences_);
+ 
+   if (IsFencedFrameRoot()) {
+     // The main frame of a fenced frame should not behave like a top level

@@ -2,12 +2,65 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeFingerprintArgs } from "../_fingerprint.js";
 import { lookupProxy, networkArgs, resolveWebrtcArgs } from "../_network.js";
+import { buildArgs } from "../index.js";
 
 for (const mode of ["off", "false", "0", "disable", "disabled", "OFF", "FALSE"]) {
   test(`off canonicalization: ${mode}`, () => {
     const args = ["--fingerprint-platform=windows", `--fingerprint=${mode}`, "--fingerprint-timezone=UTC"];
     assert.deepEqual(normalizeFingerprintArgs(args), ["--fingerprint=off", "--fingerprint-timezone=UTC"]);
     assert.equal(args[0], "--fingerprint-platform=windows");
+  });
+}
+
+for (const prefix of ['--fingerprint-', '--uxr-']) {
+  for (const flag of ['timer-resolution=7', 'timer-resolution=0', 'max-touch-points=16',
+    'gpu-backend=native', 'audio-render=isolated', 'audio-seed=18446744073709551615',
+    'pointer=fine', 'hover=none', 'color-scheme=dark', 'forced-colors=active',
+    'preferred-contrast=less', 'keyboard-layout=native', 'codec-h264=disabled',
+    'codec-av1=native', 'codec-vp9=supported,smooth,power-efficient']) {
+    test(`backend option syntax ${prefix}${flag}`, () => {
+      assert.deepEqual(normalizeFingerprintArgs([prefix + flag]), [prefix + flag]);
+    });
+  }
+  for (const flag of ['timer-resolution=+1', 'timer-resolution=1.5', 'timer-resolution=1001',
+    'max-touch-points=17', 'audio-seed=0', 'audio-seed=18446744073709551616', 'audio-render=noise',
+    'gpu-backend=software', 'hdr=high', 'color-scheme=auto', 'codec-h264=smooth',
+    'codec-h264=supported,', 'codec-vp8= supported', 'codec-vp9=supported,unknown',
+    'keyboard-layout=us', 'font-policy=restricted']) {
+    test(`invalid backend value ${prefix}${flag}`, () => assert.throws(() => normalizeFingerprintArgs([prefix + flag])));
+  }
+}
+
+test('effective aliases, mixed pointer and synthetic keyboard', () => {
+  const valid = ['--fingerprint-pointer=none', '--uxr-pointer=fine', '--fingerprint-max-touch-points=5'];
+  assert.deepEqual(normalizeFingerprintArgs(valid), valid);
+  for (const [pointer, touch] of [['none', '1'], ['coarse', '0']])
+    assert.throws(() => normalizeFingerprintArgs([`--uxr-pointer=${pointer}`, `--fingerprint-max-touch-points=${touch}`]), /inconsistent/);
+  assert.ok(normalizeFingerprintArgs(['--uxr-synthetic-device-tests=true', '--fingerprint-keyboard-layout=us']));
+});
+
+test('restricted font pool preserves Unicode and spaces and rejects empty entries', () => {
+  const flags = ['--fingerprint-font-policy=restricted', '--fingerprint-font-whitelist=Arial Narrow, ＭＳ ゴシック'];
+  assert.deepEqual(normalizeFingerprintArgs(flags), flags);
+  for (const families of ['', ',Arial', 'Arial,', 'Arial, ,Serif', 'Arial\nInjected', 'A,'.repeat(256) + 'Z'])
+    assert.throws(() => normalizeFingerprintArgs([flags[0], `--fingerprint-font-whitelist=${families}`]), /font-policy/);
+});
+
+test('audio seed dependency is checked after launch defaults', () => {
+  const mode = ['--fingerprint-audio-render=isolated'];
+  assert.deepEqual(normalizeFingerprintArgs(mode), mode);
+  assert.throws(() => buildArgs({stealthArgs:false, extraArgs:mode}), /seed/);
+  assert.ok(buildArgs({extraArgs:mode}).includes(mode[0]));
+  assert.ok(buildArgs({stealthArgs:false, extraArgs:[...mode, '--fingerprint=42']}));
+  assert.ok(buildArgs({stealthArgs:false, extraArgs:[...mode, '--fingerprint-audio-seed=42']}));
+  assert.ok(!buildArgs({headless:false}).includes('--ignore-gpu-blocklist'));
+  assert.ok(buildArgs({extraArgs:['--ignore-gpu-blocklist']}).includes('--ignore-gpu-blocklist'));
+});
+
+for (const flag of ['--proxy-pac-url=https://example.test/proxy.pac', '--proxy-auto-detect']) {
+  test(`proxy policy for ${flag}`, () => {
+    assert.equal(networkArgs([flag]).at(-1), '--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
+    assert.deepEqual(networkArgs([flag, '--no-proxy-server']), [flag, '--no-proxy-server']);
   });
 }
 

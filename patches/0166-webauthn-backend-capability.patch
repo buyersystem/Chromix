@@ -1,0 +1,23 @@
+diff --git a/third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc b/third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc
+index 48531ebf7837a44d3fbbe0faa86bc2167de431e0..779a00427ae8186be270e0019820742e96a708d7 100644
+--- a/third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc
++++ b/third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc
+@@ -190,12 +190,14 @@
+       WebFeature::
+           kCredentialManagerIsUserVerifyingPlatformAuthenticatorAvailable);
+ 
+-  // UXR: persona platform-authenticator capability. A headless Linux host
+-  // answers "no platform authenticator" while a Windows persona implies
+-  // Windows Hello -> true. Pin to the persona instead of the host.
++  // A public platform name cannot install an authenticator. Keep the browser
++  // capability query, callback timing and permission authority for real use.
++  // A forced answer is only available to explicitly synthetic test fixtures.
+   {
+     std::string p_uv = base::UxrConfig::GetInstance().Get("uxr-webauthn-uvpaa");
+-    if (!p_uv.empty()) {
++    if (base::UxrConfig::GetInstance().Get("uxr-synthetic-device-tests") ==
++            "true" &&
++        !p_uv.empty()) {
+       resolver->Resolve(p_uv == "true");
+       return promise;
+     }

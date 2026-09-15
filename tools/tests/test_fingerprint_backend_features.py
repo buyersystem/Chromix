@@ -132,6 +132,7 @@ def webrtc_ip(tmp_path_factory):
 #include <io.h>
 #include <fcntl.h>
 #else
+#include <sys/socket.h>
 #include <arpa/inet.h>
 #endif
 #include <sstream>

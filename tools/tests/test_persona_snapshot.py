@@ -56,6 +56,7 @@ int main(int argc, char** argv) {
     output = root / 'snapshot-test'
     compiler = os.environ.get('CXX') or shutil.which('clang++') or shutil.which('c++')
     result = subprocess.run([compiler, '-std=c++20', '-Wall', '-Wextra', '-Werror',
+                             *(['-pthread'] if os.name != 'nt' else []),
                              '-I', str(root), str(root / 'base/uxr_config.cc'), str(source),
                              '-o', str(output)], capture_output=True, text=True, encoding='utf-8')
     assert result.returncode == 0, result.stdout + result.stderr

@@ -1,0 +1,13 @@
+diff --git a/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc b/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
+index e09a72d1f16a8bcfe4e34b1e3f6a1cbea24cb5e2..010c7fea8848316a93d874fef7b5f52840d3dd6e 100644
+--- a/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
++++ b/third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc
+@@ -145,6 +145,8 @@
+ 
+ const SimpleFontData* FontCache::GetLastResortFallbackFont(
+     const FontDescription& description) {
++  if (const auto* restricted = UxrRestrictedLastResortFont(description))
++    return restricted;
+   const FontFaceCreationParams fallback_creation_params(
+       GetFallbackFontFamily(description));
+   const FontPlatformData* font_platform_data = GetFontPlatformData(

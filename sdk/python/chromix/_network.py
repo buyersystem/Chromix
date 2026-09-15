@@ -96,7 +96,8 @@ def network_args(args, proxy=None):
                 except ValueError:
                     raise ValueError(f"{key} requires an IPv4/IPv6 address or auto") from None
     flags = {a.partition("=")[0] for a in result}
-    proxied = '--no-proxy-server' not in flags and (proxy or '--proxy-server' in flags)
+    proxied = '--no-proxy-server' not in flags and (proxy or flags.intersection(
+        ('--proxy-server', '--proxy-pac-url', '--proxy-auto-detect')))
     if proxied and '--force-webrtc-ip-handling-policy' not in flags:
         result.append("--force-webrtc-ip-handling-policy=disable_non_proxied_udp")
     return result

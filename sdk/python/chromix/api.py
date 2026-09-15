@@ -226,10 +226,6 @@ def build_args(stealth_args: bool,
     if stealth_args:
         for arg in get_default_stealth_args():
             seen[arg.split("=", 1)[0]] = arg
-    # Keep the GPU off the software-fallback path (SwiftShader is an instant
-    # fingerprint); headed Linux also needs it for WebGL under Xvfb.
-    if not headless or os.name == "nt":
-        seen["--ignore-gpu-blocklist"] = "--ignore-gpu-blocklist"
     if extra_args:
         for arg in extra_args:
             seen[arg.split("=", 1)[0]] = arg
@@ -245,7 +241,7 @@ def build_args(stealth_args: bool,
     if start_maximized and not any(
             k in seen for k in ("--start-maximized", "--window-size", "--window-position")):
         seen["--start-maximized"] = "--start-maximized"
-    return normalize_fingerprint_args(list(seen.values()))
+    return normalize_fingerprint_args(list(seen.values()), final=True)
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +298,13 @@ _ua_warned = False
 def _prepare(headless, proxy, args, stealth_args, timezone, locale, geoip,
              extension_paths, start_maximized, browser_version=None,
              release_channel=None, fonts_dir=None):
+    if fonts_dir and not any(isinstance(arg, str) and arg.partition("=")[0] in
+            ("--uxr-font-whitelist", "--fingerprint-font-whitelist") for arg in args or []):
+        whitelist = font_dir_whitelist_arg(fonts_dir)
+        if whitelist:
+            args = [whitelist] + list(args or [])
+        else:
+            sys.stderr.write(f"[chromix] fonts_dir={fonts_dir}: no parseable fonts found\n")
     args = _network_args(args, proxy)
     proxy_kwargs, proxy_extra = _resolve_proxy_config(proxy)
     native_socks_config(proxy, args)  # validate before GeoIP, driver or download
@@ -319,12 +322,6 @@ def _prepare(headless, proxy, args, stealth_args, timezone, locale, geoip,
         cdm = find_cdm()
         if cdm:
             args = list(args or []) + [widevine_flag(cdm)]
-    if fonts_dir:
-        whitelist = font_dir_whitelist_arg(fonts_dir)
-        if whitelist:
-            args = [whitelist] + list(args or [])
-        else:
-            sys.stderr.write(f"[chromix] fonts_dir={fonts_dir}: no parseable fonts found\n")
     chrome_args = build_args(stealth_args, (args or []) + proxy_extra,
                              timezone=timezone, locale=locale, headless=headless,
                              extension_paths=extension_paths,

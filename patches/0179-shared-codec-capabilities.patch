@@ -1,0 +1,85 @@
+diff --git a/media/base/supported_types.cc b/media/base/supported_types.cc
+index 90e3bdabfed9454a848cb325a12bb8b4fcc0881f..a2c424ae95386ea6a3dc76eafcc74d4829a50caa 100644
+--- a/media/base/supported_types.cc
++++ b/media/base/supported_types.cc
+@@ -3,6 +3,8 @@
+ // found in the LICENSE file.
+ 
+ #include "media/base/supported_types.h"
++
++#include "base/uxr_config.h"
+ 
+ #include "base/command_line.h"
+ #include "base/feature_list.h"
+@@ -420,6 +422,36 @@
+ 
+ }  // namespace
+ 
++bool IsUxrVideoCodecAllowed(VideoCodec codec) {
++  const char* key = nullptr;
++  switch (codec) {
++    case VideoCodec::kH264: key = "uxr-codec-h264"; break;
++    case VideoCodec::kVP8: key = "uxr-codec-vp8"; break;
++    case VideoCodec::kVP9: key = "uxr-codec-vp9"; break;
++    case VideoCodec::kAV1: key = "uxr-codec-av1"; break;
++    case VideoCodec::kHEVC: key = "uxr-codec-hevc"; break;
++    default: return true;
++  }
++  const auto& config = base::UxrConfig::GetInstance();
++  if (!config.Has(key))
++    return true;
++  const std::string value = config.Get(key);
++  if (value == "native")
++    return true;
++  // SetAll validates the exact token grammar before this immutable policy is
++  // published. The separators keep partial tokens from enabling a backend.
++  return ("," + value + ",").find(",supported,") != std::string::npos;
++}
++
++bool HasUxrVideoCodecRestrictions() {
++  for (VideoCodec codec : {VideoCodec::kH264, VideoCodec::kVP8, VideoCodec::kVP9,
++                           VideoCodec::kAV1, VideoCodec::kHEVC}) {
++    if (!IsUxrVideoCodecAllowed(codec))
++      return true;
++  }
++  return false;
++}
++
+ bool IsDecoderSupportedAudioType(const AudioType& type) {
+   if (auto* media_client = GetMediaClient())
+     return media_client->IsDecoderSupportedAudioType(type);
+@@ -427,12 +459,16 @@
+ }
+ 
+ bool IsDecoderSupportedVideoType(const VideoType& type) {
++  if (!IsUxrVideoCodecAllowed(type.codec))
++    return false;
+   if (auto* media_client = GetMediaClient())
+     return media_client->IsDecoderSupportedVideoType(type);
+   return IsDefaultDecoderSupportedVideoType(type);
+ }
+ 
+ bool IsEncoderSupportedVideoType(const VideoType& type) {
++  if (!IsUxrVideoCodecAllowed(type.codec))
++    return false;
+   if (auto* media_client = GetMediaClient()) {
+     return media_client->IsEncoderSupportedVideoType(type);
+   }
+@@ -442,6 +478,8 @@
+ // TODO(chcunningham): Add platform specific logic for Android (move from
+ // MimeUtilInternal).
+ bool IsDefaultDecoderSupportedVideoType(const VideoType& type) {
++  if (!IsUxrVideoCodecAllowed(type.codec))
++    return false;
+   if (!IsDecoderSupportedHdrMetadata(type)) {
+     return false;
+   }
+@@ -521,6 +559,8 @@
+ }
+ 
+ bool IsDefaultEncoderSupportedVideoType(const VideoType& type) {
++  if (!IsUxrVideoCodecAllowed(type.codec))
++    return false;
+ #if !BUILDFLAG(USE_PROPRIETARY_CODECS)
+   if (IsVideoCodecProprietary(type.codec)) {
+     return false;

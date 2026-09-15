@@ -13,7 +13,10 @@ GPU/字体/媒体矩阵仍需后续后端工作，不能用展示参数代替。
 
 ### 2026-09-14 GPU 后续更新
 
-新增 `0158`–`0165`，当前共 **165** 份补丁。Canvas/WebGL/WebGPU 共享不可变
+最新栈为 191 个补丁、15 套验收，普通 GPU 默认模式现为 native；详见
+[后端策略](backend-policy.md)。本节保留此前 165-patch 批次的实现与证据。
+
+当时新增 `0158`–`0165`，共 **165** 份补丁。Canvas/WebGL/WebGPU 共享不可变
 `--uxr-gpu-backend=native` 策略，禁止冲突参数重新打开旧噪声/Bridge/能力改写。
 另修未分配 snapshot 的 opaque Canvas 画布内 alpha；保留原 OOB、stride
 与设备丢失语义。未设置或 compatibility 模式保留此前接口行为。

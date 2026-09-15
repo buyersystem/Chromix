@@ -28,7 +28,11 @@ SUITES = (
     ('canvas', 'canvas_chain_audit.py', ()),
     ('runtime', 'fingerprint_runtime_audit.py', ()),
     ('display_backend', 'fingerprint_runtime_audit.py', ('--persona-backend',)),
+    ('backend_policy', 'fingerprint_backend_audit.py', ()),
+    ('media_policy', 'fingerprint_media_policy_audit.py', ()),
     ('transport', 'fingerprint_transport_audit.py', ()),
+    ('transport_lifecycle', 'fingerprint_transport_lifecycle_audit.py', ()),
+    ('quic', 'fingerprint_quic_audit.py', ()),
     ('sdk_cookies', 'sdk_cookie_audit.py', ()),
     ('socks_auth', 'socks5_browser_audit.py', ()),
     ('font_provenance', 'font_provenance_audit.py', ()),
@@ -69,7 +73,7 @@ def provenance(repo=REPO):
     except (OSError, subprocess.SubprocessError):
         result.update(commit=None, dirty=None)
     result['packages'] = {name: importlib.metadata.version(name)
-                          for name in ('playwright', 'Pillow', 'cryptography', 'h2', 'psutil')}
+                          for name in ('playwright', 'Pillow', 'cryptography', 'h2', 'aioquic', 'psutil')}
     return result
 
 
@@ -185,6 +189,20 @@ def assess_suite(name, report, expected_hash, expected_version):
         elif name == 'transport':
             from fingerprint_transport_audit import assess
             errors.extend(assess(report)[0])
+        elif name == 'transport_lifecycle':
+            from fingerprint_transport_lifecycle_audit import assess
+            errors.extend(assess(report)[0])
+        elif name == 'quic':
+            from fingerprint_quic_audit import assess
+            errors.extend(assess(report))
+        elif name in ('backend_policy', 'media_policy'):
+            if name == 'backend_policy':
+                from fingerprint_backend_audit import assess
+            else:
+                from fingerprint_media_policy_audit import assess
+            failures, missing = assess(report)
+            errors.extend(failures)
+            derived_gaps.extend(missing)
         elif name == 'sdk_cookies':
             from sdk_cookie_audit import assess
             errors.extend(assess(report))
@@ -230,7 +248,7 @@ def run(args):
               'errors': [], 'gaps': [], 'suites': [], 'control': args.control,
               'qualification': {'physical_devices': 'not_attested', 'external_routes': 'not_tested',
                                 'font_file_to_glyph_binding': 'see_font_provenance_suite; not_rasterization_attestation',
-                                'quic': 'not_tested'}}
+                                'quic': 'forced owned loopback only; see quic suite'}}
     try:
         original = binary_identity(args.browser)
         report['browser'] = original

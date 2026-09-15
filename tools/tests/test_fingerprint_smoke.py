@@ -7,6 +7,7 @@ from http.client import HTTPConnection
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 from types import SimpleNamespace
 from urllib.parse import urlencode
@@ -17,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("fingerprint_smoke", ROOT / "tools/fingerprint_smoke.py")
 smoke = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(smoke)
-NODE = Path("/root/.local/share/chromix-ci-node/node-v24.8.0-linux-x64/bin/node")
+NODE = Path(shutil.which("node") or "/nonexistent/chromix-test-node")
 
 
 def options(*extra):

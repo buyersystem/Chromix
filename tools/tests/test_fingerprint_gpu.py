@@ -367,6 +367,7 @@ def identity_binary(request, tmp_path_factory, patched_sources, patched_0030, pe
         path.write_text(text)
     binary = directory / "identity"
     result = subprocess.run([CXX, "-std=c++20", "-O0", "-Wall", "-Wextra", "-Werror",
+                             *(["-pthread"] if os.name != "nt" else []),
                              "-I", str(directory), str(directory / "identity.cc"),
                              "-o", str(binary)], text=True, capture_output=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -870,7 +871,7 @@ std::string ToLowerASCII(std::string value) {
   for (char& c : value) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
   return value;
 }
-template <typename T> using span = std::span<T>;
+using std::span;
 struct UxrConfig {
   std::map<std::string, std::string> values;
   static UxrConfig& GetInstance() { static UxrConfig config; return config; }

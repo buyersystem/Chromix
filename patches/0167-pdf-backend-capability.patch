@@ -1,0 +1,23 @@
+diff --git a/third_party/blink/renderer/modules/plugins/dom_plugin_array.cc b/third_party/blink/renderer/modules/plugins/dom_plugin_array.cc
+index 89f7834a30e11bfc8137d8f50d838b0ca2896167..f21639c7824e794c5080e5fd347cf1c601fd23bb 100644
+--- a/third_party/blink/renderer/modules/plugins/dom_plugin_array.cc
++++ b/third_party/blink/renderer/modules/plugins/dom_plugin_array.cc
+@@ -136,13 +136,11 @@
+ }
+ 
+ bool DOMPluginArray::IsPdfViewerAvailable() {
+-  // UXR: persona plugin shape. Every real desktop Chrome reports the
+-  // spec'd five-entry PDF list; an empty navigator.plugins is the classic
+-  // automation tell from configurations where the internal PDF viewer did not
+-  // register (headless variants, stripped builds). With uxr-plugins=chrome the
+-  // standard shape is presented regardless — this method also drives
+-  // navigator.pdfViewerEnabled, so the surface stays coherent.
+-  if (base::UxrConfig::GetInstance().Get("uxr-plugins") == "chrome") {
++  // Plugin inventory and navigator.pdfViewerEnabled describe the installed
++  // viewer. A presentation-only fixture is available solely in synthetic tests.
++  if (base::UxrConfig::GetInstance().Get("uxr-synthetic-device-tests") ==
++          "true" &&
++      base::UxrConfig::GetInstance().Get("uxr-plugins") == "chrome") {
+     return true;
+   }
+   auto* data = GetPluginData();

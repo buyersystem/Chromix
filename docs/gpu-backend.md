@@ -7,7 +7,9 @@ Canvas、WebGL、WebGPU 使用同一份不可变的启动策略，保留原生�
 
 **本轮实现的是共享原生后端契约，不是共用的跨平台隐私 rasterizer。**
 不同 API、power preference、驱动和软件回退仍可合法选择不同后端/适配器。
-匹配的 165-patch Chromium 二进制和跨 OS 实体设备验收尚未完成。
+当前栈已扩展到 191 个补丁，匹配二进制和跨 OS 实体设备验收尚未完成。
+最新后端策略与新增验收入口见 [后端策略](backend-policy.md)；下方 165-patch
+测试数量保留为历史记录。
 
 ## 计划
 
@@ -29,11 +31,13 @@ Canvas、WebGL、WebGPU 使用同一份不可变的启动策略，保留原生�
 
 - `native` 禁止 Canvas 像素/文本噪声、Canvas Bridge、WebGL persona 身份/能力
   路径及 WebGPU feature allowlist 改写；冲突的 synthetic 参数也不能重新开启。
-- 未设置或 `compatibility` 保留原有行为，包括原有的 synthetic opt-in。
+- `0172`–`0173` 使普通启动默认采用 `native`。显式 `compatibility` 保留旧行为；
+  synthetic 测试未指定策略时仍使用 compatibility，显式 native 始终优先。
 - 其他值、空值和不同大小写均在 `SetAll` 发布前拒绝；初始化后的快照不可更换。
 - 不强制 `--disable-gpu`、ANGLE/Dawn 后端或特定显卡，也不改写驱动能力。
 - Python sync/async 和 Node Playwright measured 启动自动使用 `native`。
-  普通启动可通过原始 `args` 传入；没有新增同名高层 SDK 参数。
+  普通启动可通过 `--fingerprint-gpu-backend` 或原始 `args` 选择兼容模式；没有
+  新增同名高层 SDK 参数。SDK 不再自动传入 `--ignore-gpu-blocklist`。
   Puppeteer measured admission 仍未实现。
 
 | 补丁 | 接线 |

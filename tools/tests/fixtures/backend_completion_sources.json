@@ -1,0 +1,739 @@
+{
+  "chromium_version": "152.0.7977.82",
+  "core_commit": "e71b91c6e336d0f25cfc6b9ef09298a9d2506e24",
+  "core_inputs": [
+    {
+      "path": "patches/extra/bromite/fingerprinting-flags-client-rects-and-measuretext.patch",
+      "patch_sha256": "f8afff23b1afe2e0f04a3972282b9be5e9beebb86ce1693141b5df71f20ab857",
+      "target": "content/browser/renderer_host/render_process_host_impl.cc",
+      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -84,6 +84,7 @@\n #include \"components/services/storage/public/cpp/quota_error_or.h\"\n #include \"components/services/storage/public/mojom/cache_storage_control.mojom.h\"\n #include \"components/tracing/common/tracing_switches.h\"\n+#include \"components/ungoogled/ungoogled_switches.h\"\n #include \"components/viz/common/switches.h\"\n #include \"components/viz/host/gpu_client.h\"\n #include \"components/viz/host/host_frame_sink_manager.h\"\n@@ -3892,6 +3893,8 @@ void RenderProcessHostImpl::PropagateBro\n       switches::kEnableWebGLDraftExtensions,\n       switches::kEnableWebGPUDeveloperFeatures,\n       switches::kFileUrlPathAlias,\n+      switches::kFingerprintingClientRectsNoise,\n+      switches::kFingerprintingCanvasMeasureTextNoise,\n       switches::kForceDeviceScaleFactor,\n       switches::kForceDisplayColorProfile,\n       switches::kForceHighContrast,\n"
+    },
+    {
+      "path": "patches/extra/bromite/flag-fingerprinting-canvas-image-data-noise.patch",
+      "patch_sha256": "6e3dce40e54244e4ca146fdf364f9211ac96c0cf732cec4c28dfa45753136ae5",
+      "target": "content/browser/renderer_host/render_process_host_impl.cc",
+      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -3895,6 +3895,7 @@ void RenderProcessHostImpl::PropagateBro\n       switches::kFileUrlPathAlias,\n       switches::kFingerprintingClientRectsNoise,\n       switches::kFingerprintingCanvasMeasureTextNoise,\n+      switches::kFingerprintingCanvasImageDataNoise,\n       switches::kForceDeviceScaleFactor,\n       switches::kForceDisplayColorProfile,\n       switches::kForceHighContrast,\n"
+    },
+    {
+      "path": "patches/extra/ungoogled-chromium/add-flag-for-disabling-jit.patch",
+      "patch_sha256": "724f8d4fea671eb9ecc56bce391eb3d653790586bbc1080f06279c953b7e08f7",
+      "target": "content/browser/renderer_host/render_process_host_impl.cc",
+      "target_fragment": "--- a/content/browser/renderer_host/render_process_host_impl.cc\n+++ b/content/browser/renderer_host/render_process_host_impl.cc\n@@ -3657,7 +3657,10 @@ bool RenderProcessHostImpl::ShouldSendGp\n }\n \n bool RenderProcessHostImpl::IsJitDisabled() {\n-  return !!(flags_ & RenderProcessFlags::kJitDisabled);\n+  return !!(flags_ & RenderProcessFlags::kJitDisabled) ||\n+         (base::CommandLine::ForCurrentProcess()->HasSwitch(\n+              \"disabling-javascript-optimization-disables-jit\") &&\n+          RenderProcessHostImpl::AreV8OptimizationsDisabled());\n }\n \n bool RenderProcessHostImpl::AreV8OptimizationsDisabled() {\n@@ -3785,6 +3788,9 @@ void RenderProcessHostImpl::AppendRender\n   if (IsJitDisabled()) {\n     AppendToCommaSeparatedSwitch(\n         command_line, blink::switches::kJavaScriptFlags, \"--jitless\");\n+\n+    AppendToCommaSeparatedSwitch(\n+        command_line, blink::switches::kJavaScriptFlags, \"--wasm_jitless\");\n   } else if (AreV8OptimizationsDisabled()) {\n     AppendToCommaSeparatedSwitch(command_line,\n                                  blink::switches::kJavaScriptFlags,\n"
+    }
+  ],
+  "qualification": "independent source and extracted C++ with dependency shims; not a Chromium build",
+  "sources": {
+    "chrome/app/chrome_main.cc": {
+      "target": "chrome/app/chrome_main.cc",
+      "upstream_sha256": "7de66ddc2fed0c51d4cc87796555b1c3a887ade67282f889a525352e3719f829"
+    },
+    "content/browser/renderer_host/render_process_host_impl.cc": {
+      "target": "content/browser/renderer_host/render_process_host_impl.cc",
+      "upstream_sha256": "8c4ff5af3f6d063703fb2b1e7df8f112ea28ea2162be259bf7ad6eed08ddbcc9"
+    },
+    "gin/v8_platform.cc": {
+      "target": "gin/v8_platform.cc",
+      "upstream_sha256": "8a846e174627d0d9ea452acd085468c09836bbd893ecd25dcd2e51df46f4abbf"
+    },
+    "media/base/supported_types.cc": {
+      "target": "media/base/supported_types.cc",
+      "upstream_sha256": "4a6443023099df664b7d6195fb968e9a44e1b6fa7e7789761cce6ff83e5a06e3"
+    },
+    "media/base/supported_types.h": {
+      "target": "media/base/supported_types.h",
+      "upstream_sha256": "b642f514434ee7f9558c30fd36957351214179916db2e4f61d24fb59d5eab9a3"
+    },
+    "media/filters/decoder_selector.cc": {
+      "target": "media/filters/decoder_selector.cc",
+      "upstream_sha256": "1a319ed66e500f21dc380d9fab099e07e07393908b57d5010b6c3447659755d8"
+    },
+    "third_party/blink/renderer/core/css/media_values.cc": {
+      "target": "third_party/blink/renderer/core/css/media_values.cc",
+      "upstream_sha256": "92f60cddfa313d0d334ddc8add812489c26d11d77cd496cb925fb60849c1634a"
+    },
+    "third_party/blink/renderer/core/exported/web_view_impl.cc": {
+      "target": "third_party/blink/renderer/core/exported/web_view_impl.cc",
+      "upstream_sha256": "6006b32fb1ea7cac1a6c8f410ab4bfd8926ba7edb3d151343e160a2c64f07361"
+    },
+    "third_party/blink/renderer/core/timing/time_clamper.cc": {
+      "target": "third_party/blink/renderer/core/timing/time_clamper.cc",
+      "upstream_sha256": "2491cb64f50a54ccd10f778c058f0960ad4d9fa0861e39212bc27b8343bd103c"
+    },
+    "third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc": {
+      "target": "third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc",
+      "upstream_sha256": "5054d4ddabd8471f62d11c204365f3ee74d06da0f2b88815c924c7985681fe1f"
+    },
+    "third_party/blink/renderer/modules/font_access/font_access.cc": {
+      "target": "third_party/blink/renderer/modules/font_access/font_access.cc",
+      "upstream_sha256": "3c6584864d3074a97e6b9064be4bd45d3ae5b1b698d19fe73d7de110209abd5d"
+    },
+    "third_party/blink/renderer/modules/keyboard/keyboard_layout.cc": {
+      "target": "third_party/blink/renderer/modules/keyboard/keyboard_layout.cc",
+      "upstream_sha256": "1cec88d8fb4bda32b632285293abb0e6c329f2c8e8142e35b61b5c6ce738d1a9"
+    },
+    "third_party/blink/renderer/modules/media_capabilities/media_capabilities.cc": {
+      "target": "third_party/blink/renderer/modules/media_capabilities/media_capabilities.cc",
+      "upstream_sha256": "f71c600e526d2788dc085e3fac36352059984c85d91276b7e92c3ccd52d57056"
+    },
+    "third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc": {
+      "target": "third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc",
+      "upstream_sha256": "3a0c02038740f447fbfef21bdef1bd6e0a369494161e362d029e1e2e63322bbb"
+    },
+    "third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc": {
+      "target": "third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc",
+      "upstream_sha256": "9ce8b224adda12bb19c5f21d844fd4e231dd80bdf0a75765c0aa03d0f70efff6"
+    },
+    "third_party/blink/renderer/modules/plugins/dom_plugin_array.cc": {
+      "target": "third_party/blink/renderer/modules/plugins/dom_plugin_array.cc",
+      "upstream_sha256": "fd3dfa293054f95137f89920cc7c83382e40e7c0bd9ce5b67b42fdc227a44b9e"
+    },
+    "third_party/blink/renderer/modules/speech/speech_synthesis.cc": {
+      "target": "third_party/blink/renderer/modules/speech/speech_synthesis.cc",
+      "upstream_sha256": "45010311b4a0f2cd53b58196deff36410ff58d22b2eeda7270ad13c1b0cd8aeb"
+    },
+    "third_party/blink/renderer/modules/webaudio/audio_handler.cc": {
+      "target": "third_party/blink/renderer/modules/webaudio/audio_handler.cc",
+      "upstream_sha256": "5a9eb8baed881bc12fb2267acbd80cb831fa15a270a343abdc4b972057330a4f"
+    },
+    "third_party/blink/renderer/modules/webcodecs/video_encoder.cc": {
+      "target": "third_party/blink/renderer/modules/webcodecs/video_encoder.cc",
+      "upstream_sha256": "d727cfb025e2675a13dc31024a194286d78bd345a8349646ceb7eea0f2c658a4"
+    },
+    "third_party/blink/renderer/platform/fonts/font_cache.cc": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "upstream_sha256": "284a124db458ff38620ee4a2d85bbdd90713475c07f7344d0035de0b64c05cca"
+    },
+    "third_party/blink/renderer/platform/fonts/font_cache.h": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.h",
+      "upstream_sha256": "ce23838b223e37fc2a1e3933b3da5ed9478e07f0c9c2fef956ff28c95fa0248e"
+    },
+    "third_party/blink/renderer/platform/fonts/mac/font_cache_mac.mm": {
+      "target": "third_party/blink/renderer/platform/fonts/mac/font_cache_mac.mm",
+      "upstream_sha256": "5bd070fba9cd7ed1120de89bdf8c3fdbdb2e170ab536b521138bbc5107b5d360"
+    },
+    "third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc": {
+      "target": "third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc",
+      "upstream_sha256": "44b983a99809e7288aa0307df2c6e40babebe7ffca7e088d9da523297be2d870"
+    },
+    "third_party/blink/renderer/platform/peerconnection/video_codec_factory.cc": {
+      "target": "third_party/blink/renderer/platform/peerconnection/video_codec_factory.cc",
+      "upstream_sha256": "2226f6ede178b6c553ca9f71bf668358d988d9aa8b7ebd723c6fb20c46c110cf"
+    },
+    "third_party/blink/public/common/web_preferences/web_preferences.h": {
+      "target": "third_party/blink/public/common/web_preferences/web_preferences.h",
+      "upstream_sha256": "c9f90af5ed07a711ed2387826bc9247eb9f02acecac4caaf239dbd402fb0e8c0"
+    }
+  },
+  "patches": {
+    "0166": {
+      "target": "third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc",
+      "patch_sha256": "11a2d0dbf7bbb97b105e6dc41f34533945b5633273df0f1916013833b122056e",
+      "preimage_sha256": "adacb592bc4205eb474016d39be086e493495b981bb2517b4ec892c5e09fbb6d",
+      "output_sha256": "1943207e926347a8d454f7662aac175c487d164949e0b383b8bb8db09cdb2f40",
+      "sections": [
+        {
+          "line": 190,
+          "text": "      WebFeature::\n          kCredentialManagerIsUserVerifyingPlatformAuthenticatorAvailable);\n\n  // UXR: persona platform-authenticator capability. A headless Linux host\n  // answers \"no platform authenticator\" while a Windows persona implies\n  // Windows Hello -> true. Pin to the persona instead of the host.\n  {\n    std::string p_uv = base::UxrConfig::GetInstance().Get(\"uxr-webauthn-uvpaa\");\n    if (!p_uv.empty()) {\n      resolver->Resolve(p_uv == \"true\");\n      return promise;\n    }\n"
+        }
+      ]
+    },
+    "0167": {
+      "target": "third_party/blink/renderer/modules/plugins/dom_plugin_array.cc",
+      "patch_sha256": "7d2ca45084a5a9b206a6d5e1a7a1e13d53999f1e9786ded9ff5ff657fa09379a",
+      "preimage_sha256": "6266f47166bba3aa127d0fcf05488180f185ad91c0c4999900e12cac3607c7d6",
+      "output_sha256": "f0a8b361f07e93e9a42fcfacd989f04c22b78b7842ee79327e5504871935673f",
+      "sections": [
+        {
+          "line": 136,
+          "text": "}\n\nbool DOMPluginArray::IsPdfViewerAvailable() {\n  // UXR: persona plugin shape. Every real desktop Chrome reports the\n  // spec'd five-entry PDF list; an empty navigator.plugins is the classic\n  // automation tell from configurations where the internal PDF viewer did not\n  // register (headless variants, stripped builds). With uxr-plugins=chrome the\n  // standard shape is presented regardless \u2014 this method also drives\n  // navigator.pdfViewerEnabled, so the surface stays coherent.\n  if (base::UxrConfig::GetInstance().Get(\"uxr-plugins\") == \"chrome\") {\n    return true;\n  }\n  auto* data = GetPluginData();\n"
+        }
+      ]
+    },
+    "0168": {
+      "target": "third_party/blink/renderer/modules/speech/speech_synthesis.cc",
+      "patch_sha256": "7577c3e1534b075acfcd7777ac698b7e5d05a17dc19e2efef59f1cdc328f5993",
+      "preimage_sha256": "97e0962840ac9add696d924ed54c575223d1de4385f6bcc7d739dc8f7d927f99",
+      "output_sha256": "0aaf7e08d8f852cb0a958ef2a279631ddb1f5dcec15fb11e7ec3ca9bd79666dc",
+      "sections": [
+        {
+          "line": 53,
+          "text": "\nbool UseWindowsSpeechVoiceTable() {\n  const auto& config = base::UxrConfig::GetInstance();\n  if (!config.Has(\"uxr-voices\") || config.Get(\"uxr-fingerprint-off\") == \"true\")\n    return false;\n  const std::string platform = base::ToLowerASCII(config.Get(\"uxr-platform\"));\n"
+        }
+      ]
+    },
+    "0169": {
+      "target": "third_party/blink/renderer/modules/keyboard/keyboard_layout.cc",
+      "patch_sha256": "3b89dcde0f81f385386d758ef2d0ec2b028f187294467c7d450b6fc9ec9f3866",
+      "preimage_sha256": "d09cab39df1de70a67f24286327f625853f8000bfa16e1054b1f2edbf55ee815",
+      "output_sha256": "5f39bf541a017e9540c92b4a12769ab21f02ad4142a5493b509af8d3d5bdfbbc",
+      "sections": [
+        {
+          "line": 94,
+          "text": "\n  switch (result->status) {\n    case mojom::blink::GetKeyboardLayoutMapStatus::kSuccess: {\n      // UXR: inject a coherent en-US layout when the OS map is empty (headless\n      // getLayoutMap()=={} is a sleeper tell leaking OS-locale absence).\n      if (base::UxrConfig::GetInstance().Has(\"uxr-keyboard-layout\")) {\n        HashMap<String, String> p_map;\n        p_map.Set(String(\"KeyA\"), String(\"a\"));\n        p_map.Set(String(\"KeyB\"), String(\"b\"));\n"
+        }
+      ]
+    },
+    "0170": {
+      "target": "third_party/blink/renderer/core/exported/web_view_impl.cc",
+      "patch_sha256": "f7a548be97058082aabb4f1c03a405276798487a1d3faf37012bb30d9a272572",
+      "preimage_sha256": "6006b32fb1ea7cac1a6c8f410ab4bfd8926ba7edb3d151343e160a2c64f07361",
+      "output_sha256": "962281d4e6ec4f45c242b78be49b35777cbb4add38579158ebfa4ac90c600df0",
+      "sections": [
+        {
+          "line": 39,
+          "text": "#include \"base/memory/scoped_refptr.h\"\n#include \"base/metrics/histogram_macros.h\"\n#include \"base/observer_list.h\"\n#include \"base/task/common/task_annotator.h\"\n#include \"base/time/time.h\"\n#include \"build/build_config.h\"\n#include \"cc/layers/picture_layer.h\"\n#include \"components/viz/common/features.h\"\n"
+        },
+        {
+          "line": 259,
+          "text": "\nnamespace {\n\nclass EmptyEventListener final : public NativeEventListener {\n public:\n  void Invoke(ExecutionContext* execution_context, Event*) override {}\n"
+        },
+        {
+          "line": 3898,
+          "text": "void WebViewImpl::UpdateWebPreferences(\n    const blink::web_pref::WebPreferences& preferences) {\n  web_preferences_ = preferences;\n\n  if (IsFencedFrameRoot()) {\n    // The main frame of a fenced frame should not behave like a top level\n"
+        }
+      ]
+    },
+    "0171": {
+      "target": "third_party/blink/renderer/core/css/media_values.cc",
+      "patch_sha256": "39de04981e8d2d72709daf09cec0e261fec979cd7bf4d9429abb4d79b838ca87",
+      "preimage_sha256": "45972084a4af81f0f621d38ce381a95b872fd0bfc77b18e10f6f8a2f52be174d",
+      "output_sha256": "5783649ed0ed9f5ae5ea58f43d20659904dab368387287c97e17f9859cb62d82",
+      "sections": [
+        {
+          "line": 3,
+          "text": "// found in the LICENSE file.\n\n#include \"third_party/blink/renderer/core/css/media_values.h\"\n\n#include \"base/strings/string_util.h\"  // UXR\n#include \"base/uxr_config.h\"  // UXR\n\n#include \"third_party/blink/public/common/css/scripting.h\"\n#include \"third_party/blink/renderer/core/css/css_resolution_units.h\"\n"
+        },
+        {
+          "line": 199,
+          "text": "  return frame->DevicePixelRatio();\n}\n\nbool MediaValues::CalculateDeviceSupportsHDR(LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetPage());\n  {  // UXR: persona HDR capability (dynamic-range media feature)\n    std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-hdr\");\n    if (!ph_v.empty()) {\n      return ph_v == \"true\" || ph_v == \"1\";\n    }\n  }\n  return frame->GetPage()\n      ->GetChromeClient()\n      .GetScreenInfo(*frame)\n"
+        },
+        {
+          "line": 239,
+          "text": "bool MediaValues::CalculateInvertedColors(LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: persona inverted-colors (OS display setting)\n    std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-inverted-colors\");\n    if (!ph_v.empty()) {\n      return ph_v == \"true\" || ph_v == \"1\";\n    }\n  }\n  return frame->GetSettings()->GetInvertedColors();\n}\n\n"
+        },
+        {
+          "line": 368,
+          "text": "    LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: persona primary pointer. A touchscreen host reports coarse here\n    // (and coarse in any-pointer) \u2014 the desktop persona must say fine, in\n    // lockstep with uxr-max-touch-points.\n    const std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-pointer\");\n    const std::string ph_persona =\n        base::UxrConfig::GetInstance().Get(\"uxr-platform\");\n    const bool ph_desktop =\n        base::EqualsCaseInsensitiveASCII(ph_persona, \"windows\") ||\n        base::EqualsCaseInsensitiveASCII(ph_persona, \"win32\");\n    if (ph_v == \"coarse\")\n      return mojom::blink::PointerType::kPointerCoarseType;\n    if (ph_v == \"none\")\n      return mojom::blink::PointerType::kPointerNone;\n    if (ph_v == \"fine\" || ph_desktop)\n      return mojom::blink::PointerType::kPointerFineType;\n  }\n  return frame->GetSettings()->GetPrimaryPointerType();\n}\n\nint MediaValues::CalculateAvailablePointerTypes(LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: keep any-pointer coherent with the primary pointer above.\n    // blink::PointerType shares bit values with ui::PointerType\n    // (NONE=1, COARSE=2, FINE=4) per the static asserts in\n    // web_preferences.cc.\n    const std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-pointer\");\n    const std::string ph_persona =\n        base::UxrConfig::GetInstance().Get(\"uxr-platform\");\n    const bool ph_desktop =\n        base::EqualsCaseInsensitiveASCII(ph_persona, \"windows\") ||\n        base::EqualsCaseInsensitiveASCII(ph_persona, \"win32\");\n    if (ph_v == \"coarse\")\n      return static_cast<int>(mojom::blink::PointerType::kPointerCoarseType);\n    if (ph_v == \"none\")\n      return static_cast<int>(mojom::blink::PointerType::kPointerNone);\n    if (ph_v == \"fine\" || ph_desktop)\n      return static_cast<int>(mojom::blink::PointerType::kPointerFineType);\n  }\n  return frame->GetSettings()->GetAvailablePointerTypes();\n}\n\n"
+        },
+        {
+          "line": 414,
+          "text": "    LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: persona primary hover \u2014 the desktop persona reports hover:hover.\n    const std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-hover\");\n    const std::string ph_persona =\n        base::UxrConfig::GetInstance().Get(\"uxr-platform\");\n    const bool ph_desktop =\n        base::EqualsCaseInsensitiveASCII(ph_persona, \"windows\") ||\n        base::EqualsCaseInsensitiveASCII(ph_persona, \"win32\");\n    if (ph_v == \"none\")\n      return mojom::blink::HoverType::kHoverNone;\n    if (ph_v == \"hover\" || ph_desktop)\n      return mojom::blink::HoverType::kHoverHoverType;\n  }\n  return frame->GetSettings()->GetPrimaryHoverType();\n}\n\n"
+        },
+        {
+          "line": 439,
+          "text": "int MediaValues::CalculateAvailableHoverTypes(LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: keep any-hover coherent with the primary hover above\n    // (HOVER_TYPE_HOVER = 1 << 1).\n    const std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-hover\");\n    const std::string ph_persona =\n        base::UxrConfig::GetInstance().Get(\"uxr-platform\");\n    const bool ph_desktop =\n        base::EqualsCaseInsensitiveASCII(ph_persona, \"windows\") ||\n        base::EqualsCaseInsensitiveASCII(ph_persona, \"win32\");\n    if (ph_v == \"none\")\n      return static_cast<int>(mojom::blink::HoverType::kHoverNone);\n    if (ph_v == \"hover\" || ph_desktop)\n      return static_cast<int>(mojom::blink::HoverType::kHoverHoverType);\n  }\n  return frame->GetSettings()->GetAvailableHoverTypes();\n}\n\n"
+        },
+        {
+          "line": 470,
+          "text": "    LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: persona prefers-color-scheme (OS theme reflects the host, not\n    // the persona \u2014 pin it so matchMedia agrees with the claimed machine).\n    std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-color-scheme\");\n    if (!ph_v.empty()) {\n      return ph_v == \"dark\" ? mojom::blink::PreferredColorScheme::kDark\n                            : mojom::blink::PreferredColorScheme::kLight;\n    }\n  }\n  DCHECK(frame->GetDocument());\n  DCHECK(frame->GetPage());\n  const MediaFeatureOverrides* overrides =\n"
+        },
+        {
+          "line": 501,
+          "text": "    LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: persona prefers-contrast\n    std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-preferred-contrast\");\n    if (ph_v == \"more\") {\n      return mojom::blink::PreferredContrast::kMore;\n    }\n    if (ph_v == \"less\") {\n      return mojom::blink::PreferredContrast::kLess;\n    }\n    if (ph_v == \"no-preference\") {\n      return mojom::blink::PreferredContrast::kNoPreference;\n    }\n  }\n  DCHECK(frame->GetPage());\n  const MediaFeatureOverrides* overrides =\n      frame->GetPage()->GetMediaFeatureOverrides();\n"
+        },
+        {
+          "line": 534,
+          "text": "bool MediaValues::CalculatePrefersReducedMotion(LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: persona prefers-reduced-motion (OS accessibility setting)\n    std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-reduced-motion\");\n    if (!ph_v.empty()) {\n      return ph_v == \"true\" || ph_v == \"1\";\n    }\n  }\n  const MediaFeatureOverrides* overrides =\n      frame->GetPage()->GetMediaFeatureOverrides();\n  std::optional<bool> override_value =\n"
+        },
+        {
+          "line": 580,
+          "text": "bool MediaValues::CalculatePrefersReducedTransparency(LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: persona prefers-reduced-transparency\n    std::string ph_v =\n        base::UxrConfig::GetInstance().Get(\"uxr-reduced-transparency\");\n    if (!ph_v.empty()) {\n      return ph_v == \"true\" || ph_v == \"1\";\n    }\n  }\n  const MediaFeatureOverrides* overrides =\n      frame->GetPage()->GetMediaFeatureOverrides();\n  std::optional<bool> override_value =\n"
+        },
+        {
+          "line": 608,
+          "text": "ForcedColors MediaValues::CalculateForcedColors(LocalFrame* frame) {\n  DCHECK(frame);\n  DCHECK(frame->GetSettings());\n  {  // UXR: persona forced-colors (Windows high-contrast mode)\n    std::string ph_v = base::UxrConfig::GetInstance().Get(\"uxr-forced-colors\");\n    if (!ph_v.empty()) {\n      return (ph_v == \"true\" || ph_v == \"1\" || ph_v == \"active\")\n                 ? ForcedColors::kActive\n                 : ForcedColors::kNone;\n    }\n  }\n  const MediaFeatureOverrides* overrides =\n      frame->GetPage()->GetMediaFeatureOverrides();\n  std::optional<ForcedColors> override_value =\n"
+        }
+      ]
+    },
+    "0172": {
+      "target": "base/uxr_config.h",
+      "patch_sha256": "3375ac29215f5556bdafd833d342a23234047816773ff219b55046eb984324ca",
+      "preimage_sha256": "c534e57da6f20271e35c6ae18da4dd4aa201ebe86e4852400db6cb939a6470b5",
+      "output_sha256": "755ecd3c65b52deae1f85c1bec5609ced4c9af20aa64136410bb3464f57265d5",
+      "sections": [
+        {
+          "line": 4,
+          "text": "#ifndef BASE_UXR_CONFIG_H_\n#define BASE_UXR_CONFIG_H_\n\n#include <cstdint>\n#include <map>\n#include <string>\n"
+        },
+        {
+          "line": 43,
+          "text": "// backend contract, not an adapter identity: native APIs may select different\n// GPUs, software paths, formats and color-management implementations.\nstruct BASE_EXPORT UxrGpuBackendPolicy {\n  bool native = false;\n  bool canvas_pixel_noise = false;\n  bool canvas_text_noise = true;\n  bool canvas_bridge = false;\n  bool capability_overrides = true;\n};\n\nclass BASE_EXPORT UxrConfig {\n"
+        },
+        {
+          "line": 67,
+          "text": "  flat_map<std::string, std::string> Snapshot() const;\n  UxrDisplayConfig Display() const;\n  UxrGpuBackendPolicy GpuBackendPolicy() const;\n  std::string ValidationError() const;\n\n  bool Has(const std::string& key) const;\n"
+        },
+        {
+          "line": 94,
+          "text": "  flat_map<std::string, std::string> map_;\n  UxrDisplayConfig display_;\n  UxrGpuBackendPolicy gpu_backend_policy_;\n  bool initialized_ = false;\n  std::string validation_error_;\n};\n"
+        }
+      ]
+    },
+    "0173": {
+      "target": "base/uxr_config.cc",
+      "patch_sha256": "3286b7843058d61265b8886a0d2c552d88fc8be584960bb0aa5930d3cff7313d",
+      "preimage_sha256": "14a22a5ff5d84b4def9690d85bdd113c7ece7ec10622a0c56bab812ab1e6296a",
+      "output_sha256": "a2df959b5d17516f39278fcfd7d62170eb653e9955df1da0dfdb476344408d93",
+      "sections": [
+        {
+          "line": 4,
+          "text": "#include <array>\n#include <cmath>\n#include <cstdint>\n#include <random>\n\n#include \"base/no_destructor.h\"\n#include \"base/strings/string_number_conversions.h\"\n"
+        },
+        {
+          "line": 89,
+          "text": "}\nbool ParseGpuBackend(const flat_map<std::string, std::string>& cfg,\n                     UxrGpuBackendPolicy* policy) {\n  if (auto it = cfg.find(\"uxr-gpu-backend\"); it != cfg.end()) {\n    if (it->second != \"native\" && it->second != \"compatibility\")\n      return false;\n    policy->native = it->second == \"native\";\n  }\n  const auto synthetic = cfg.find(\"uxr-synthetic-device-tests\");\n  const bool allow_synthetic = !policy->native && synthetic != cfg.end() &&\n                               synthetic->second == \"true\";\n  const bool noise_disabled = cfg.contains(\"uxr-disable-fingerprint-noise\");\n  policy->canvas_pixel_noise = allow_synthetic && !noise_disabled;\n  policy->canvas_text_noise = !policy->native && !noise_disabled;\n  policy->canvas_bridge = allow_synthetic;\n  policy->capability_overrides = !policy->native;\n  return true;\n}\n}  // namespace\n\n"
+        },
+        {
+          "line": 142,
+          "text": "    validation_error_ = \"persona snapshot exceeds bounds\";\n    return false;\n  }\n  UxrDisplayConfig display;\n  if (!ParseDisplay(cfg, &display)) {\n    validation_error_ = \"invalid or inconsistent display geometry\";\n"
+        },
+        {
+          "line": 155,
+          "text": "  map_ = cfg;\n  display_ = display;\n  gpu_backend_policy_ = gpu_backend_policy;\n  initialized_ = true;\n  validation_error_.clear();\n  return true;\n"
+        },
+        {
+          "line": 178,
+          "text": "UxrGpuBackendPolicy UxrConfig::GpuBackendPolicy() const {\n  AutoLock locker(lock_);\n  return gpu_backend_policy_;\n}\n\nstd::string UxrConfig::ValidationError() const {\n"
+        }
+      ]
+    },
+    "0174": {
+      "target": "gin/v8_platform.cc",
+      "patch_sha256": "d9985bf40d5a046c9c0985facf41306dcfc547d2a78d568db72c9e301e42b54b",
+      "preimage_sha256": "8a846e174627d0d9ea452acd085468c09836bbd893ecd25dcd2e51df46f4abbf",
+      "output_sha256": "81eb86e2b1d03f04c66acd063c6a3b2ef4597c623eb2e9aa361387fc39858c8f",
+      "sections": [
+        {
+          "line": 23,
+          "text": "#include \"base/threading/scoped_thread_priority.h\"\n#include \"base/trace_event/trace_event.h\"\n#include \"base/tracing_buildflags.h\"\n#include \"build/build_config.h\"\n#include \"gin/converter.h\"\n#include \"gin/per_isolate_data.h\"\n"
+        },
+        {
+          "line": 342,
+          "text": "}\n\ndouble V8Platform::CurrentClockTimeMillis() {\n  return static_cast<double>(time_clamper_.ClampToMillis(base::Time::Now()));\n}\n\nint64_t V8Platform::CurrentClockTimeMilliseconds() {\n  return time_clamper_.ClampToMillis(base::Time::Now());\n}\n\ndouble V8Platform::CurrentClockTimeMillisecondsHighResolution() {\n  return time_clamper_.ClampToMillisHighResolution(base::Time::Now());\n}\n\n"
+        }
+      ]
+    },
+    "0175": {
+      "target": "third_party/blink/renderer/core/timing/time_clamper.cc",
+      "patch_sha256": "f83b09efcb1d8b9f940beb8d4e448d385e0d7ae318431ba3e79e8a857d153006",
+      "preimage_sha256": "a9e3690d37e334b7816578e571a7045b259af4f2b2a3c4b71d695f3870d7fb66",
+      "output_sha256": "ec31faa9825d2880f0f950d131dda1c18d426ebf93d6965acaf45383aa63fcd1",
+      "sections": [
+        {
+          "line": 38,
+          "text": "base::TimeDelta TimeClamper::ClampTimeResolution(\n    base::TimeDelta time,\n    bool cross_origin_isolated_capability) const {\n  int64_t time_microseconds = time.InMicroseconds();\n  bool was_negative = false;\n\n"
+        }
+      ]
+    },
+    "0176": {
+      "target": "chrome/app/chrome_main.cc",
+      "patch_sha256": "106cfe814177fcbafdf20279f68e81cf934abb954fb574c8c675b1862b844fdb",
+      "preimage_sha256": "5fc20db77a1f49b92d4d8ddf61757b9b839f6baa321a351d989feb88967e1287",
+      "output_sha256": "a16b17fa91e13302563f65c3da01877f8189679aa6852aa07771920684ef1f0f",
+      "sections": [
+        {
+          "line": 209,
+          "text": "  if (!command_line->HasSwitch(switches::kProcessType)) {\n    // Canonicalize public booleans identically for direct and SDK launches.\n    for (const char* key : {\"fingerprint-noise\", \"fingerprint-sapi-voices\",\n                            \"fingerprint-allow-3p-cookies\", \"fingerprint-windows-font-metrics\"}) {\n      if (!command_line->HasSwitch(key))\n        continue;\n      const std::string value = base::ToLowerASCII(command_line->GetSwitchValueASCII(key));\n"
+        },
+        {
+          "line": 223,
+          "text": "\n    struct Alias { const char* fp; const char* uxr; };\n    static constexpr Alias kAliases[] = {\n      {\"fingerprint-gpu-vendor\",          \"uxr-webgl-vendor\"},\n      {\"fingerprint-gpu-renderer\",         \"uxr-webgl-renderer\"},\n      {\"disable-gpu-fingerprint\",           \"uxr-disable-gpu-fingerprint\"},\n"
+        },
+        {
+          "line": 252,
+          "text": "    for (const auto& a : kAliases) {\n      if (command_line->HasSwitch(a.fp) &&\n          !command_line->HasSwitch(a.uxr)) {\n        command_line->AppendSwitchASCII(\n            a.uxr, command_line->GetSwitchValueASCII(a.fp));\n      }\n    }\n\n"
+        },
+        {
+          "line": 535,
+          "text": "      disabled += \"ForceThirdPartyCookieBlocking\";\n      command_line->AppendSwitchASCII(kDisableFeatures, disabled);\n    }\n  }\n\n  // Capture the unpolluted command line snapshot in the browser process.\n"
+        }
+      ]
+    },
+    "0177": {
+      "target": "third_party/blink/renderer/modules/webaudio/audio_handler.cc",
+      "patch_sha256": "8afa9f8ee0b8b9f5895183279e99eaf661735fd78052c93143e8da1557918bfc",
+      "preimage_sha256": "5a9eb8baed881bc12fb2267acbd80cb831fa15a270a343abdc4b972057330a4f",
+      "output_sha256": "857eea983528786971ac0dab2ab0613fb43a4ee73862f7392ac8387cc9754d1b",
+      "sections": [
+        {
+          "line": 5,
+          "text": "#include \"third_party/blink/renderer/modules/webaudio/audio_handler.h\"\n\n#include <inttypes.h>\n\n#include \"base/trace_event/trace_event.h\"\n#include \"third_party/blink/public/platform/modules/webrtc/webrtc_logging.h\"\n#include \"third_party/blink/renderer/modules/webaudio/audio_node_input.h\"\n#include \"third_party/blink/renderer/modules/webaudio/audio_node_output.h\"\n"
+        },
+        {
+          "line": 22,
+          "text": "#include \"third_party/blink/renderer/platform/wtf/text/strcat.h\"\n\nnamespace blink {\n\nAudioHandler::AudioHandler(NodeType node_type,\n                           AudioNode& node,\n"
+        },
+        {
+          "line": 333,
+          "text": "      UnsilenceOutputs();\n      base::TimeTicks process_start_time = base::TimeTicks::Now();\n      Process(frames_to_process);\n      base::TimeDelta process_duration =\n          base::TimeTicks::Now() - process_start_time;\n      uma_reporter_->AddProcessDuration(process_duration, frames_to_process);\n"
+        }
+      ]
+    },
+    "0178": {
+      "target": "media/base/supported_types.h",
+      "patch_sha256": "ce1f5659cac948f8462c761b7b6add6ca907375571664a0dd649d8cda3606f25",
+      "preimage_sha256": "b642f514434ee7f9558c30fd36957351214179916db2e4f61d24fb59d5eab9a3",
+      "output_sha256": "ef0947f08dba53d5c56b98657d0bcc583b4bc0a57e28e351d20ad18c05e06822",
+      "sections": [
+        {
+          "line": 10,
+          "text": "#include \"media/base/media_types.h\"\n\nnamespace media {\n\n// These functions will attempt to delegate to MediaClient (when present) to\n// describe what types of media are supported. When no MediaClient is provided,\n"
+        }
+      ]
+    },
+    "0179": {
+      "target": "media/base/supported_types.cc",
+      "patch_sha256": "c7129a9746f65faf72220e8525431c0728be6d898fb316bd0c9affad3bd44f9c",
+      "preimage_sha256": "4a6443023099df664b7d6195fb968e9a44e1b6fa7e7789761cce6ff83e5a06e3",
+      "output_sha256": "6ead04f604f15c8cf0cb3adafadec4960956c88c794c20ed3fe91fb8c9b9180c",
+      "sections": [
+        {
+          "line": 3,
+          "text": "// found in the LICENSE file.\n\n#include \"media/base/supported_types.h\"\n\n#include \"base/command_line.h\"\n#include \"base/feature_list.h\"\n"
+        },
+        {
+          "line": 420,
+          "text": "\n}  // namespace\n\nbool IsDecoderSupportedAudioType(const AudioType& type) {\n  if (auto* media_client = GetMediaClient())\n    return media_client->IsDecoderSupportedAudioType(type);\n"
+        },
+        {
+          "line": 427,
+          "text": "}\n\nbool IsDecoderSupportedVideoType(const VideoType& type) {\n  if (auto* media_client = GetMediaClient())\n    return media_client->IsDecoderSupportedVideoType(type);\n  return IsDefaultDecoderSupportedVideoType(type);\n}\n\nbool IsEncoderSupportedVideoType(const VideoType& type) {\n  if (auto* media_client = GetMediaClient()) {\n    return media_client->IsEncoderSupportedVideoType(type);\n  }\n"
+        },
+        {
+          "line": 442,
+          "text": "// TODO(chcunningham): Add platform specific logic for Android (move from\n// MimeUtilInternal).\nbool IsDefaultDecoderSupportedVideoType(const VideoType& type) {\n  if (!IsDecoderSupportedHdrMetadata(type)) {\n    return false;\n  }\n"
+        },
+        {
+          "line": 521,
+          "text": "}\n\nbool IsDefaultEncoderSupportedVideoType(const VideoType& type) {\n#if !BUILDFLAG(USE_PROPRIETARY_CODECS)\n  if (IsVideoCodecProprietary(type.codec)) {\n    return false;\n"
+        }
+      ]
+    },
+    "0180": {
+      "target": "media/filters/decoder_selector.cc",
+      "patch_sha256": "6249f02f2a3faf0b3ebdf3c2133359833ec6258e1ff44fd1b9c62c421ddb5350",
+      "preimage_sha256": "1a319ed66e500f21dc380d9fab099e07e07393908b57d5010b6c3447659755d8",
+      "output_sha256": "776d33ce53de42c36755a2693a35abf66811b4518353ed0da9b3245a13f14e20",
+      "sections": [
+        {
+          "line": 3,
+          "text": "// found in the LICENSE file.\n\n#include \"media/filters/decoder_selector.h\"\n\n#include <algorithm>\n#include <utility>\n"
+        },
+        {
+          "line": 139,
+          "text": "    return;\n  }\n\n  if (needs_new_decoders) {\n    decode_failure_reinit_cause_ = std::nullopt;\n    ran_out_of_decoders_ = false;\n"
+        }
+      ]
+    },
+    "0181": {
+      "target": "third_party/blink/renderer/modules/webcodecs/video_encoder.cc",
+      "patch_sha256": "8fd8e69ad79ec5de871dfd0f8b2b1fd98ceee6819eb4e3d3d34dfc134bfa17ed",
+      "preimage_sha256": "d727cfb025e2675a13dc31024a194286d78bd345a8349646ceb7eea0f2c658a4",
+      "output_sha256": "2fa6cfa0353b168b9682e5faef2ee10503ade0ff383957b2ab9938c35a8a7ca5",
+      "sections": [
+        {
+          "line": 3,
+          "text": "// found in the LICENSE file.\n\n#include \"third_party/blink/renderer/modules/webcodecs/video_encoder.h\"\n\n#include <algorithm>\n#include <string>\n"
+        },
+        {
+          "line": 436,
+          "text": "\nbool VerifyCodecSupportStatic(VideoEncoderTraits::ParsedConfig* config,\n                              String* js_error_message) {\n  if (config->not_supported_error_message) {\n    *js_error_message = *config->not_supported_error_message;\n    return false;\n"
+        }
+      ]
+    },
+    "0182": {
+      "target": "third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc",
+      "patch_sha256": "eafe4a505d5df7e81fe59a71044fdbca077d91abda0a0c38fafd0327b1414111",
+      "preimage_sha256": "3a0c02038740f447fbfef21bdef1bd6e0a369494161e362d029e1e2e63322bbb",
+      "output_sha256": "b87c70872216140f632e78b9b460a4c78e11ff56df16d81e18dcb70ecf40a366",
+      "sections": [
+        {
+          "line": 231,
+          "text": "  std::vector<std::string> codecs_list;\n  media::SplitCodecs(web_codecs.Utf8(), &codecs_list);\n\n  for (const auto& codec : codecs_list) {\n    const auto profile = VideoStringToCodecProfile(String(codec));\n    const bool can_support = CanSupportMimeTypeForCodec(type, codec);\n\n    Vector<String> uma_key_vector;\n"
+        },
+        {
+          "line": 472,
+          "text": "    return false;\n  }\n\n  passthrough_enabled_ = type_.empty();\n\n  // Once established that we support the codec(s), hunt then individually.\n  video_codec_profile_ = VideoStringToCodecProfile(codecs);\n"
+        },
+        {
+          "line": 554,
+          "text": "    LOG(WARNING) << __func__ << \": no tracks to be recorded.\";\n    return false;\n  }\n\n  const bool use_mp4_muxer = IsMp4MuxerRequired(type);\n\n"
+        }
+      ]
+    },
+    "0183": {
+      "target": "third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc",
+      "patch_sha256": "f190fca2f1e2152120b7b8f7baff19ad9b53d47897d5adc784497f9714e8a9d6",
+      "preimage_sha256": "9ce8b224adda12bb19c5f21d844fd4e231dd80bdf0a75765c0aa03d0f70efff6",
+      "output_sha256": "cbefa0eb0c24ecb3b932836a2a27896b3904dc63eb9108fd7d4aa4e5798c3c8c",
+      "sections": [
+        {
+          "line": 705,
+          "text": "  for (const auto& supported_profile : GetVEASupportedProfiles()) {\n    const media::VideoCodecProfile codec_profile = supported_profile.profile;\n    for (auto& entry : kPreferredCodecAndVEAProfiles) {\n      if (codec_profile >= entry.min_profile &&\n          codec_profile <= entry.max_profile &&\n          std::find(entry.supported_container_types.begin(),\n"
+        },
+        {
+          "line": 723,
+          "text": "    }\n  }\n\n  if (type == MediaTrackContainerType::kVideoMp4 ||\n      type == MediaTrackContainerType::kAudioMp4) {\n    return media::VideoCodec::kVP9;\n  }\n\n  return media::VideoCodec::kVP8;\n}\n\n// static\n"
+        }
+      ]
+    },
+    "0184": {
+      "target": "third_party/blink/renderer/platform/peerconnection/video_codec_factory.cc",
+      "patch_sha256": "40420a008ece2d3106712dbe5a40f18634271436a3fb0ef86cf65ae69c31b6e3",
+      "preimage_sha256": "2226f6ede178b6c553ca9f71bf668358d988d9aa8b7ebd723c6fb20c46c110cf",
+      "output_sha256": "f1abcd0560294f8284dd30ee1e25f56adaaf199e987a4deb7a92a4a113a040fc",
+      "sections": [
+        {
+          "line": 3,
+          "text": "// found in the LICENSE file.\n\n#include \"third_party/blink/renderer/platform/peerconnection/video_codec_factory.h\"\n\n#include \"base/feature_list.h\"\n#include \"base/functional/callback_helpers.h\"\n"
+        },
+        {
+          "line": 11,
+          "text": "#include \"base/task/sequenced_task_runner.h\"\n#include \"build/build_config.h\"\n#include \"media/base/media_switches.h\"\n#include \"media/mojo/clients/mojo_video_encoder_metrics_provider.h\"\n#include \"media/video/gpu_video_accelerator_factories.h\"\n#include \"third_party/blink/public/platform/platform.h\"\n"
+        },
+        {
+          "line": 36,
+          "text": "\nnamespace {\n\ntemplate <typename Factory>\nbool IsFormatSupported(const Factory* factory,\n                       const webrtc::SdpVideoFormat& format) {\n"
+        },
+        {
+          "line": 101,
+          "text": "  std::unique_ptr<webrtc::VideoEncoder> Create(\n      const webrtc::Environment& env,\n      const webrtc::SdpVideoFormat& format) override {\n    if (!WebRTCFormatToCodecProfile(format)) {\n      LOG(ERROR) << \"Unsupported SDP format: \" << format.name;\n      return nullptr;\n"
+        },
+        {
+          "line": 147,
+          "text": "  std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override {\n    std::vector<webrtc::SdpVideoFormat> software_formats =\n        software_encoder_factory_.GetSupportedFormats();\n    return hardware_encoder_factory_\n               ? MergeFormats(software_formats,\n                              hardware_encoder_factory_->GetSupportedFormats())\n               : software_formats;\n  }\n\n  webrtc::VideoEncoderFactory::CodecSupport QueryCodecSupport(\n      const webrtc::SdpVideoFormat& format,\n      std::optional<std::string> scalability_mode,\n      std::optional<webrtc::Resolution> resolution) const override {\n    webrtc::VideoEncoderFactory::CodecSupport codec_support =\n        hardware_encoder_factory_\n            ? hardware_encoder_factory_->QueryCodecSupport(\n"
+        },
+        {
+          "line": 188,
+          "text": "  std::unique_ptr<webrtc::VideoDecoder> Create(\n      const webrtc::Environment& env,\n      const webrtc::SdpVideoFormat& format) override {\n    std::unique_ptr<webrtc::VideoDecoder> software_decoder =\n        CreateDecoder(&software_decoder_factory_, env, format);\n\n"
+        },
+        {
+          "line": 206,
+          "text": "  std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override {\n    std::vector<webrtc::SdpVideoFormat> software_formats =\n        software_decoder_factory_.GetSupportedFormats();\n    return hardware_decoder_factory_\n               ? MergeFormats(software_formats,\n                              hardware_decoder_factory_->GetSupportedFormats())\n               : software_formats;\n  }\n\n  webrtc::VideoDecoderFactory::CodecSupport QueryCodecSupport(\n      const webrtc::SdpVideoFormat& format,\n      bool reference_scaling,\n      std::optional<webrtc::Resolution> resolution) const override {\n    webrtc::VideoDecoderFactory::CodecSupport codec_support =\n        hardware_decoder_factory_\n            ? hardware_decoder_factory_->QueryCodecSupport(\n"
+        }
+      ]
+    },
+    "0185": {
+      "target": "third_party/blink/renderer/modules/media_capabilities/media_capabilities.cc",
+      "patch_sha256": "4af6b383d56ab8e77898f800f4ff49be4056dcbe519f8d4a4fedd206f7fe74c0",
+      "preimage_sha256": "1698354533c6b1ba9c92a618d93c954522d78be7d078fc1e1abc68d5675391a3",
+      "output_sha256": "9b06ba768b6d629e7774ac39dce353f56780afdbd37a5f6b7b7761288e6b2f89",
+      "sections": [
+        {
+          "line": 142,
+          "text": "  }\n\n  const base::UxrConfig& config = base::UxrConfig::GetInstance();\n  if (!config.Has(key)) {\n    return false;\n  }\n\n"
+        }
+      ]
+    },
+    "0186": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.h",
+      "patch_sha256": "4aa0dd12bbb52f393dc50d6981d6cb022873945acbed88c75a4be37b37df7fbe",
+      "preimage_sha256": "ce23838b223e37fc2a1e3933b3da5ed9478e07f0c9c2fef956ff28c95fa0248e",
+      "output_sha256": "25de9ea911b3f6d2c909b70903485fd3447267b5af75afacd74f758885d42a3b",
+      "sections": [
+        {
+          "line": 114,
+          "text": "      const AtomicString&,\n      AlternateFontName = AlternateFontName::kAllowAlternate);\n  const SimpleFontData* GetLastResortFallbackFont(const FontDescription&);\n\n  // Should be used in determining whether family names listed in font-family:\n  // ... are available locally. Only returns true if family name matches.\n"
+        }
+      ]
+    },
+    "0187": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "patch_sha256": "8fae05587064190809186a89b0fc9b57d71705ee7b145e84dca5c9d260f79f03",
+      "preimage_sha256": "eced1b62b9c1e8ba54c7c06ed747318b6d5fd369c0a7ebd7d0afd420b41bcaac",
+      "output_sha256": "416ceb8d4c8388eef2accba37eb922a4e1fd17fcc9cf764c26eddd02d044de30",
+      "sections": [
+        {
+          "line": 100,
+          "text": "}\n\nconst char* UxrSystemFontSubstitute(const AtomicString& family) {\n  if (base::UxrConfig::GetInstance().Get(\"uxr-synthetic-device-tests\") != \"true\")\n    return nullptr;\n  const std::string persona =\n"
+        },
+        {
+          "line": 139,
+          "text": "}\n\nbool UxrFontFamilyAllowed(const AtomicString& family) {\n  if (base::UxrConfig::GetInstance().Get(\"uxr-synthetic-device-tests\") != \"true\")\n    return true;\n  if (family.empty() || UxrFontFamilyIsGeneric(family))\n"
+        },
+        {
+          "line": 299,
+          "text": "  }\n#endif\n\n  return font_platform_data_cache_.GetOrCreateFontPlatformData(\n      this, font_description, creation_params, alternate_font_name);\n}\n\nvoid FontCache::AcceptLanguagesChanged(const String& accept_languages) {\n"
+        },
+        {
+          "line": 377,
+          "text": "      Character::IsNonCharacter(lookup_char))\n    return nullptr;\n  base::ElapsedTimer timer;\n  const std::string persona = base::UxrConfig::GetInstance().Get(\"uxr-platform\");\n  const std::string whitelist = base::UxrConfig::GetInstance().Get(\"uxr-font-whitelist\");\n  if (base::UxrConfig::GetInstance().Get(\"uxr-synthetic-device-tests\") == \"true\" &&\n      (base::EqualsCaseInsensitiveASCII(persona, \"windows\") ||\n       base::EqualsCaseInsensitiveASCII(persona, \"win32\")) && whitelist.empty()) {\n    static constexpr const char* kPersonaFallbackFamilies[] = {\n"
+        }
+      ]
+    },
+    "0188": {
+      "target": "third_party/blink/renderer/platform/fonts/skia/font_cache_skia.cc",
+      "patch_sha256": "5b6f05be99be7e9450db218f8f1329e4bb665eb1816eefacc7b0dab47ad17811",
+      "preimage_sha256": "44b983a99809e7288aa0307df2c6e40babebe7ffca7e088d9da523297be2d870",
+      "output_sha256": "5f9003f776d3f10f13b982e19925733d69b4b2fc1acf4b537fe3470deca8a8ae",
+      "sections": [
+        {
+          "line": 145,
+          "text": "\nconst SimpleFontData* FontCache::GetLastResortFallbackFont(\n    const FontDescription& description) {\n  const FontFaceCreationParams fallback_creation_params(\n      GetFallbackFontFamily(description));\n  const FontPlatformData* font_platform_data = GetFontPlatformData(\n"
+        }
+      ]
+    },
+    "0189": {
+      "target": "third_party/blink/renderer/platform/fonts/mac/font_cache_mac.mm",
+      "patch_sha256": "b81e65eed9bac2304f77ac67749b3a17faa82d6174f46cb900bfea06e9959430",
+      "preimage_sha256": "5bd070fba9cd7ed1120de89bdf8c3fdbdb2e170ab536b521138bbc5107b5d360",
+      "output_sha256": "fcfa144fa4861e405f7bdb00f46136483e4c81e49f1b6d92aae785a3333eda99",
+      "sections": [
+        {
+          "line": 374,
+          "text": "\nconst SimpleFontData* FontCache::GetLastResortFallbackFont(\n    const FontDescription& font_description) {\n  // FIXME: Would be even better to somehow get the user's default font here.\n  // For now we'll pick the default that the user would get without changing\n  // any prefs.\n"
+        }
+      ]
+    },
+    "0190": {
+      "target": "third_party/blink/renderer/modules/font_access/font_access.cc",
+      "patch_sha256": "2556715e75b2bfa54c3c323e9bf9138c3d068d564d19690cd2b297651612653c",
+      "preimage_sha256": "3c6584864d3074a97e6b9064be4bd45d3ae5b1b698d19fe73d7de110209abd5d",
+      "output_sha256": "0ec4c9cce9d11dee7f2ca015655d033595b7e9ff11cdc951e5177eb6d48ae83a",
+      "sections": [
+        {
+          "line": 3,
+          "text": "// found in the LICENSE file.\n\n#include \"third_party/blink/renderer/modules/font_access/font_access.h\"\n\n#include <algorithm>\n\n"
+        },
+        {
+          "line": 154,
+          "text": "  table.ParseFromArray(mapped_mem.data(),\n                       base::checked_cast<int>(mapped_mem.size()));\n  for (const auto& element : table.fonts()) {\n    // If the optional postscript name filter is set in QueryOptions,\n    // only allow items that match.\n    if (hasPostscriptNameFilter &&\n"
+        }
+      ]
+    },
+    "0191": {
+      "target": "content/browser/renderer_host/render_process_host_impl.cc",
+      "patch_sha256": "328c93bbd4cc1fc10ec0dbdb64a6e6ba5b8e2018fc15972d87ca81c8b85be957",
+      "preimage_sha256": "e457c8640b580deb457598d81e67cb910a4d14b96c59e02ab8511ad2f66219b5",
+      "output_sha256": "ea45ec957dff0d388d0e40416b557cc6a36916126c9c0bd168327a9855a6eda5",
+      "sections": [
+        {
+          "line": 2064,
+          "text": "         base::CommandLine::ForCurrentProcess()->GetSwitches()) {\n      if (sw.first.compare(0, 4, \"uxr-\") == 0) {\n        uxr_cfg[sw.first] =\n            base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(sw.first);\n      }\n    }\n    // Snapshot construction is browser-owned and launch-scoped. Even an empty\n"
+        }
+      ]
+    }
+  },
+  "methods": {
+    "base::TimeDelta TimeClamper::ClampTimeResolution(": {
+      "target": "third_party/blink/renderer/core/timing/time_clamper.cc",
+      "text": "base::TimeDelta TimeClamper::ClampTimeResolution(\n    base::TimeDelta time,\n    bool cross_origin_isolated_capability) const {\n  // The optional grid is >= 1 ms, hence never exposes finer timestamps than\n  // Chromium's isolated/non-isolated defaults. All Performance consumers,\n  // event timestamps and animation timestamps retain one monotone policy.\n  const auto& config = base::UxrConfig::GetInstance();\n  if (config.TimerResolutionMicroseconds() > 0)\n    return base::Microseconds(config.QuantizeClockMicroseconds(time.InMicroseconds()));\n  int64_t time_microseconds = time.InMicroseconds();\n  bool was_negative = false;\n\n  // If the input time is negative, turn it to a positive one and keep track of\n  // that.\n  if (time_microseconds < 0) {\n    was_negative = true;\n    time_microseconds =\n        -std::max(-std::numeric_limits<int64_t>::max(), time_microseconds);\n  }\n\n  // Split the time_microseconds to lower and upper digits to prevent uniformity\n  // distortion in large numbers. We will clamp the lower digits portion and\n  // later add on the upper digits portion.\n  int64_t time_lower_digits = time_microseconds % kTenLowerDigitsMod;\n  int64_t time_upper_digits = time_microseconds - time_lower_digits;\n\n  // Determine resolution based on the context's cross-origin isolation\n  // capability. https://w3c.github.io/hr-time/#dfn-coarsen-time\n  int resolution = cross_origin_isolated_capability\n                       ? kFineResolutionMicroseconds\n                       : kCoarseResolutionMicroseconds;\n\n  // Clamped the time based on the resolution.\n  int64_t clamped_time = time_lower_digits - time_lower_digits % resolution;\n\n  // Determine if the clamped number should be clamped up, rather than down.\n  // The threshold to determine that is a random number smaller than resolution,\n  // such that the probability of clamped time being clamped up rather than\n  // down is proportional to its distance from the clamped_down time.\n  // As such it remains a double, in order to guarantee that distribution,\n  // and the clamping's uniformity.\n  double tick_threshold = ThresholdFor(clamped_time, resolution);\n  if (time_lower_digits >= tick_threshold)\n    clamped_time += resolution;\n\n  // Add back the upper digits portion while avoiding signed integer overflow.\n  time_upper_digits = std::min(\n      time_upper_digits, std::numeric_limits<int64_t>::max() - clamped_time);\n  clamped_time += time_upper_digits;\n\n  // Flip the number back to being negative if it started that way.\n  if (was_negative)\n    clamped_time = -clamped_time;\n  return base::Microseconds(clamped_time);\n}"
+    },
+    "inline double TimeClamper::ThresholdFor(": {
+      "target": "third_party/blink/renderer/core/timing/time_clamper.cc",
+      "text": "inline double TimeClamper::ThresholdFor(int64_t clamped_time,\n                                        int resolution) const {\n  uint64_t time_hash = MurmurHash3(clamped_time ^ secret_);\n  return clamped_time + resolution * ToDouble(time_hash);\n}"
+    },
+    "inline double TimeClamper::ToDouble(": {
+      "target": "third_party/blink/renderer/core/timing/time_clamper.cc",
+      "text": "inline double TimeClamper::ToDouble(uint64_t value) {\n  // Exponent for double values for [1.0 .. 2.0]\n  static const uint64_t kExponentBits = uint64_t{0x3FF0000000000000};\n  static const uint64_t kMantissaMask = uint64_t{0x000FFFFFFFFFFFFF};\n  uint64_t random = (value & kMantissaMask) | kExponentBits;\n  return base::bit_cast<double>(random) - 1;\n}"
+    },
+    "inline uint64_t TimeClamper::MurmurHash3(": {
+      "target": "third_party/blink/renderer/core/timing/time_clamper.cc",
+      "text": "inline uint64_t TimeClamper::MurmurHash3(uint64_t value) {\n  value ^= value >> 33;\n  value *= uint64_t{0xFF51AFD7ED558CCD};\n  value ^= value >> 33;\n  value *= uint64_t{0xC4CEB9FE1A85EC53};\n  value ^= value >> 33;\n  return value;\n}"
+    },
+    "bool DOMPluginArray::IsPdfViewerAvailable()": {
+      "target": "third_party/blink/renderer/modules/plugins/dom_plugin_array.cc",
+      "text": "bool DOMPluginArray::IsPdfViewerAvailable() {\n  // Plugin inventory and navigator.pdfViewerEnabled describe the installed\n  // viewer. A presentation-only fixture is available solely in synthetic tests.\n  if (base::UxrConfig::GetInstance().Get(\"uxr-synthetic-device-tests\") ==\n          \"true\" &&\n      base::UxrConfig::GetInstance().Get(\"uxr-plugins\") == \"chrome\") {\n    return true;\n  }\n  auto* data = GetPluginData();\n  if (!data)\n    return false;\n  for (const Member<MimeClassInfo>& mime_info : data->Mimes()) {\n    if (mime_info->Type() == \"application/pdf\")\n      return true;\n  }\n  return false;\n}"
+    },
+    "bool UseWindowsSpeechVoiceTable()": {
+      "target": "third_party/blink/renderer/modules/speech/speech_synthesis.cc",
+      "text": "bool UseWindowsSpeechVoiceTable() {\n  const auto& config = base::UxrConfig::GetInstance();\n  // Presentation tables have no synthesis backend. Production voices retain\n  // the actual URI, language, default flag and asynchronous inventory changes.\n  if (config.Get(\"uxr-synthetic-device-tests\") != \"true\")\n    return false;\n  if (!config.Has(\"uxr-voices\") || config.Get(\"uxr-fingerprint-off\") == \"true\")\n    return false;\n  const std::string platform = base::ToLowerASCII(config.Get(\"uxr-platform\"));\n  const std::string ua_platform = base::ToLowerASCII(config.Get(\"uxr-ua-platform\"));\n  const bool windows = platform == \"win32\" || platform == \"windows\" || ua_platform == \"windows\";\n#if BUILDFLAG(IS_WIN)\n  if (!windows && (!platform.empty() || !ua_platform.empty()))\n    return false;\n#else\n  if (!windows)\n    return false;\n#endif\n  const std::string value = config.Get(\"uxr-voices\");\n  if (value == \"false\" || value == \"0\" || value == \"off\")\n    return false;\n#if BUILDFLAG(IS_WIN)\n  // A genuine Windows host already has a SAPI inventory and matching backend.\n  // Keep it for the default mode; an explicit locale remains a test override.\n  if (value.empty() || value == \"true\" || value == \"1\")\n    return false;\n#endif\n  return true;\n}"
+    },
+    "void KeyboardLayout::GotKeyboardLayoutMap(": {
+      "target": "third_party/blink/renderer/modules/keyboard/keyboard_layout.cc",
+      "text": "void KeyboardLayout::GotKeyboardLayoutMap(\n    mojom::blink::GetKeyboardLayoutMapResultPtr result) {\n  DCHECK(layout_map_property_);\n  DCHECK(is_request_pending_);\n  is_request_pending_ = false;\n\n  switch (result->status) {\n    case mojom::blink::GetKeyboardLayoutMapStatus::kSuccess: {\n      // Only explicit synthetic US-layout fixtures may replace this map.\n      // Public use keeps the actual input backend, including an empty map.\n      const auto& config = base::UxrConfig::GetInstance();\n      const std::string layout = config.Get(\"uxr-keyboard-layout\");\n      if (config.Get(\"uxr-synthetic-device-tests\") == \"true\" &&\n          (layout == \"us\" || layout == \"en-US\")) {\n        HashMap<String, String> p_map;\n        p_map.Set(String(\"KeyA\"), String(\"a\"));\n        p_map.Set(String(\"KeyB\"), String(\"b\"));\n        p_map.Set(String(\"KeyC\"), String(\"c\"));\n        p_map.Set(String(\"KeyD\"), String(\"d\"));\n        p_map.Set(String(\"KeyE\"), String(\"e\"));\n        p_map.Set(String(\"KeyF\"), String(\"f\"));\n        p_map.Set(String(\"KeyG\"), String(\"g\"));\n        p_map.Set(String(\"KeyH\"), String(\"h\"));\n        p_map.Set(String(\"KeyI\"), String(\"i\"));\n        p_map.Set(String(\"KeyJ\"), String(\"j\"));\n        p_map.Set(String(\"KeyK\"), String(\"k\"));\n        p_map.Set(String(\"KeyL\"), String(\"l\"));\n        p_map.Set(String(\"KeyM\"), String(\"m\"));\n        p_map.Set(String(\"KeyN\"), String(\"n\"));\n        p_map.Set(String(\"KeyO\"), String(\"o\"));\n        p_map.Set(String(\"KeyP\"), String(\"p\"));\n        p_map.Set(String(\"KeyQ\"), String(\"q\"));\n        p_map.Set(String(\"KeyR\"), String(\"r\"));\n        p_map.Set(String(\"KeyS\"), String(\"s\"));\n        p_map.Set(String(\"KeyT\"), String(\"t\"));\n        p_map.Set(String(\"KeyU\"), String(\"u\"));\n        p_map.Set(String(\"KeyV\"), String(\"v\"));\n        p_map.Set(String(\"KeyW\"), String(\"w\"));\n        p_map.Set(String(\"KeyX\"), String(\"x\"));\n        p_map.Set(String(\"KeyY\"), String(\"y\"));\n        p_map.Set(String(\"KeyZ\"), String(\"z\"));\n        p_map.Set(String(\"Digit1\"), String(\"1\"));\n        p_map.Set(String(\"Digit2\"), String(\"2\"));\n        p_map.Set(String(\"Digit3\"), String(\"3\"));\n        p_map.Set(String(\"Digit4\"), String(\"4\"));\n        p_map.Set(String(\"Digit5\"), String(\"5\"));\n        p_map.Set(String(\"Digit6\"), String(\"6\"));\n        p_map.Set(String(\"Digit7\"), String(\"7\"));\n        p_map.Set(String(\"Digit8\"), String(\"8\"));\n        p_map.Set(String(\"Digit9\"), String(\"9\"));\n        p_map.Set(String(\"Digit0\"), String(\"0\"));\n        p_map.Set(String(\"Backquote\"), String(\"`\"));\n        p_map.Set(String(\"Minus\"), String(\"-\"));\n        p_map.Set(String(\"Equal\"), String(\"=\"));\n        p_map.Set(String(\"BracketLeft\"), String(\"[\"));\n        p_map.Set(String(\"BracketRight\"), String(\"]\"));\n        p_map.Set(String(\"Backslash\"), String(\"\\\\\"));\n        p_map.Set(String(\"Semicolon\"), String(\";\"));\n        p_map.Set(String(\"Quote\"), String(\"'\"));\n        p_map.Set(String(\"Comma\"), String(\",\"));\n        p_map.Set(String(\"Period\"), String(\".\"));\n        p_map.Set(String(\"Slash\"), String(\"/\"));\n        layout_map_property_->Resolve(\n            MakeGarbageCollected<KeyboardLayoutMap>(p_map));\n        break;\n      }\n      layout_map_property_->Resolve(\n          MakeGarbageCollected<KeyboardLayoutMap>(result->layout_map));\n      break;\n    }\n    case mojom::blink::GetKeyboardLayoutMapStatus::kFail:\n      layout_map_property_->Reject(MakeGarbageCollected<DOMException>(\n          DOMExceptionCode::kInvalidStateError,\n          kKeyboardMapRequestFailedErrorMsg));\n      break;\n    case mojom::blink::GetKeyboardLayoutMapStatus::kDenied:\n      layout_map_property_->Reject(MakeGarbageCollected<DOMException>(\n          DOMExceptionCode::kSecurityError, kFeaturePolicyBlocked));\n      break;\n  }\n  layout_map_property_ = nullptr;\n}"
+    },
+    "void OnIsUserVerifyingComplete(": {
+      "target": "third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc",
+      "text": "void OnIsUserVerifyingComplete(ScriptPromiseResolver<IDLBoolean>* resolver,\n                               bool available) {\n  resolver->Resolve(available);\n}"
+    },
+    "PublicKeyCredential::isUserVerifyingPlatformAuthenticatorAvailable(": {
+      "target": "third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc",
+      "text": "PublicKeyCredential::isUserVerifyingPlatformAuthenticatorAvailable(\n    ScriptState* script_state) {\n  // Ignore calls if the current realm execution context is no longer valid,\n  // e.g., because the responsible document was detached.\n  if (!script_state->ContextIsValid()) {\n    return ScriptPromise<IDLBoolean>::RejectWithDOMException(\n        script_state,\n        MakeGarbageCollected<DOMException>(DOMExceptionCode::kInvalidStateError,\n                                           \"Context is detached\"));\n  }\n\n  auto* resolver =\n      MakeGarbageCollected<ScriptPromiseResolver<IDLBoolean>>(script_state);\n  auto promise = resolver->Promise();\n\n  UseCounter::Count(\n      resolver->GetExecutionContext(),\n      WebFeature::\n          kCredentialManagerIsUserVerifyingPlatformAuthenticatorAvailable);\n\n  // A public platform name cannot install an authenticator. Keep the browser\n  // capability query, callback timing and permission authority for real use.\n  // A forced answer is only available to explicitly synthetic test fixtures.\n  {\n    std::string p_uv = base::UxrConfig::GetInstance().Get(\"uxr-webauthn-uvpaa\");\n    if (base::UxrConfig::GetInstance().Get(\"uxr-synthetic-device-tests\") ==\n            \"true\" &&\n        !p_uv.empty()) {\n      resolver->Resolve(p_uv == \"true\");\n      return promise;\n    }\n  }\n\n  auto* authenticator =\n      CredentialManagerProxy::From(script_state)->Authenticator();\n  authenticator->IsUserVerifyingPlatformAuthenticatorAvailable(\n      BindOnce(&OnIsUserVerifyingComplete, WrapPersistent(resolver)));\n  return promise;\n}"
+    },
+    "void ApplyUxrAudioIsolation(": {
+      "target": "third_party/blink/renderer/modules/webaudio/audio_handler.cc",
+      "text": "void ApplyUxrAudioIsolation(AudioBus* bus, uint32_t frames, uint64_t seed) {\n  if (!seed || bus->IsSilent())\n    return;\n  // A launch-stable rounding threshold on a 20-bit sample grid. Apply to the\n  // graph's actual bus, before its consumers run: playback, OfflineAudioContext,\n  // Analyser and AudioWorklet then receive the same samples. Never mutate\n  // AudioBuffer getters or fabricate sample rates, latencies or device data.\n  seed ^= seed >> 30;\n  seed *= uint64_t{0xbf58476d1ce4e5b9};\n  seed ^= seed >> 27;\n  seed *= uint64_t{0x94d049bb133111eb};\n  seed ^= seed >> 31;\n  const double threshold = 0.25 + static_cast<double>(seed >> 11) * 0x1.0p-54;\n  constexpr double kScale = 0x1.0p20;\n  for (unsigned channel = 0; channel < bus->NumberOfChannels(); ++channel) {\n    for (float& sample : bus->Channel(channel)->MutableSpan().first(frames)) {\n      if (sample == 0 || !std::isfinite(sample) || std::abs(sample) >= 16)\n        continue;\n      // Signed zero, silence and exceptional values retain their native bits.\n      // Exact grid samples are fixed points, including in-place fanout buses.\n      const double magnitude = std::floor(std::abs(static_cast<double>(sample)) *\n                                          kScale + threshold) / kScale;\n      sample = std::copysign(static_cast<float>(magnitude), sample);\n    }\n  }\n}"
+    },
+    "void AudioHandler::ProcessIfNecessary(": {
+      "target": "third_party/blink/renderer/modules/webaudio/audio_handler.cc",
+      "text": "void AudioHandler::ProcessIfNecessary(uint32_t frames_to_process) {\n  DCHECK(Context()->IsAudioThread());\n\n  if (!IsInitialized()) {\n    return;\n  }\n\n  TRACE_EVENT2(TRACE_DISABLED_BY_DEFAULT(\"webaudio.audionode\"),\n               \"AudioHandler::ProcessIfNecessary\", \"this\",\n               reinterpret_cast<void*>(this), \"node type\", NodeTypeName());\n\n  // Ensure that we only process once per rendering quantum.\n  // This handles the \"fanout\" problem where an output is connected to multiple\n  // inputs.  The first time we're called during this time slice we process, but\n  // after that we don't want to re-process, instead our output(s) will already\n  // have the results cached in their bus;\n  double current_time = Context()->currentTime();\n  if (last_processing_time_ != current_time) {\n    // important to first update this time because of feedback loops in the\n    // rendering graph.\n    last_processing_time_ = current_time;\n\n    PullInputs(frames_to_process);\n\n    bool silent_inputs = InputsAreSilent();\n    if (silent_inputs && PropagatesSilence()) {\n      SilenceOutputs();\n      // AudioParams still need to be processed so that the value can be updated\n      // if there are automations or so that the upstream nodes get pulled if\n      // any are connected to the AudioParam.\n      ProcessOnlyAudioParams(frames_to_process);\n    } else {\n      // Unsilence the outputs first because the processing of the node may\n      // cause the outputs to go silent and we want to propagate that hint to\n      // the downstream nodes.  (For example, a Gain node with a gain of 0 will\n      // want to silence its output.)\n      UnsilenceOutputs();\n      base::TimeTicks process_start_time = base::TimeTicks::Now();\n      Process(frames_to_process);\n      const uint64_t isolation_seed = base::UxrConfig::GetInstance().AudioIsolationSeed();\n      if (isolation_seed) {\n        for (auto& output : outputs_)\n          ApplyUxrAudioIsolation(output->Bus(), frames_to_process, isolation_seed);\n      }\n      base::TimeDelta process_duration =\n          base::TimeTicks::Now() - process_start_time;\n      uma_reporter_->AddProcessDuration(process_duration, frames_to_process);\n    }\n\n    if (!silent_inputs) {\n      // Update `last_non_silent_time_` AFTER processing this block.\n      // Doing it before causes `PropagateSilence()` to be one render\n      // quantum longer than necessary.\n      last_non_silent_time_ =\n          (Context()->CurrentSampleFrame() + frames_to_process) /\n          static_cast<double>(Context()->sampleRate());\n    }\n\n    if (!is_processing_) {\n      SendLogMessage(__func__,\n                     String::Format(\"=> (processing is alive [frames=%u])\",\n                                    frames_to_process));\n      is_processing_ = true;\n    }\n  }\n}"
+    },
+    "bool IsUxrVideoCodecAllowed(": {
+      "target": "media/base/supported_types.cc",
+      "text": "bool IsUxrVideoCodecAllowed(VideoCodec codec) {\n  const char* key = nullptr;\n  switch (codec) {\n    case VideoCodec::kH264: key = \"uxr-codec-h264\"; break;\n    case VideoCodec::kVP8: key = \"uxr-codec-vp8\"; break;\n    case VideoCodec::kVP9: key = \"uxr-codec-vp9\"; break;\n    case VideoCodec::kAV1: key = \"uxr-codec-av1\"; break;\n    case VideoCodec::kHEVC: key = \"uxr-codec-hevc\"; break;\n    default: return true;\n  }\n  const auto& config = base::UxrConfig::GetInstance();\n  if (!config.Has(key))\n    return true;\n  const std::string value = config.Get(key);\n  if (value == \"native\")\n    return true;\n  // SetAll validates the exact token grammar before this immutable policy is\n  // published. The separators keep partial tokens from enabling a backend.\n  return (\",\" + value + \",\").find(\",supported,\") != std::string::npos;\n}"
+    },
+    "bool HasUxrVideoCodecRestrictions()": {
+      "target": "media/base/supported_types.cc",
+      "text": "bool HasUxrVideoCodecRestrictions() {\n  for (VideoCodec codec : {VideoCodec::kH264, VideoCodec::kVP8, VideoCodec::kVP9,\n                           VideoCodec::kAV1, VideoCodec::kHEVC}) {\n    if (!IsUxrVideoCodecAllowed(codec))\n      return true;\n  }\n  return false;\n}"
+    },
+    "bool IsDecoderSupportedVideoType(": {
+      "target": "media/base/supported_types.cc",
+      "text": "bool IsDecoderSupportedVideoType(const VideoType& type) {\n  if (!IsUxrVideoCodecAllowed(type.codec))\n    return false;\n  if (auto* media_client = GetMediaClient())\n    return media_client->IsDecoderSupportedVideoType(type);\n  return IsDefaultDecoderSupportedVideoType(type);\n}"
+    },
+    "bool IsEncoderSupportedVideoType(": {
+      "target": "media/base/supported_types.cc",
+      "text": "bool IsEncoderSupportedVideoType(const VideoType& type) {\n  if (!IsUxrVideoCodecAllowed(type.codec))\n    return false;\n  if (auto* media_client = GetMediaClient()) {\n    return media_client->IsEncoderSupportedVideoType(type);\n  }\n  return IsDefaultEncoderSupportedVideoType(type);\n}"
+    },
+    "void DecoderSelector<StreamType>::SelectDecoderInternal(": {
+      "target": "media/filters/decoder_selector.cc",
+      "text": "void DecoderSelector<StreamType>::SelectDecoderInternal(\n    SelectDecoderCB select_decoder_cb,\n    typename Decoder::OutputCB output_cb,\n    bool needs_new_decoders) {\n  DVLOG(2) << __func__;\n  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);\n  DCHECK(select_decoder_cb);\n  DCHECK(!select_decoder_cb_);\n  select_decoder_cb_ = std::move(select_decoder_cb);\n  output_cb_ = std::move(output_cb);\n  config_ = traits_->GetDecoderConfig(stream_);\n\n  TRACE_EVENT_BEGIN(\"media\", kSelectDecoderTrace, GetTracingTrack(this), \"type\",\n                    DemuxerStream::GetTypeName(StreamType), \"config\",\n                    config_.AsHumanReadableString());\n\n  if (!config_.IsValidConfig()) {\n    DLOG(ERROR) << \"Invalid stream config\";\n    ReturnSelectionError(DecoderStatus::Codes::kUnsupportedConfig);\n    return;\n  }\n\n  if constexpr (StreamType == DemuxerStream::VIDEO) {\n    if (!IsUxrVideoCodecAllowed(config_.codec())) {\n      ReturnSelectionError(DecoderStatus::Codes::kUnsupportedConfig);\n      return;\n    }\n  }\n\n  if (needs_new_decoders) {\n    decode_failure_reinit_cause_ = std::nullopt;\n    ran_out_of_decoders_ = false;\n    CreateDecoders();\n  }\n\n  GetAndInitializeNextDecoder();\n}"
+    },
+    "media::VideoCodec VideoTrackRecorderImpl::GetPreferredCodec(": {
+      "target": "third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc",
+      "text": "media::VideoCodec VideoTrackRecorderImpl::GetPreferredCodec(\n    MediaTrackContainerType type) {\n  for (const auto& supported_profile : GetVEASupportedProfiles()) {\n    const media::VideoCodecProfile codec_profile = supported_profile.profile;\n    for (auto& entry : kPreferredCodecAndVEAProfiles) {\n      if (!media::IsUxrVideoCodecAllowed(entry.codec))\n        continue;\n      if (codec_profile >= entry.min_profile &&\n          codec_profile <= entry.max_profile &&\n          std::find(entry.supported_container_types.begin(),\n                    entry.supported_container_types.end(),\n                    type) != entry.supported_container_types.end()) {\n        DVLOG(2) << \"Accelerated codec found: \"\n                 << media::GetProfileName(codec_profile) << \", min_resolution: \"\n                 << supported_profile.min_resolution.ToString()\n                 << \", max_resolution: \"\n                 << supported_profile.max_resolution.ToString()\n                 << \", max_framerate: \"\n                 << supported_profile.max_framerate_numerator << \"/\"\n                 << supported_profile.max_framerate_denominator;\n        return entry.codec;\n      }\n    }\n  }\n\n  const bool mp4 = type == MediaTrackContainerType::kVideoMp4 ||\n                   type == MediaTrackContainerType::kAudioMp4;\n  for (media::VideoCodec codec : {media::VideoCodec::kVP8, media::VideoCodec::kVP9,\n                                  media::VideoCodec::kAV1, media::VideoCodec::kH264}) {\n    if (mp4 && codec == media::VideoCodec::kVP8)\n      continue;\n    if (codec == media::VideoCodec::kH264 && !mp4 &&\n        type != MediaTrackContainerType::kVideoMatroska)\n      continue;\n    if (media::IsUxrVideoCodecAllowed(codec) && IsSoftwareEncoderAvailable(codec))\n      return codec;\n  }\n  return media::VideoCodec::kUnknown;\n}"
+    },
+    "bool UxrRtcFormatAllowed(": {
+      "target": "third_party/blink/renderer/platform/peerconnection/video_codec_factory.cc",
+      "text": "bool UxrRtcFormatAllowed(const webrtc::SdpVideoFormat& format) {\n  const auto profile = WebRTCFormatToCodecProfile(format);\n  return !profile || media::IsUxrVideoCodecAllowed(\n                         media::VideoCodecProfileToVideoCodec(*profile));\n}"
+    },
+    "std::vector<webrtc::SdpVideoFormat> FilterUxrRtcFormats(": {
+      "target": "third_party/blink/renderer/platform/peerconnection/video_codec_factory.cc",
+      "text": "std::vector<webrtc::SdpVideoFormat> FilterUxrRtcFormats(\n    std::vector<webrtc::SdpVideoFormat> formats) {\n  std::erase_if(formats, [](const webrtc::SdpVideoFormat& format) {\n    return !UxrRtcFormatAllowed(format);\n  });\n  return formats;\n}"
+    },
+    "class EncoderAdapter :": {
+      "target": "third_party/blink/renderer/platform/peerconnection/video_codec_factory.cc",
+      "text": "class EncoderAdapter : public webrtc::VideoEncoderFactory {\n public:\n  explicit EncoderAdapter(\n      std::unique_ptr<RTCVideoEncoderFactory> hardware_encoder_factory,\n      StatsCollector::StoreProcessingStatsCB stats_callback)\n      : hardware_encoder_factory_(std::move(hardware_encoder_factory)),\n        stats_callback_(stats_callback) {\n    if (hardware_encoder_factory_) {\n      hardware_encoder_factory_->SetAvailableSoftwareFallbackCodecs(\n          software_encoder_factory_.GetSupportedFormats());\n    }\n  }\n\n  std::unique_ptr<webrtc::VideoEncoder> Create(\n      const webrtc::Environment& env,\n      const webrtc::SdpVideoFormat& format) override {\n    if (!UxrRtcFormatAllowed(format))\n      return nullptr;\n    if (!WebRTCFormatToCodecProfile(format)) {\n      LOG(ERROR) << \"Unsupported SDP format: \" << format.name;\n      return nullptr;\n    }\n    const bool supported_in_hardware =\n        IsFormatSupported(hardware_encoder_factory_.get(), format);\n    bool allow_h264_profile_fallback = false;\n    // Special handling of H264 hardware encoder fallback during encoding when\n    // high profile is requested. However if hardware encoding is not supported,\n    // trust supported formats reported by |software_encoder_factory_| and do\n    // not allow profile mismatch when only software encoder factory is used for\n    // creating the simulcast encoder adapter.\n    if (base::EqualsCaseInsensitiveASCII(format.name, webrtc::kH264CodecName) &&\n        supported_in_hardware) {\n      allow_h264_profile_fallback = IsFormatSupported(\n          &software_encoder_factory_,\n          webrtc::CreateH264Format(\n              webrtc::H264Profile::kProfileConstrainedBaseline,\n              webrtc::H264Level::kLevel1_1, \"1\"));\n    }\n    const bool supported_in_software =\n        allow_h264_profile_fallback ||\n        IsFormatSupported(&software_encoder_factory_, format);\n\n    if (!supported_in_software && !supported_in_hardware)\n      return nullptr;\n\n    VideoEncoderFactory* primary_factory =\n        supported_in_hardware ? static_cast<webrtc::VideoEncoderFactory*>(\n                                    hardware_encoder_factory_.get())\n                              : &software_encoder_factory_;\n    VideoEncoderFactory* fallback_factory =\n        supported_in_hardware && supported_in_software\n            ? &software_encoder_factory_\n            : nullptr;\n    std::unique_ptr<webrtc::VideoEncoder> encoder =\n        std::make_unique<webrtc::SimulcastEncoderAdapter>(\n            env, primary_factory, fallback_factory, format);\n\n    return std::make_unique<StatsCollectingEncoder>(format, std::move(encoder),\n                                                    stats_callback_);\n  }\n\n  std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override {\n    std::vector<webrtc::SdpVideoFormat> software_formats =\n        software_encoder_factory_.GetSupportedFormats();\n    return FilterUxrRtcFormats(hardware_encoder_factory_\n               ? MergeFormats(software_formats,\n                              hardware_encoder_factory_->GetSupportedFormats())\n               : software_formats);\n  }\n\n  webrtc::VideoEncoderFactory::CodecSupport QueryCodecSupport(\n      const webrtc::SdpVideoFormat& format,\n      std::optional<std::string> scalability_mode,\n      std::optional<webrtc::Resolution> resolution) const override {\n    if (!UxrRtcFormatAllowed(format))\n      return {};\n    webrtc::VideoEncoderFactory::CodecSupport codec_support =\n        hardware_encoder_factory_\n            ? hardware_encoder_factory_->QueryCodecSupport(\n                  format, scalability_mode, resolution)\n            : webrtc::VideoEncoderFactory::CodecSupport();\n    if (!codec_support.is_supported) {\n      codec_support = software_encoder_factory_.QueryCodecSupport(\n          format, scalability_mode, resolution);\n    }\n    return codec_support;\n  }\n\n private:\n  webrtc::InternalEncoderFactory software_encoder_factory_;\n  const std::unique_ptr<RTCVideoEncoderFactory> hardware_encoder_factory_;\n  StatsCollector::StoreProcessingStatsCB stats_callback_;\n}"
+    },
+    "class DecoderAdapter :": {
+      "target": "third_party/blink/renderer/platform/peerconnection/video_codec_factory.cc",
+      "text": "class DecoderAdapter : public webrtc::VideoDecoderFactory {\n public:\n  explicit DecoderAdapter(\n      std::unique_ptr<webrtc::VideoDecoderFactory> hardware_decoder_factory,\n      StatsCollector::StoreProcessingStatsCB stats_callback)\n      : hardware_decoder_factory_(std::move(hardware_decoder_factory)),\n        stats_callback_(stats_callback) {}\n\n  std::unique_ptr<webrtc::VideoDecoder> Create(\n      const webrtc::Environment& env,\n      const webrtc::SdpVideoFormat& format) override {\n    if (!UxrRtcFormatAllowed(format))\n      return nullptr;\n    std::unique_ptr<webrtc::VideoDecoder> software_decoder =\n        CreateDecoder(&software_decoder_factory_, env, format);\n\n    std::unique_ptr<webrtc::VideoDecoder> hardware_decoder =\n        CreateDecoder(hardware_decoder_factory_.get(), env, format);\n\n    if (!software_decoder && !hardware_decoder)\n      return nullptr;\n\n    return std::make_unique<StatsCollectingDecoder>(\n        format,\n        Wrap(env, std::move(software_decoder), std::move(hardware_decoder)),\n        stats_callback_);\n  }\n\n  std::vector<webrtc::SdpVideoFormat> GetSupportedFormats() const override {\n    std::vector<webrtc::SdpVideoFormat> software_formats =\n        software_decoder_factory_.GetSupportedFormats();\n    return FilterUxrRtcFormats(hardware_decoder_factory_\n               ? MergeFormats(software_formats,\n                              hardware_decoder_factory_->GetSupportedFormats())\n               : software_formats);\n  }\n\n  webrtc::VideoDecoderFactory::CodecSupport QueryCodecSupport(\n      const webrtc::SdpVideoFormat& format,\n      bool reference_scaling,\n      std::optional<webrtc::Resolution> resolution) const override {\n    if (!UxrRtcFormatAllowed(format))\n      return {};\n    webrtc::VideoDecoderFactory::CodecSupport codec_support =\n        hardware_decoder_factory_\n            ? hardware_decoder_factory_->QueryCodecSupport(\n                  format, reference_scaling, resolution)\n            : webrtc::VideoDecoderFactory::CodecSupport();\n    if (!codec_support.is_supported) {\n      codec_support = software_decoder_factory_.QueryCodecSupport(\n          format, reference_scaling, resolution);\n    }\n    return codec_support;\n  }\n\n private:\n  webrtc::InternalDecoderFactory software_decoder_factory_;\n  const std::unique_ptr<webrtc::VideoDecoderFactory> hardware_decoder_factory_;\n  StatsCollector::StoreProcessingStatsCB stats_callback_;\n}"
+    },
+    "bool UxrFontFamilyIsGeneric(": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "text": "bool UxrFontFamilyIsGeneric(const AtomicString& family) {\n  const std::string name = family.GetString().ToAsciiLower().Utf8();\n  static constexpr const char* kGenericFamilies[] = {\n      \"serif\",       \"sans-serif\", \"monospace\",    \"cursive\",\n      \"fantasy\",     \"system-ui\",  \"math\",         \"emoji\",\n      \"fangsong\",    \"ui-serif\",   \"ui-sans-serif\", \"ui-monospace\",\n      \"ui-rounded\",  \"ui-fangsong\", \"-webkit-body\",\n      \"-webkit-pictograph\", \"-webkit-system-font\", \"-webkit-control\"};\n  for (const char* generic : kGenericFamilies) {\n    if (name == generic)\n      return true;\n  }\n  return false;\n}"
+    },
+    "const char* UxrSystemFontSubstitute(": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "text": "const char* UxrSystemFontSubstitute(const AtomicString& family) {\n  if (!base::UxrConfig::GetInstance().Get(\"uxr-font-policy\").empty())\n    return nullptr;\n  if (base::UxrConfig::GetInstance().Get(\"uxr-synthetic-device-tests\") != \"true\")\n    return nullptr;\n  const std::string persona =\n      base::UxrConfig::GetInstance().Get(\"uxr-platform\");\n  if ((!base::EqualsCaseInsensitiveASCII(persona, \"windows\") &&\n       !base::EqualsCaseInsensitiveASCII(persona, \"win32\")) ||\n      !base::UxrConfig::GetInstance().Get(\"uxr-font-whitelist\").empty()) {\n    return nullptr;\n  }\n\n  static constexpr struct {\n    const char* generic;\n    const char* family;\n  } kWindowsGenericFamilies[] = {\n      {\"system-ui\", \"Segoe UI\"},\n      {\"sans-serif\", \"Arial\"},\n      {\"serif\", \"Times New Roman\"},\n      {\"monospace\", \"Consolas\"},\n      {\"emoji\", \"Segoe UI Emoji\"},\n      {\"cursive\", \"Comic Sans MS\"},\n      {\"fantasy\", \"Impact\"},\n      {\"math\", \"Cambria Math\"},\n      {\"ui-monospace\", \"Consolas\"},\n      {\"ui-serif\", \"Times New Roman\"},\n      {\"ui-sans-serif\", \"Segoe UI\"},\n      {\"ui-rounded\", \"Segoe UI\"},\n      {\"-webkit-body\", \"Times New Roman\"},\n      {\"-webkit-pictograph\", \"Segoe UI Emoji\"},\n      {\"-webkit-system-font\", \"Segoe UI\"},\n      {\"-webkit-control\", \"Segoe UI\"}};\n  const std::string requested = family.GetString().Utf8();\n  for (const auto& entry : kWindowsGenericFamilies) {\n    if (base::EqualsCaseInsensitiveASCII(entry.generic, requested))\n      return entry.family;\n  }\n  return nullptr;\n}"
+    },
+    "bool UxrFontFamilyAllowed(": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "text": "bool UxrFontFamilyAllowed(const AtomicString& family) {\n  // Explicit policy uses the resolved family below, not the requested alias.\n  if (!base::UxrConfig::GetInstance().Get(\"uxr-font-policy\").empty())\n    return true;\n  if (base::UxrConfig::GetInstance().Get(\"uxr-synthetic-device-tests\") != \"true\")\n    return true;\n  if (family.empty() || UxrFontFamilyIsGeneric(family))\n    return true;\n\n  const std::string requested = family.GetString().Utf8();\n  const std::string whitelist =\n      base::UxrConfig::GetInstance().Get(\"uxr-font-whitelist\");\n  if (!whitelist.empty()) {\n    for (const std::string& entry : base::SplitString(\n             whitelist, \",\", base::TRIM_WHITESPACE,\n             base::SPLIT_WANT_NONEMPTY)) {\n      if (base::EqualsCaseInsensitiveASCII(entry, requested))\n        return true;\n    }\n    return false;\n  }\n\n  const std::string persona =\n      base::UxrConfig::GetInstance().Get(\"uxr-platform\");\n  if (!base::EqualsCaseInsensitiveASCII(persona, \"windows\") &&\n      !base::EqualsCaseInsensitiveASCII(persona, \"win32\")) {\n    return true;\n  }\n\n  // Keep the default Windows persona aligned with assets/fonts. The list uses\n  // family names from the bundled files' OpenType name tables, including\n  // typographic subfamilies that Fontconfig exposes as selectable families.\n  static constexpr const char* kBundledWindowsFamilies[] = {\n      \"Arial\", \"Arial Black\", \"Arial Narrow\", \"Arial Rounded MT Bold\",\n      \"Book Antiqua\", \"Bookman Old Style\", \"Calibri\", \"Calibri Light\",\n      \"Cambria\", \"Cambria Math\", \"Century\", \"Century Gothic\",\n      \"Century Schoolbook\", \"Comic Sans MS\", \"Consolas\", \"Courier New\",\n      \"Garamond\", \"Georgia\", \"Impact\", \"Lucida Bright\",\n      \"Lucida Calligraphy\", \"Lucida Console\", \"Lucida Fax\",\n      \"Lucida Handwriting\", \"Lucida Sans\", \"Lucida Sans Typewriter\",\n      \"Lucida Sans Unicode\", \"Microsoft Sans Serif\", \"Monotype Corsiva\",\n      \"MS Gothic\", \"MS PGothic\", \"MS Reference Sans Serif\", \"MS UI Gothic\",\n      \"Palatino Linotype\", \"Segoe Print\",\n      \"Segoe Script\", \"Segoe UI\", \"Segoe UI Black\", \"Segoe UI Emoji\",\n      \"Segoe UI Historic\", \"Segoe UI Light\", \"Segoe UI Semibold\",\n      \"Segoe UI Semilight\", \"Segoe UI Symbol\", \"Tahoma\", \"Times New Roman\",\n      \"Trebuchet MS\", \"Verdana\", \"Wingdings\", \"Wingdings 2\", \"Wingdings 3\",\n      \"\uff2d\uff33 \u30b4\u30b7\u30c3\u30af\", \"\uff2d\uff33 \uff30\u30b4\u30b7\u30c3\u30af\"};\n  for (const char* allowed : kBundledWindowsFamilies) {\n    if (base::EqualsCaseInsensitiveASCII(allowed, requested))\n      return true;\n  }\n  return false;\n}"
+    },
+    "const FontPlatformData* FontCache::GetFontPlatformData(": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "text": "const FontPlatformData* FontCache::GetFontPlatformData(\n    const FontDescription& font_description,\n    const FontFaceCreationParams& creation_params,\n    AlternateFontName alternate_font_name) {\n  // Only CSS family lookup substitutes generics; src:local() stays exact.\n  if (creation_params.CreationType() == kCreateFontByFamily &&\n      (alternate_font_name == AlternateFontName::kAllowAlternate ||\n       alternate_font_name == AlternateFontName::kNoAlternate)) {\n    if (const char* ux_sub = UxrSystemFontSubstitute(creation_params.Family())) {\n      if (const FontPlatformData* data = GetFontPlatformData(\n              font_description, FontFaceCreationParams(AtomicString(ux_sub)),\n              alternate_font_name)) {\n        return data;\n      }\n    }\n  }\n\n  // Filter native families and src:local() probes. Downloaded faces and\n  // last-resort fallback retain normal Blink behavior.\n  if (creation_params.CreationType() == kCreateFontByFamily &&\n      alternate_font_name != AlternateFontName::kLastResort &&\n      !UxrFontFamilyAllowed(creation_params.Family())) {\n    return nullptr;\n  }\n\n  TRACE_EVENT0(\"fonts\", \"FontCache::GetFontPlatformData\");\n\n#if !BUILDFLAG(IS_MAC)\n  if (creation_params.CreationType() == kCreateFontByFamily &&\n      creation_params.Family() == font_family_names::kSystemUi) {\n    return SystemFontPlatformData(font_description);\n  }\n#endif\n\n  const FontPlatformData* data = font_platform_data_cache_.GetOrCreateFontPlatformData(\n      this, font_description, creation_params, alternate_font_name);\n  if (data && !IsUxrFontFamilyAllowed(data->FontFamilyName()))\n    return nullptr;\n  return data;\n}"
+    },
+    "bool FontCache::IsUxrFontFamilyAllowed(": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "text": "bool FontCache::IsUxrFontFamilyAllowed(const String& family) {\n  const auto& config = base::UxrConfig::GetInstance();\n  if (config.Get(\"uxr-font-policy\") != \"restricted\")\n    return true;\n  const std::string actual = family.Utf8();\n  for (const auto& entry : base::SplitString(config.Get(\"uxr-font-whitelist\"), \",\",\n                                            base::TRIM_WHITESPACE,\n                                            base::SPLIT_WANT_NONEMPTY)) {\n    if (base::EqualsCaseInsensitiveASCII(entry, actual))\n      return true;\n  }\n  return false;\n}"
+    },
+    "const SimpleFontData* FontCache::UxrRestrictedLastResortFont(": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "text": "const SimpleFontData* FontCache::UxrRestrictedLastResortFont(\n    const FontDescription& description) {\n  const auto& config = base::UxrConfig::GetInstance();\n  if (config.Get(\"uxr-font-policy\") != \"restricted\")\n    return nullptr;\n  for (const auto& entry : base::SplitString(config.Get(\"uxr-font-whitelist\"), \",\",\n                                            base::TRIM_WHITESPACE,\n                                            base::SPLIT_WANT_NONEMPTY)) {\n    if (const auto* data = GetFontData(description, AtomicString(String::FromUtf8(entry)),\n                                       AlternateFontName::kNoAlternate))\n      return data;\n  }\n  // A missing installed pool must not fall back to an excluded host font, or\n  // leave Blink's mandatory last-resort font null. Skia's empty face has no\n  // host glyphs and keeps this failure bounded; no real font is fabricated.\n  const auto* empty = MakeGarbageCollected<FontPlatformData>(\n      SkTypeface::MakeEmpty(), std::string(), description.EffectiveFontSize(),\n      false, false, description.TextRendering(), ResolvedFontFeatures(),\n      description.Orientation());\n  return FontDataFromFontPlatformData(empty, description.SubpixelAscentDescent());\n}"
+    },
+    "const SimpleFontData* FontCache::FallbackFontForCharacter(": {
+      "target": "third_party/blink/renderer/platform/fonts/font_cache.cc",
+      "text": "const SimpleFontData* FontCache::FallbackFontForCharacter(\n    const FontDescription& description,\n    UChar32 lookup_char,\n    const SimpleFontData* font_data_to_substitute,\n    FontFallbackPriority fallback_priority) {\n  TRACE_EVENT0(\"fonts\", \"FontCache::FallbackFontForCharacter\");\n\n  // In addition to PUA, do not perform fallback for non-characters either. Some\n  // of these are sentinel characters to detect encodings and do appear on\n  // websites. More details on\n  // http://www.unicode.org/faq/private_use.html#nonchar1 - See also\n  // crbug.com/862352 where performing fallback for U+FFFE causes a memory\n  // regression.\n  if (Character::IsPrivateUse(lookup_char) ||\n      Character::IsNonCharacter(lookup_char))\n    return nullptr;\n  base::ElapsedTimer timer;\n  if (base::UxrConfig::GetInstance().Get(\"uxr-font-policy\") == \"restricted\") {\n    // Search the installed pool in explicit order. PlatformFallback may return\n    // an arbitrary host typeface; do not enter that path in restricted mode.\n    for (const auto& entry : base::SplitString(\n             base::UxrConfig::GetInstance().Get(\"uxr-font-whitelist\"), \",\",\n             base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {\n      const auto* candidate = GetFontData(description, AtomicString(String::FromUtf8(entry)),\n                                          AlternateFontName::kNoAlternate);\n      if (candidate && candidate->GlyphForCharacter(lookup_char))\n        return candidate;\n    }\n    return nullptr;\n  }\n  const std::string persona = base::UxrConfig::GetInstance().Get(\"uxr-platform\");\n  const std::string whitelist = base::UxrConfig::GetInstance().Get(\"uxr-font-whitelist\");\n  if (base::UxrConfig::GetInstance().Get(\"uxr-font-policy\").empty() &&\n      base::UxrConfig::GetInstance().Get(\"uxr-synthetic-device-tests\") == \"true\" &&\n      (base::EqualsCaseInsensitiveASCII(persona, \"windows\") ||\n       base::EqualsCaseInsensitiveASCII(persona, \"win32\")) && whitelist.empty()) {\n    static constexpr const char* kPersonaFallbackFamilies[] = {\n        \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Segoe UI\", \"Arial\",\n        \"Times New Roman\", \"Microsoft Sans Serif\", \"Tahoma\", \"MS Gothic\"};\n    for (const char* family : kPersonaFallbackFamilies) {\n      const SimpleFontData* candidate =\n          GetFontData(description, AtomicString(family));\n      if (candidate && candidate->GlyphForCharacter(lookup_char))\n        return candidate;\n    }\n    // Missing persona glyphs retain the native system fallback.\n  }\n  const SimpleFontData* result = PlatformFallbackFontForCharacter(\n      description, lookup_char, font_data_to_substitute, fallback_priority);\n  base::TimeDelta elapsed = timer.Elapsed();\n  bool is_emoji = IsNonTextFallbackPriority(fallback_priority);\n  UErrorCode err = U_ZERO_ERROR;\n  UScriptCode script = uscript_getScript(lookup_char, &err);\n  if (U_FAILURE(err)) {\n    script = USCRIPT_INVALID_CODE;\n  }\n  FontPerformance::AddSystemFallbackFontTime(script, is_emoji, elapsed);\n  return result;\n}"
+    },
+    "  if (!command_line->HasSwitch(switches::kProcessType))": {
+      "target": "chrome/app/chrome_main.cc",
+      "text": "  if (!command_line->HasSwitch(switches::kProcessType)) {\n    // Canonicalize public booleans identically for direct and SDK launches.\n    for (const char* key : {\"fingerprint-noise\", \"fingerprint-sapi-voices\",\n                            \"fingerprint-allow-3p-cookies\", \"fingerprint-windows-font-metrics\",\n                            \"fingerprint-reduced-motion\", \"fingerprint-reduced-transparency\",\n                            \"fingerprint-inverted-colors\", \"uxr-reduced-motion\",\n                            \"uxr-reduced-transparency\", \"uxr-inverted-colors\"}) {\n      if (!command_line->HasSwitch(key))\n        continue;\n      const std::string value = base::ToLowerASCII(command_line->GetSwitchValueASCII(key));\n      if (value == \"off\" || value == \"false\" || value == \"0\" ||\n          value == \"disable\" || value == \"disabled\")\n        command_line->AppendSwitchASCII(key, \"false\");\n      else if (value.empty() || value == \"true\" || value == \"1\" ||\n               value == \"on\" || value == \"enable\" || value == \"enabled\")\n        command_line->AppendSwitchASCII(key, \"true\");\n    }\n\n    struct Alias { const char* fp; const char* uxr; };\n    static constexpr Alias kAliases[] = {\n      {\"fingerprint-gpu-backend\",         \"uxr-gpu-backend\"},\n      {\"fingerprint-font-policy\",         \"uxr-font-policy\"},\n      {\"fingerprint-font-whitelist\",      \"uxr-font-whitelist\"},\n      {\"fingerprint-audio-render\",        \"uxr-audio-render\"},\n      {\"fingerprint-audio-seed\",          \"uxr-audio-seed\"},\n      {\"fingerprint-timer-resolution\",    \"uxr-timer-resolution\"},\n      {\"fingerprint-max-touch-points\",    \"uxr-max-touch-points\"},\n      {\"fingerprint-reduced-motion\",      \"uxr-reduced-motion\"},\n      {\"fingerprint-reduced-transparency\", \"uxr-reduced-transparency\"},\n      {\"fingerprint-inverted-colors\",     \"uxr-inverted-colors\"},\n      {\"fingerprint-color-scheme\",        \"uxr-color-scheme\"},\n      {\"fingerprint-preferred-contrast\",  \"uxr-preferred-contrast\"},\n      {\"fingerprint-forced-colors\",       \"uxr-forced-colors\"},\n      {\"fingerprint-pointer\",             \"uxr-pointer\"},\n      {\"fingerprint-hover\",               \"uxr-hover\"},\n      {\"fingerprint-hdr\",                 \"uxr-hdr\"},\n      {\"fingerprint-keyboard-layout\",     \"uxr-keyboard-layout\"},\n      {\"fingerprint-gpu-vendor\",          \"uxr-webgl-vendor\"},\n      {\"fingerprint-gpu-renderer\",         \"uxr-webgl-renderer\"},\n      {\"disable-gpu-fingerprint\",           \"uxr-disable-gpu-fingerprint\"},\n      {\"fingerprint-hardware-concurrency\", \"uxr-hw-concurrency\"},\n      {\"fingerprint-device-memory\",       \"uxr-device-memory\"},\n      {\"fingerprint-screen-width\",        \"uxr-screen-width\"},\n      {\"fingerprint-screen-height\",       \"uxr-screen-height\"},\n      {\"fingerprint-brand\",               \"uxr-ua-brand\"},\n      {\"fingerprint-brand-version\",        \"uxr-ua-brand-version\"},\n      {\"fingerprint-platform-version\",    \"uxr-ua-platform-version\"},\n      {\"fingerprint-timezone\",            \"uxr-timezone\"},\n      {\"fingerprint-storage-quota\",        \"uxr-storage-quota\"},\n      {\"fingerprint-taskbar-height\",      \"uxr-taskbar-height\"},\n      {\"fingerprint-windows-font-metrics\", \"uxr-windows-font-metrics\"},\n      {\"fingerprint-webrtc-ip\",           \"uxr-webrtc-ip\"},\n      {\"fingerprint-geolocation\",         \"uxr-geolocation\"},\n      {\"fingerprint-codec-h264\",          \"uxr-codec-h264\"},\n      {\"fingerprint-codec-vp8\",           \"uxr-codec-vp8\"},\n      {\"fingerprint-codec-vp9\",           \"uxr-codec-vp9\"},\n      {\"fingerprint-codec-av1\",           \"uxr-codec-av1\"},\n      {\"fingerprint-codec-hevc\",          \"uxr-codec-hevc\"},\n      {\"fingerprint-devtools-runtime-suppression\",\n                                             \"uxr-devtools-runtime-suppression\"},\n      {\"fingerprint-canvas-bridge\",        \"uxr-canvas-bridge\"},\n      {\"fingerprint-canvas-bridge-unsafe\", \"uxr-canvas-bridge-unsafe\"},\n    };\n    for (const auto& a : kAliases) {\n      if (command_line->HasSwitch(a.fp) &&\n          !command_line->HasSwitch(a.uxr)) {\n        command_line->AppendSwitchNative(\n            a.uxr, command_line->GetSwitchValueNative(a.fp));\n      }\n    }\n\n    if (command_line->HasSwitch(\"fingerprint-locale\") &&\n        !command_line->HasSwitch(\"uxr-languages\")) {\n      command_line->AppendSwitchASCII(\"uxr-languages\",\n          command_line->GetSwitchValueASCII(\"fingerprint-locale\"));\n    }\n\n    // Canonicalize the public off spellings before any consumer sees them.\n    if (command_line->HasSwitch(\"fingerprint\")) {\n      const std::string mode = base::ToLowerASCII(\n          command_line->GetSwitchValueASCII(\"fingerprint\"));\n      if (mode == \"off\" || mode == \"false\" || mode == \"0\" ||\n          mode == \"disable\" || mode == \"disabled\") {\n        command_line->AppendSwitchASCII(\"fingerprint\", \"off\");\n        command_line->RemoveSwitch(\"fingerprint-platform\");\n      }\n    }\n\n    if (command_line->HasSwitch(\"uxr-ua-brand\")) {\n      const std::string brand = base::ToLowerASCII(\n          command_line->GetSwitchValueASCII(\"uxr-ua-brand\"));\n      if (brand == \"chrome\" || brand == \"google chrome\")\n        command_line->AppendSwitchASCII(\"uxr-ua-brand\", \"Google Chrome\");\n      else if (brand == \"edge\" || brand == \"microsoft edge\")\n        command_line->AppendSwitchASCII(\"uxr-ua-brand\", \"Microsoft Edge\");\n      else if (brand == \"opera\")\n        command_line->AppendSwitchASCII(\"uxr-ua-brand\", \"Opera\");\n      else if (brand == \"vivaldi\")\n        command_line->AppendSwitchASCII(\"uxr-ua-brand\", \"Vivaldi\");\n    }\n    // Chrome's brand version is its engine version. Other brands have their\n    // own version and must not change the Chromium token or GREASE seed.\n    const std::string brand = command_line->GetSwitchValueASCII(\"uxr-ua-brand\");\n    if ((brand.empty() || brand == \"Google Chrome\" || brand == \"Chromium\") &&\n        command_line->HasSwitch(\"uxr-ua-brand-version\") &&\n        !command_line->HasSwitch(\"uxr-ua-full-version\")) {\n      command_line->AppendSwitchASCII(\"uxr-ua-full-version\",\n          command_line->GetSwitchValueASCII(\"uxr-ua-brand-version\"));\n    }\n\n    if (command_line->HasSwitch(\"fingerprint-platform\")) {\n      const std::string alias = base::ToLowerASCII(\n          command_line->GetSwitchValueASCII(\"fingerprint-platform\"));\n      std::string platform;\n      std::string ua_platform;\n      std::string ua_os;\n      std::string platform_version;\n      bool native_platform = false;\n      if (alias == \"windows\" || alias == \"win32\") {\n        platform = \"Win32\";\n        ua_platform = \"Windows\";\n        ua_os = \"Windows NT 10.0; Win64; x64\";\n        platform_version = \"10.0.0\";\n#if BUILDFLAG(IS_WIN)\n        native_platform = true;\n#endif\n      } else if (alias == \"macos\" || alias == \"macintel\") {\n        platform = \"MacIntel\";\n        ua_platform = \"macOS\";\n        ua_os = \"Macintosh; Intel Mac OS X 10_15_7\";\n        platform_version = \"10.15.7\";\n#if BUILDFLAG(IS_MAC)\n        native_platform = true;\n#endif\n      } else if (alias == \"linux\" || alias == \"linux x86_64\") {\n        platform = \"Linux x86_64\";\n        ua_platform = \"Linux\";\n        ua_os = \"X11; Linux x86_64\";\n#if BUILDFLAG(IS_LINUX)\n        native_platform = true;\n#endif\n      }\n      if (!platform.empty()) {\n        const auto append_default = [&](const char* name,\n                                        const std::string& value) {\n          if (!command_line->HasSwitch(name))\n            command_line->AppendSwitchASCII(name, value);\n        };\n        if (!native_platform) {\n          // Cross-OS templates prevent host fallback; they are not device data.\n          append_default(\"uxr-platform\", platform);\n          append_default(\"uxr-ua-os\", ua_os);\n          append_default(\"uxr-ua-platform\", ua_platform);\n          append_default(\"uxr-ua-arch\", \"x86\");\n          append_default(\"uxr-ua-bitness\", \"64\");\n          append_default(\"uxr-ua-model\", \"\");\n          append_default(\"uxr-ua-wow64\", \"false\");\n          append_default(\"uxr-ua-platform-version\", platform_version);\n        } else if (alias == \"linux x86_64\") {\n          // This alias explicitly declares an x86_64 Linux persona.\n          append_default(\"uxr-platform\", platform);\n          append_default(\"uxr-ua-os\", ua_os);\n          append_default(\"uxr-ua-platform\", ua_platform);\n          append_default(\"uxr-ua-arch\", \"x86\");\n          append_default(\"uxr-ua-bitness\", \"64\");\n        }\n      }\n    }\n\n    if (command_line->HasSwitch(\"fingerprint\")) {\n      std::string seed =\n          command_line->GetSwitchValueASCII(\"fingerprint\");\n      if (seed.empty()) {\n        seed = command_line->GetSwitchValueASCII(\"uxr-fingerprint-seed\");\n        if (seed.empty())\n          seed = command_line->GetSwitchValueASCII(\"uxr-canvas-seed\");\n        if (seed.empty()) {\n          uint64_t random_seed = base::RandUint64();\n          if (random_seed == 0)\n            random_seed = 1;\n          seed = base::NumberToString(random_seed);\n        }\n      }\n      if (!seed.empty() && seed != \"off\") {\n        command_line->AppendSwitchASCII(\"uxr-fingerprint-enabled\", \"true\");\n        command_line->AppendSwitchASCII(\"uxr-webgl-fingerprint\", \"true\");\n        if (!command_line->HasSwitch(\"uxr-fingerprint-seed\"))\n          command_line->AppendSwitchASCII(\"uxr-fingerprint-seed\", seed);\n        if (!command_line->HasSwitch(\"uxr-canvas-seed\"))\n          command_line->AppendSwitchASCII(\"uxr-canvas-seed\", seed);\n        if (!command_line->HasSwitch(\"uxr-audio-seed\"))\n          command_line->AppendSwitchASCII(\"uxr-audio-seed\", seed);\n      }\n    }\n\n    const bool public_fingerprint =\n        command_line->GetSwitchValueASCII(\"uxr-fingerprint-enabled\") == \"true\";\n    if (public_fingerprint || command_line->HasSwitch(\"uxr-screen-width\") ||\n        command_line->HasSwitch(\"uxr-screen-height\") ||\n        command_line->HasSwitch(\"uxr-screen-avail-width\") ||\n        command_line->HasSwitch(\"uxr-screen-avail-height\") ||\n        command_line->HasSwitch(\"uxr-taskbar-height\")) {\n      const auto append_default = [&](const char* key, const char* value) {\n        if (!command_line->HasSwitch(key))\n          command_line->AppendSwitchASCII(key, value);\n      };\n      std::string platform = base::ToLowerASCII(\n          command_line->GetSwitchValueASCII(\"uxr-ua-platform\"));\n      if (platform.empty())\n        platform = base::ToLowerASCII(\n            command_line->GetSwitchValueASCII(\"uxr-platform\"));\n      if (platform.empty()) {\n#if BUILDFLAG(IS_WIN)\n        platform = \"windows\";\n#elif BUILDFLAG(IS_MAC)\n        platform = \"macos\";\n#else\n        platform = \"linux\";\n#endif\n      }\n      const bool mac = platform == \"macos\" || platform == \"macintel\";\n      const bool win = platform == \"windows\" || platform == \"win32\";\n      // Public launch defaults are independent of noise seeds. Explicit\n      // synthetic tests retain their opt-in, seeded hardware/geometry pools.\n      if (command_line->GetSwitchValueASCII(\"uxr-synthetic-device-tests\") != \"true\") {\n        if (public_fingerprint) {\n          append_default(\"uxr-hw-concurrency\", \"8\");\n          append_default(\"uxr-device-memory\", \"8\");\n        }\n        append_default(\"uxr-screen-width\", mac ? \"1440\" : \"1920\");\n        append_default(\"uxr-screen-height\", mac ? \"900\" : \"1080\");\n        if (!command_line->HasSwitch(\"uxr-screen-avail-height\"))\n          append_default(\"uxr-taskbar-height\", win ? \"48\" : mac ? \"95\" : \"0\");\n      }\n      if (public_fingerprint)\n        append_default(\"uxr-storage-quota\", \"102400\");\n      if (public_fingerprint && win && !command_line->HasSwitch(\"fingerprint-sapi-voices\"))\n        append_default(\"uxr-voices\", \"true\");\n    }\n\n    if (command_line->HasSwitch(\"fingerprint-noise\") &&\n        command_line->GetSwitchValueASCII(\"fingerprint-noise\") == \"false\") {\n      // Disable perturbation, not persona selection. All seeds stay intact.\n      command_line->AppendSwitch(\"uxr-disable-fingerprint-noise\");\n    }\n\n    if (command_line->HasSwitch(\"fingerprint-sapi-voices\")) {\n      const std::string value = base::ToLowerASCII(\n          command_line->GetSwitchValueASCII(\"fingerprint-sapi-voices\"));\n      if (value == \"false\" || value == \"0\" || value == \"off\")\n        command_line->RemoveSwitch(\"uxr-voices\");\n      else\n        command_line->AppendSwitchASCII(\"uxr-voices\", \"true\");\n    }\n\n    if (command_line->HasSwitch(\"fingerprint\") &&\n        command_line->GetSwitchValueASCII(\"fingerprint\") == \"off\") {\n      // Explicit regional settings are independent of fingerprint spoofing.\n      const bool has_timezone = command_line->HasSwitch(\"uxr-timezone\");\n      const bool has_languages = command_line->HasSwitch(\"uxr-languages\");\n      const std::string timezone = command_line->GetSwitchValueASCII(\"uxr-timezone\");\n      const std::string languages = command_line->GetSwitchValueASCII(\"uxr-languages\");\n      const auto& sws = command_line->GetSwitches();\n      std::vector<std::string> uxr_keys;\n      for (const auto& s : sws) {\n        if (s.first.compare(0, 4, \"uxr-\") == 0)\n          uxr_keys.push_back(s.first);\n      }\n      for (const auto& k : uxr_keys)\n        command_line->RemoveSwitch(k);\n      command_line->AppendSwitchASCII(\"uxr-fingerprint-off\", \"true\");\n      command_line->RemoveSwitch(\"fingerprint-platform\");\n      if (has_timezone)\n        command_line->AppendSwitchASCII(\"uxr-timezone\", timezone);\n      if (has_languages)\n        command_line->AppendSwitchASCII(\"uxr-languages\", languages);\n      // GPU identity and readback noise otherwise have enabled defaults.\n      command_line->AppendSwitch(\"uxr-webgl-real\");\n      command_line->AppendSwitch(\"uxr-disable-fingerprint-noise\");\n    }\n\n    if (command_line->HasSwitch(\"uxr-languages\")) {\n      std::vector<std::string> languages;\n      bool valid = true;\n      for (const auto& value : base::SplitString(\n               command_line->GetSwitchValueASCII(\"uxr-languages\"), \",\",\n               base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {\n        const auto tag =\n            base::i18n::LanguageTagConverter::GetInstance().FromString(value);\n        if (!tag || tag->language_subtag() == \"und\") {\n          valid = false;\n          break;\n        }\n        const std::string canonical(tag->tag_string());\n        bool duplicate = false;\n        for (const auto& language : languages)\n          duplicate |= language == canonical;\n        if (!duplicate)\n          languages.push_back(canonical);\n      }\n      if (valid && !languages.empty()) {\n        const std::string normalized = base::JoinString(languages, \",\");\n        command_line->AppendSwitchASCII(\"uxr-languages\", normalized);\n        command_line->AppendSwitchASCII(switches::kAcceptLang, normalized);\n      } else {\n        command_line->RemoveSwitch(\"uxr-languages\");\n      }\n    }\n\n    // Set actual native window bounds. Getter overrides cannot resize a window\n    // or supply valid negative monitor coordinates. Native caller flags win.\n    constexpr char kWindowSize[] = \"window-size\";\n    constexpr char kWindowPosition[] = \"window-position\";\n    if (command_line->HasSwitch(\"uxr-outer-width\") &&\n        command_line->HasSwitch(\"uxr-outer-height\") &&\n        !command_line->HasSwitch(kWindowSize)) {\n      command_line->AppendSwitchASCII(\n          kWindowSize, command_line->GetSwitchValueASCII(\"uxr-outer-width\") +\n                           \",\" + command_line->GetSwitchValueASCII(\"uxr-outer-height\"));\n    }\n    // An explicit native position must also win inside device emulation;\n    // otherwise the real window and its web-exposed position would disagree.\n    if (command_line->HasSwitch(kWindowPosition)) {\n      command_line->RemoveSwitch(\"uxr-window-x\");\n      command_line->RemoveSwitch(\"uxr-window-y\");\n    } else if ((command_line->HasSwitch(\"uxr-window-x\") ||\n         command_line->HasSwitch(\"uxr-window-y\")) &&\n        !command_line->HasSwitch(kWindowPosition)) {\n      const std::string x = command_line->HasSwitch(\"uxr-window-x\")\n                                ? command_line->GetSwitchValueASCII(\"uxr-window-x\") : \"0\";\n      const std::string y = command_line->HasSwitch(\"uxr-window-y\")\n                                ? command_line->GetSwitchValueASCII(\"uxr-window-y\") : \"0\";\n      command_line->AppendSwitchASCII(kWindowPosition, x + \",\" + y);\n    }\n\n    if (command_line->HasSwitch(\"fingerprint-allow-3p-cookies\") &&\n        command_line->GetSwitchValueASCII(\"fingerprint-allow-3p-cookies\") != \"false\" &&\n        command_line->GetSwitchValueASCII(\"fingerprint-allow-3p-cookies\") != \"0\") {\n      // This native switch is presence-based: appending '=false' ENABLES the\n      // phaseout. CookieSettings consumes our explicit, non-persistent opt-in.\n      command_line->RemoveSwitch(\"test-third-party-cookie-phaseout\");\n      command_line->AppendSwitchASCII(\"uxr-allow-3p-cookies\", \"true\");\n      constexpr char kDisableFeatures[] = \"disable-features\";\n      std::string disabled = command_line->GetSwitchValueASCII(kDisableFeatures);\n      if (!disabled.empty())\n        disabled += \",\";\n      disabled += \"ForceThirdPartyCookieBlocking\";\n      command_line->AppendSwitchASCII(kDisableFeatures, disabled);\n    }\n\n    // Apply the native socket policy for direct browser launches too. HTTP\n    // proxying or SOCKS TCP authentication cannot carry arbitrary WebRTC UDP.\n    // An explicit caller policy retains Chromium's normal precedence.\n    if (!command_line->HasSwitch(switches::kNoProxyServer) &&\n        (command_line->HasSwitch(switches::kProxyServer) ||\n         command_line->HasSwitch(switches::kProxyPacUrl) ||\n         command_line->HasSwitch(switches::kProxyAutoDetect)) &&\n        !command_line->HasSwitch(switches::kForceWebRtcIPHandlingPolicy)) {\n      command_line->AppendSwitchASCII(switches::kForceWebRtcIPHandlingPolicy,\n                                      \"disable_non_proxied_udp\");\n    }\n  }"
+    },
+    "native MediaRecorder codec table": {
+      "target": "third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc",
+      "text": "constexpr MediaTrackContainerType kVp8Types[] = {\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoWebM};\nconstexpr MediaTrackContainerType kVp9Types[] = {\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoWebM, MediaTrackContainerType::kVideoMp4};\n#if BUILDFLAG(USE_PROPRIETARY_CODECS)\nconstexpr MediaTrackContainerType kH264Types[] = {\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoMp4};\n#endif\nconstexpr MediaTrackContainerType kAv1Types[] = {\n    MediaTrackContainerType::kVideoWebM,\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoMp4};\n#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)\nconstexpr MediaTrackContainerType kH265Types[] = {\n    MediaTrackContainerType::kVideoMatroska,\n    MediaTrackContainerType::kVideoMp4};\n#endif\n\nconstexpr struct {\n  media::VideoCodec codec;\n  media::VideoCodecProfile min_profile;\n  media::VideoCodecProfile max_profile;\n  base::raw_span<const MediaTrackContainerType> supported_container_types;\n} kPreferredCodecAndVEAProfiles[] = {\n    {media::VideoCodec::kVP8, media::VP8PROFILE_ANY, media::VP8PROFILE_ANY,\n     base::span{kVp8Types}},\n    {media::VideoCodec::kVP9, media::VP9PROFILE_PROFILE0,\n     media::VP9PROFILE_PROFILE0, base::span{kVp9Types}},\n#if BUILDFLAG(USE_PROPRIETARY_CODECS)\n    {media::VideoCodec::kH264, media::H264PROFILE_BASELINE,\n     media::H264PROFILE_HIGH, base::span{kH264Types}},\n#endif\n    {media::VideoCodec::kAV1, media::AV1PROFILE_PROFILE_MAIN,\n     media::AV1PROFILE_PROFILE_MAIN, base::span{kAv1Types}},\n#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)\n    {media::VideoCodec::kHEVC, media::HEVCPROFILE_MAIN, media::HEVCPROFILE_MAIN,\n     base::span{kH265Types}},\n#endif\n};\n\n"
+    }
+  }
+}

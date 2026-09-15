@@ -266,11 +266,12 @@ Node.js 顶层 `executablePath` 也不是该包装层的下载绕过选项；`la
 - 存储配额接入浏览器后端，默认 102400 MiB；真实使用量、磁盘耗尽和桶限制仍保留。Network Information 与原生通知器保持一致。
 - WebRTC 支持显式 IP 和 `auto`，GeoIP 可复用同次查询的出口 IP；不生成虚假候选或 STUN 成功，保留远端和 TURN relay 地址。修改候选字符串不等于改变流量路径。
 - GPU 池包含 Windows/Linux/macOS **身份模板**，不是经过测量的完整设备数据库；公开身份参数保留真实 GL/Dawn 能力。
+- 普通启动默认使用共享 `native` GPU 策略；显式 WebGL 名称覆盖需要 `compatibility`。SDK 不再自动绕过 GPU 驱动黑名单。新增音频图隔离、受限字体、codec 禁用、CSS/input 偏好与毫秒时钟配置，详见 [后端策略](docs/backend-policy.md)。
 - 旧的独立 CPU/内存/屏幕随机池、GL 能力模板、字体替换和 Canvas 读回/导出噪声仍需 `--uxr-synthetic-device-tests=true`。`noise=false` 保留种子并关闭已有扰动，但不代表四套 Canvas/WebGL/audio/client-rect 噪声引擎已经实现。
-- Windows 字体参数是有条件的字体度量对齐，不是完整 DirectWrite 模拟；跨系统声音表不安装 SAPI 合成引擎。第三方 Cookie 和 closed shadow DOM 访问均为显式选项。
+- Windows 字体参数是有条件的字体度量对齐，不是完整 DirectWrite 模拟；普通声音列表使用真实后端，跨系统声音表仅为 synthetic 测试且不安装 SAPI。第三方 Cookie 和 closed shadow DOM 访问均为显式选项。
 - 屏幕与实际布局、字体来源、媒体后端、图形渲染以及 TLS/HTTP 等网络层的一致性，仍有未完成或未通过匹配浏览器验收的项目。
 
-实现细节与验收边界以 [指纹状态记录](FINGERPRINT_STATUS.md)、[真实设备池说明](docs/device-pool.md) 和 [Canvas 链路说明](docs/canvas-chain.md) 为准。新增的 [指纹回归门禁](docs/fingerprint-acceptance.md) 在编译前核验实际补丁内容，解包后固定二进制 hash/版本运行七项测试，失败诊断单独保留。单元测试通过、补丁可应用或一个构建步骤成功，都不能替代匹配版本的真实浏览器验证。
+实现细节与验收边界以 [指纹状态记录](FINGERPRINT_STATUS.md)、[真实设备池说明](docs/device-pool.md) 和 [Canvas 链路说明](docs/canvas-chain.md) 为准。[指纹回归门禁](docs/fingerprint-acceptance.md) 在编译前核验实际补丁内容，解包后固定二进制 hash/版本运行十五项测试，包含后端策略、媒体操作、TLS 恢复及回环 H3。当前 191 个补丁仍需匹配的原生构建验收；单元测试通过或补丁可应用不能替代真实浏览器验证。
 
 ### 高级实验选项
 

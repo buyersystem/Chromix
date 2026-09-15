@@ -1,0 +1,15 @@
+diff --git a/third_party/blink/renderer/platform/fonts/font_cache.h b/third_party/blink/renderer/platform/fonts/font_cache.h
+index cdeca583f077fe784167062e2445f2ef082a39d5..cb2aa3328b707bd76d6ae567ffef8dbdd10f7b99 100644
+--- a/third_party/blink/renderer/platform/fonts/font_cache.h
++++ b/third_party/blink/renderer/platform/fonts/font_cache.h
+@@ -114,6 +114,10 @@
+       const AtomicString&,
+       AlternateFontName = AlternateFontName::kAllowAlternate);
+   const SimpleFontData* GetLastResortFallbackFont(const FontDescription&);
++  // Restricted mode checks the resolved native family, including system
++  // fallback and local-font enumeration. Downloaded author fonts are separate.
++  static bool IsUxrFontFamilyAllowed(const String& family);
++  const SimpleFontData* UxrRestrictedLastResortFont(const FontDescription&);
+ 
+   // Should be used in determining whether family names listed in font-family:
+   // ... are available locally. Only returns true if family name matches.

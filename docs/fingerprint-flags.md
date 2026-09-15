@@ -20,8 +20,9 @@ all injected. `--fingerprint=off` disables persona overrides as described below.
 |---|---|
 | `--fingerprint=<seed>` | Nonzero decimal uint64 seed. Bare `--fingerprint` generates a seed. SDK persistent profiles reuse their saved seed; nonpersistent SDK launches generate a seed. |
 | `--fingerprint-platform` | `windows` / `Win32`, `macos` / `MacIntel`, `linux` / `Linux x86_64`. Same-OS generic aliases retain native high-entropy OS fields; cross-OS aliases use declared desktop defaults. |
-| `--fingerprint-gpu-vendor` | Explicit WebGL `UNMASKED_VENDOR_WEBGL` presentation on nonsuppressed contexts. Seed-only launches stay native; detected software contexts always retain native identity. |
-| `--fingerprint-gpu-renderer` | Explicit WebGL `UNMASKED_RENDERER_WEBGL` presentation under the same per-context guard. Public WebGPU keeps its complete native Dawn identity, independently of WebGL. |
+| `--fingerprint-gpu-backend` | `native` (ordinary launch default) / `compatibility`. Native shares one Canvas/WebGL/WebGPU policy and suppresses legacy noise, Bridge and capability/identity overrides. Synthetic tests default to compatibility unless native is explicit. |
+| `--fingerprint-gpu-vendor` | Explicit WebGL `UNMASKED_VENDOR_WEBGL` presentation in **compatibility** mode on nonsuppressed contexts. Native mode and detected software contexts retain real identity. |
+| `--fingerprint-gpu-renderer` | Explicit WebGL `UNMASKED_RENDERER_WEBGL` presentation under the same compatibility/context guards. Public WebGPU keeps its complete native Dawn identity. |
 | `--fingerprint-hardware-concurrency` | `navigator.hardwareConcurrency`, default **8**; SDK accepts integers 1–128. Does not allocate or emulate CPU cores. |
 | `--fingerprint-device-memory` | `navigator.deviceMemory`, default **8 GB**; positive values up to 32 are rounded to the nearest supported bucket: 0.25, 0.5, 1, 2, 4, 8, 16, 32. Does not change V8 heap limits. |
 | `--fingerprint-screen-width` | Default **1920** on Windows/Linux, **1440** on macOS. DIP screen geometry uses the launch display backend, not isolated screen getters. |
@@ -34,11 +35,20 @@ all injected. `--fingerprint=off` disables persona overrides as described below.
 | `--fingerprint-storage-quota` | Integer **MiB** (1024² bytes), default **102400 MiB**. Launch-local browser quota policy, shared by origin estimates, Storage Buckets and legacy quota APIs. `0` is a valid zero quota. |
 | `--fingerprint-taskbar-height` | Default **48** Windows, **95** macOS, **0** Linux. Reserves that height from the emulated work area; does not resize the physical OS taskbar/dock. |
 | `--fingerprint-windows-font-metrics` | Opt-in Linux → Windows font metric alignment. Requires a Windows persona and actual matching Windows font files; otherwise no-op. See the font boundary below. |
+| `--fingerprint-font-policy` / `--fingerprint-font-whitelist` | `native` / `restricted`. Restricted requires 1–256 installed family names and checks resolved native fonts, fallback and Local Font Access. Downloaded author fonts remain usable. |
+| `--fingerprint-audio-render` / `--fingerprint-audio-seed` | `native` (default) / `isolated`. Isolation processes the actual audio output bus; requires a nonzero decimal uint64 audio seed or fingerprint seed. Sample rates/devices remain native. |
+| `--fingerprint-timer-resolution` | Decimal integer **milliseconds**, 0–1000. Zero/unset keeps native precision; positive values quantize V8 wall clocks and Blink public timestamps. |
+| `--fingerprint-codec-h264/vp8/vp9/av1/hevc` | Set each family separately to `native` / `disabled`; an explicit empty value also disables it. Shared capability and operation restrictions never add codec support. See the backend boundary below. |
+| `--fingerprint-max-touch-points` / `--fingerprint-pointer` / `--fingerprint-hover` | 0–16 / `fine,coarse,none` / `hover,none`. Configure WebPreferences; fine plus positive touch points enables mixed input. Invalid combinations fail before snapshot publication. |
+| `--fingerprint-color-scheme` / `--fingerprint-preferred-contrast` | `light,dark` / `no-preference,more,less`. Effective settings drive both CSS queries and styling. |
+| `--fingerprint-forced-colors` | `active,none,true,false,1,0`; also controls actual author-style color replacement. |
+| `--fingerprint-reduced-motion/reduced-transparency/inverted-colors` | Separate boolean switches applied to effective WebPreferences. |
+| `--fingerprint-hdr` / `--fingerprint-keyboard-layout` | Public values must be `native`. Synthetic keyboard fixtures additionally accept `us` / `en-US`; they do not install an input layout. |
 | `--fingerprint-webrtc-ip` | Literal IPv4/IPv6 or `auto`. Rewrites **local presentation copies** of ICE candidates, SDP and stats. `geoip=True` / `geoip: true` supplies the resolved exit IP unless an explicit IP wins. See routing/resolution below. |
-| `--fingerprint-noise=false` | Keeps identity seeds and disables existing fingerprint perturbation paths, including the optional Canvas text-metric path. Does **not** imply four active Canvas/WebGL/audio/client-rect noise engines. |
+| `--fingerprint-noise=false` | Keeps identity seeds and disables fingerprint perturbation paths, including optional graph audio isolation and compatibility Canvas text metrics. |
 | `--fingerprint=off` | Native-persona debug mode. Also accepts `false`, `0`, `disable`, `disabled` (case-insensitive). Removes fingerprint seeds/platform and identity overrides; explicit locale/timezone remain. |
 | `--fingerprint-allow-3p-cookies` | Launch-only opt-in for third-party cookies; default **off**. Removes the presence-only phaseout test switch and applies the cookie backend policy without changing persisted preferences. |
-| `--fingerprint-sapi-voices=false` | Opt out of Windows voice-table presentation. Default **on for a Windows persona**; genuine Windows uses its actual native voice inventory. Cross-OS table mode does not install SAPI or synthesize those voices. |
+| `--fingerprint-sapi-voices=false` | Opt out of the Windows voice-table **synthetic fixture**. Ordinary launches always retain native voice inventory. The synthetic table does not install SAPI or synthesize its listed voices. |
 | `--enable-blink-features=FakeShadowRoot` | Explicit Blink feature: exposes closed **author** roots through `element.shadowRoot`. Default off; UA-internal roots and native `OpenShadowRoot()` semantics remain unchanged. |
 
 Public boolean flags accept `true/1/on/enable/enabled` (or no value), and
@@ -52,11 +62,15 @@ geometry mode. Use `--key=value`, not two separate arguments.
 Ordinary seeded launches no longer present a generated GPU template. Synthetic
 tests retain platform-compatible tuples: three Windows, three Linux, three
 macOS ARM and two macOS Intel templates. Their weights are deterministic test
-choices, **not measured market shares**. Explicit public WebGL hints remain
-presentation-only: recognized one-sided hints select a compatible counterpart;
+choices, **not measured market shares**. Explicit public WebGL hints require
+compatibility mode and remain presentation-only: recognized one-sided hints select a compatible counterpart;
 unknown one-sided hints leave the missing side empty rather than borrowing an
 unrelated native identity. Complete explicit pairs remain the caller's values
 only when the context guard permits presentation.
+
+Ordinary launches default to the shared native GPU policy introduced by
+`0158`–`0164` and made the default by `0172`–`0173`. Python and Node no longer
+inject `--ignore-gpu-blocklist`; native driver restrictions and fallback apply.
 
 Patches `0101`/`0102` and `0147` use the actual drawing buffer's provider metadata
 and unmodified `GL_RENDERER`. ANGLE SwiftShader/WARP/null, Microsoft Basic Render
@@ -83,6 +97,25 @@ getter-only perturbations have **not** been restored by this compatibility work.
 [Measured device mode](device-pool.md) selects evidence-backed whole native
 records and launches with `--fingerprint=off`. It does not use these defaults
 or convert these GPU templates into measured hardware records.
+
+## Backend policy boundaries
+
+See [backend policy and runnable acceptance](backend-policy.md) for patch wiring
+and the full matrix. Audio isolation uses a seed-dependent rounding threshold
+on a `2^-20` sample grid after actual node processing. It preserves graph
+consistency but does not prove cross-platform DSP equivalence or physical-device
+privacy. `noise=false` and off mode disable that processing.
+
+Codec disabling applies to the shared supported-types layer, renderer
+DecoderSelector, WebCodecs encoders, MediaRecorder and WebRTC software/hardware
+factories. DRM, remote/Media Foundation decoders and other utility/GPU paths
+still need matching native integration tests. The legacy
+`supported[,smooth][,power-efficient]` values only reduce capability results;
+they cannot enable playback, acceleration or a missing codec.
+
+Touch `none` with a positive count, `coarse` with zero, and `none` with hover
+are rejected. Preferences describe effective settings; injected test input is
+not a physical touchscreen. HDR/gamut remain tied to the actual display.
 
 ## Geometry and quota semantics
 
@@ -146,7 +179,8 @@ make them reachable: the actual socket/proxy/TURN configuration owns routing.
   on Windows).
 - Proxied launches default to
   `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` unless an explicit
-  native policy was supplied. Changing a later context's proxy does not change
+  native policy was supplied. Raw PAC/auto-detect launches receive this default
+  too, although metadata lookup still rejects those routes. Changing a later context's proxy does not change
   the browser's already frozen persona/IP.
 
 ### Direct executable
@@ -169,6 +203,10 @@ asynchronous lookup. Startup integration still requires a matching Chromium buil
 `webrtc-fake-srflx` and `webrtc-fake-srflx-allow-udp` remain retired. Supporting
 `webrtc-ip` does not re-enable them.
 
+Direct proxy-server/PAC/auto-detect launches also receive the non-proxied-UDP
+restriction unless `--no-proxy-server` or an explicit native policy wins.
+SOCKS5 authentication supports TCP; UDP ASSOCIATE remains unimplemented.
+
 ## Fonts, voices, cookies and off mode
 
 Font metrics use bounded OS/2/hhea table reads only after the resolved family
@@ -178,11 +216,17 @@ ascent/descent/leading values, **not** the complete DirectWrite rasterizer,
 hinting, glyph fallback or shaping. On Linux install the actual fonts or supply
 `fonts_dir` / `fontsDir` so Fontconfig can load them; naming a font is not enough.
 
-Windows speech tables are updated at the native asynchronous voice-list event
-boundary, not on every getter. On a real Windows host the normal mode preserves
-the actual inventory/backend; on another OS a Windows persona exposes the table.
-The flag does not install language packs, provide Windows voice synthesis, or
-hide every backend capability difference.
+`font-policy=restricted` requires an explicit installed family pool; SDK font
+directories can supply the default whitelist before validation. Resolved native
+families and glyph fallback stay within that pool, including `src:local` lookup.
+Missing pools use an empty mandatory fallback face. UTF-8 names survive the
+renderer snapshot; ASCII case-insensitive family matching is not font-file
+attestation. Author fonts downloaded through CSS remain available.
+
+Windows speech tables now require `--uxr-synthetic-device-tests=true`. Ordinary
+launches retain the asynchronous native inventory/backend on every OS.
+WebAuthn UVPAA and PDF plugin overrides likewise require synthetic mode; public
+queries retain the actual browser capability authority.
 
 Third-party cookie opt-in changes the general launch policy, not SameSite/Secure
 requirements or site-specific content blocks. It is not a promise that any

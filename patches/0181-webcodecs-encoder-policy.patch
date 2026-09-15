@@ -1,0 +1,24 @@
+diff --git a/third_party/blink/renderer/modules/webcodecs/video_encoder.cc b/third_party/blink/renderer/modules/webcodecs/video_encoder.cc
+index eb2fb1670a919d93218c06bfbfe6001d04187be1..545f75dbfb27dc2d45cebbddd30b9bd03a7b75fc 100644
+--- a/third_party/blink/renderer/modules/webcodecs/video_encoder.cc
++++ b/third_party/blink/renderer/modules/webcodecs/video_encoder.cc
+@@ -3,6 +3,8 @@
+ // found in the LICENSE file.
+ 
+ #include "third_party/blink/renderer/modules/webcodecs/video_encoder.h"
++
++#include "media/base/supported_types.h"
+ 
+ #include <algorithm>
+ #include <string>
+@@ -436,6 +438,10 @@
+ 
+ bool VerifyCodecSupportStatic(VideoEncoderTraits::ParsedConfig* config,
+                               String* js_error_message) {
++  if (!media::IsUxrVideoCodecAllowed(config->codec)) {
++    *js_error_message = "Codec disabled by launch policy.";
++    return false;
++  }
+   if (config->not_supported_error_message) {
+     *js_error_message = *config->not_supported_error_message;
+     return false;

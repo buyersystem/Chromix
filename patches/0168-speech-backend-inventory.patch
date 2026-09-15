@@ -1,0 +1,15 @@
+diff --git a/third_party/blink/renderer/modules/speech/speech_synthesis.cc b/third_party/blink/renderer/modules/speech/speech_synthesis.cc
+index b7095d0bd1bc71d3f2d6eb0c984d707a59b8579c..c8606bc2ccb8b6a47fb8d47dd093ac712dbe6ef6 100644
+--- a/third_party/blink/renderer/modules/speech/speech_synthesis.cc
++++ b/third_party/blink/renderer/modules/speech/speech_synthesis.cc
+@@ -53,6 +53,10 @@
+ 
+ bool UseWindowsSpeechVoiceTable() {
+   const auto& config = base::UxrConfig::GetInstance();
++  // Presentation tables have no synthesis backend. Production voices retain
++  // the actual URI, language, default flag and asynchronous inventory changes.
++  if (config.Get("uxr-synthetic-device-tests") != "true")
++    return false;
+   if (!config.Has("uxr-voices") || config.Get("uxr-fingerprint-off") == "true")
+     return false;
+   const std::string platform = base::ToLowerASCII(config.Get("uxr-platform"));

@@ -1,0 +1,20 @@
+diff --git a/third_party/blink/renderer/modules/keyboard/keyboard_layout.cc b/third_party/blink/renderer/modules/keyboard/keyboard_layout.cc
+index 422c11ac31ec768f5782ec12a0b55b810f7ed588..44b415fc4bd2065d37ff658a706cc9483113938c 100644
+--- a/third_party/blink/renderer/modules/keyboard/keyboard_layout.cc
++++ b/third_party/blink/renderer/modules/keyboard/keyboard_layout.cc
+@@ -94,9 +94,12 @@
+ 
+   switch (result->status) {
+     case mojom::blink::GetKeyboardLayoutMapStatus::kSuccess: {
+-      // UXR: inject a coherent en-US layout when the OS map is empty (headless
+-      // getLayoutMap()=={} is a sleeper tell leaking OS-locale absence).
+-      if (base::UxrConfig::GetInstance().Has("uxr-keyboard-layout")) {
++      // Only explicit synthetic US-layout fixtures may replace this map.
++      // Public use keeps the actual input backend, including an empty map.
++      const auto& config = base::UxrConfig::GetInstance();
++      const std::string layout = config.Get("uxr-keyboard-layout");
++      if (config.Get("uxr-synthetic-device-tests") == "true" &&
++          (layout == "us" || layout == "en-US")) {
+         HashMap<String, String> p_map;
+         p_map.Set(String("KeyA"), String("a"));
+         p_map.Set(String("KeyB"), String("b"));

@@ -1,0 +1,13 @@
+diff --git a/third_party/blink/renderer/platform/fonts/mac/font_cache_mac.mm b/third_party/blink/renderer/platform/fonts/mac/font_cache_mac.mm
+index 6232b3c7115ff0d3fffe22b2ffa3132a4b3bbc66..b8af689ba13a7d80236e42cbdc907bf8fa06cb50 100644
+--- a/third_party/blink/renderer/platform/fonts/mac/font_cache_mac.mm
++++ b/third_party/blink/renderer/platform/fonts/mac/font_cache_mac.mm
+@@ -374,6 +374,8 @@
+ 
+ const SimpleFontData* FontCache::GetLastResortFallbackFont(
+     const FontDescription& font_description) {
++  if (const auto* restricted = UxrRestrictedLastResortFont(font_description))
++    return restricted;
+   // FIXME: Would be even better to somehow get the user's default font here.
+   // For now we'll pick the default that the user would get without changing
+   // any prefs.

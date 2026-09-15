@@ -1,0 +1,13 @@
+diff --git a/third_party/blink/renderer/modules/media_capabilities/media_capabilities.cc b/third_party/blink/renderer/modules/media_capabilities/media_capabilities.cc
+index 5745913e6ce4da5d3d049151fcb6829889f93931..94889c6044d26695df2c8c5116cdc7d878c75aa6 100644
+--- a/third_party/blink/renderer/modules/media_capabilities/media_capabilities.cc
++++ b/third_party/blink/renderer/modules/media_capabilities/media_capabilities.cc
+@@ -142,7 +142,7 @@
+   }
+ 
+   const base::UxrConfig& config = base::UxrConfig::GetInstance();
+-  if (!config.Has(key)) {
++  if (!config.Has(key) || config.Get(key) == "native") {
+     return false;
+   }
+ 

@@ -57,7 +57,11 @@ CI 另负责同一构建的 package 校验和 source receipt 关联。
 | canvas | 既有五 context、三次启动的 codec/color/alpha audit |
 | runtime | CDP 几何、真实 OOPIF、时间、生命周期、音频及显式 fake media |
 | display_backend | 无初始 CDP viewport，要求 launch UXR 后端生效，再覆盖/缩放 |
+| backend_policy | CSS 实际样式、touch/key dispatch、跨 context 时钟/DST/生命周期、音频图种子重启、受限字体及原生能力 |
+| media_policy | native/禁用/仅 VP8：WebCodecs、文件/MSE 解码、MediaRecorder 和实际本地 RTC；音频独立录制 |
 | transport | 回环 full ClientHello、ALPN、H2 SETTINGS/伪首部、JS/header |
+| transport_lifecycle | ClientHello/连接绑定、TLS 1.3 ticket resumption、H2 GOAWAY 与复用；身份请求也绑定实际恢复连接 |
+| quic | 强制自有回环 QUIC v1/H3，实际 transport parameters、SETTINGS、独立请求 stream 和复用 |
 | sdk_cookies | 两个独立浏览器进程的加密 Cookie 迁移、属性回读及 sibling context 隔离 |
 | socks_auth | 原生 RFC 1929 TCP、window/iframe/worker、错误密码与认证降级拒绝 |
 | font_provenance | 实际 shaped-run typeface 表摘要与 SFNT/TTC 文件关联；不证明栅格等价 |
@@ -78,7 +82,7 @@ GitHub run 的 producer receipt，报告明确标为 `producer-receipt-only`。
 
 - `status=failed`：至少一项错误，退出非零。
 - `status=incomplete`：必需检查通过，optional 能力有明确 gap。
-- `ci_gate_passed=true`：非 control、source/binary 身份通过、十一项完整执行且无
+- `ci_gate_passed=true`：非 control、source/binary 身份通过、十五项完整执行且无
   required failure。允许记录的 optional gap，不表示完整设备验收。
 - `full_acceptance=false`：没有真实硬件、font-file/glyph 或外部 proxy/DNS/
   QUIC/TURN 的完整证据，不自动升级为全量验收。
@@ -86,7 +90,14 @@ GitHub run 的 producer receipt，报告明确标为 `producer-receipt-only`。
 
 TLS fixture 关闭 session tickets，只比较完整握手，不删除 PSK extension 制造
 一致。GREASE 值归一化但保留数量/有序向量位置；扩展排列随机化不当作失败。
-Resumption、连接复用、外部路由和 QUIC 不属于该 fixture 的证明范围。
+另外的 `transport_lifecycle` 开启 tickets 并验证恢复连接和复用；`quic` 单独使用
+强制回环 origin。两项都重新核验服务器观测，而非相信结果标签。外部路由、
+QUIC migration、0-RTT 和 Alt-Svc 不属于这些 fixture 的证明范围。
+
+`backend_policy` 和 `media_policy` 需要当前新增补丁。缺原生硬件 codec 时，
+没有可重放的数据不能计作实际拒绝测试；必需的 VP8 控制或任何已声明支持的操作
+失败均为错误。BFCache/Temporal/Local Font Access 的可选缺口重新从原始数据派生。
+参数、接线和运行边界见 [后端策略](backend-policy.md)。
 
 ## Verification
 
@@ -114,9 +125,13 @@ npm test --prefix sdk/node
 priority 和 CHIPS 属性，而非只保留四个名字。SOCKS 拒绝路径即使没有应用请求，
 只要错误密码认证成功或降级后发送了 CONNECT，也会失败。
 
-第十一项 [GPU backend audit](gpu-backend.md) 保留全部前十项，不以 renderer 名称
+[GPU backend audit](gpu-backend.md) 保留既有操作检查，不以 renderer 名称
 相等或库存列出多块 GPU 当作统一后端证明。`native` 是不可变的共享策略；
 不同 API/adapter request 可以选不同 GPU。probe-v4 准入重新校验原始格式、
 padding、生命周期和 CDP 证据，旧 probe-v3 bundle 需重采。本机 stock GPU
 对照仍失败；33-cell 设备矩阵目前没有 reviewed 样本。这些状态不随源码/
 SDK 契约 CI 通过而自动升级。
+
+新增四项的结果校验由 `test_backend_audits.py` 和 `test_transport_lifecycle.py`
+覆盖，包含实际 Python/OpenSSL ticket 恢复与 aioquic H3 交换；测试客户端不是
+Chromium。匹配 191-patch 浏览器的四项新 suite 尚未执行，不能沿用旧 control 结果。

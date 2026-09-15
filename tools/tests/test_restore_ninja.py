@@ -16,6 +16,7 @@ from tools import restore_ninja as guard
 
 REPO = Path(__file__).resolve().parents[2]
 BASH32 = Path("/root/.local/bash-3.2-for-ci/bash")
+BASH32_AVAILABLE = os.access(BASH32, os.X_OK)
 PWSH = Path("/opt/pwsh/pwsh")
 TARGETS = (("linux", "x64"), ("linux", "arm64"), ("macos", "x64"),
            ("macos", "arm64"), ("windows", "x64"))
@@ -343,7 +344,7 @@ class RestoreNinjaShellTest(unittest.TestCase):
                     "CHOSEN": str(self.chosen), "CALLS": str(self.calls)}
         self.env.pop("CHROMIX_UPSTREAM_CACHE_DIR", None)
 
-    @unittest.skipUnless(BASH32.exists(), "Bash 3.2 required")
+    @unittest.skipUnless(BASH32_AVAILABLE, "Executable Bash 3.2 required")
     def test_bash32_selected_path_for_plan_build_and_bootstrap(self):
         (self.src / ".chromix-upstream-restored.json").touch()
         script = 'source "$1"; chromix_select_restored_ninja linux; test "$NINJA" = "$CHOSEN"; '
@@ -358,7 +359,7 @@ class RestoreNinjaShellTest(unittest.TestCase):
         self.assertIn("-n chrome", calls[0])
         self.assertIn("guard diagnostic", result.stderr)
 
-    @unittest.skipUnless(BASH32.exists(), "Bash 3.2 required")
+    @unittest.skipUnless(BASH32_AVAILABLE, "Executable Bash 3.2 required")
     def test_bash32_guard_failure_prevents_ninja(self):
         (self.src / ".chromix-upstream-restored.json").touch()
         result = subprocess.run([str(BASH32), "-euo", "pipefail", "-c",
@@ -368,7 +369,7 @@ class RestoreNinjaShellTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.calls.exists())
 
-    @unittest.skipUnless(BASH32.exists(), "Bash 3.2 required")
+    @unittest.skipUnless(BASH32_AVAILABLE, "Executable Bash 3.2 required")
     def test_bash32_cold_build_does_not_call_guard_or_change_ninja_env(self):
         result = subprocess.run([str(BASH32), "-euo", "pipefail", "-c",
                                  'source "$1"; chromix_select_restored_ninja linux; '
@@ -379,7 +380,7 @@ class RestoreNinjaShellTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("guard diagnostic", result.stderr)
 
-    @unittest.skipUnless(BASH32.exists(), "Bash 3.2 required")
+    @unittest.skipUnless(BASH32_AVAILABLE, "Executable Bash 3.2 required")
     def test_all_four_posix_builders_keep_selected_plan_and_build_path(self):
         def shell(path, body):
             path.parent.mkdir(parents=True, exist_ok=True)

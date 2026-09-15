@@ -1,0 +1,70 @@
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+index b117581258bd79eb16b7fe48167522cfc6c78af7..01e9225274bb194520ddb5fb2cf732624d3ea428 100644
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -209,7 +209,10 @@
+   if (!command_line->HasSwitch(switches::kProcessType)) {
+     // Canonicalize public booleans identically for direct and SDK launches.
+     for (const char* key : {"fingerprint-noise", "fingerprint-sapi-voices",
+-                            "fingerprint-allow-3p-cookies", "fingerprint-windows-font-metrics"}) {
++                            "fingerprint-allow-3p-cookies", "fingerprint-windows-font-metrics",
++                            "fingerprint-reduced-motion", "fingerprint-reduced-transparency",
++                            "fingerprint-inverted-colors", "uxr-reduced-motion",
++                            "uxr-reduced-transparency", "uxr-inverted-colors"}) {
+       if (!command_line->HasSwitch(key))
+         continue;
+       const std::string value = base::ToLowerASCII(command_line->GetSwitchValueASCII(key));
+@@ -223,6 +226,23 @@
+ 
+     struct Alias { const char* fp; const char* uxr; };
+     static constexpr Alias kAliases[] = {
++      {"fingerprint-gpu-backend",         "uxr-gpu-backend"},
++      {"fingerprint-font-policy",         "uxr-font-policy"},
++      {"fingerprint-font-whitelist",      "uxr-font-whitelist"},
++      {"fingerprint-audio-render",        "uxr-audio-render"},
++      {"fingerprint-audio-seed",          "uxr-audio-seed"},
++      {"fingerprint-timer-resolution",    "uxr-timer-resolution"},
++      {"fingerprint-max-touch-points",    "uxr-max-touch-points"},
++      {"fingerprint-reduced-motion",      "uxr-reduced-motion"},
++      {"fingerprint-reduced-transparency", "uxr-reduced-transparency"},
++      {"fingerprint-inverted-colors",     "uxr-inverted-colors"},
++      {"fingerprint-color-scheme",        "uxr-color-scheme"},
++      {"fingerprint-preferred-contrast",  "uxr-preferred-contrast"},
++      {"fingerprint-forced-colors",       "uxr-forced-colors"},
++      {"fingerprint-pointer",             "uxr-pointer"},
++      {"fingerprint-hover",               "uxr-hover"},
++      {"fingerprint-hdr",                 "uxr-hdr"},
++      {"fingerprint-keyboard-layout",     "uxr-keyboard-layout"},
+       {"fingerprint-gpu-vendor",          "uxr-webgl-vendor"},
+       {"fingerprint-gpu-renderer",         "uxr-webgl-renderer"},
+       {"disable-gpu-fingerprint",           "uxr-disable-gpu-fingerprint"},
+@@ -252,8 +272,8 @@
+     for (const auto& a : kAliases) {
+       if (command_line->HasSwitch(a.fp) &&
+           !command_line->HasSwitch(a.uxr)) {
+-        command_line->AppendSwitchASCII(
+-            a.uxr, command_line->GetSwitchValueASCII(a.fp));
++        command_line->AppendSwitchNative(
++            a.uxr, command_line->GetSwitchValueNative(a.fp));
+       }
+     }
+ 
+@@ -535,6 +555,18 @@
+       disabled += "ForceThirdPartyCookieBlocking";
+       command_line->AppendSwitchASCII(kDisableFeatures, disabled);
+     }
++
++    // Apply the native socket policy for direct browser launches too. HTTP
++    // proxying or SOCKS TCP authentication cannot carry arbitrary WebRTC UDP.
++    // An explicit caller policy retains Chromium's normal precedence.
++    if (!command_line->HasSwitch(switches::kNoProxyServer) &&
++        (command_line->HasSwitch(switches::kProxyServer) ||
++         command_line->HasSwitch(switches::kProxyPacUrl) ||
++         command_line->HasSwitch(switches::kProxyAutoDetect)) &&
++        !command_line->HasSwitch(switches::kForceWebRtcIPHandlingPolicy)) {
++      command_line->AppendSwitchASCII(switches::kForceWebRtcIPHandlingPolicy,
++                                      "disable_non_proxied_udp");
++    }
+   }
+ 
+   // Capture the unpolluted command line snapshot in the browser process.

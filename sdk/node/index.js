@@ -37,7 +37,14 @@ export { exportCookies, importCookies, encryptCookies, decryptCookies } from "./
 // buildContextOptions (launchPersistentContext calls them separately).
 const _personaGeoCache = new WeakMap();
 function personaGeometryFor(options) {
-  const args = normalizeFingerprintArgs(options.launchOptions?.args ?? options.args ?? []);
+  let rawArgs = options.launchOptions?.args ?? options.args ?? [];
+  if (options.fontsDir && !rawArgs.some(arg => typeof arg === "string" &&
+      ["--uxr-font-whitelist", "--fingerprint-font-whitelist"].includes(arg.split("=", 1)[0]))) {
+    const whitelist = fontDirWhitelistArg(options.fontsDir);
+    if (whitelist) rawArgs = [whitelist, ...rawArgs];
+    else console.warn(`[chromix] fontsDir=${options.fontsDir}: no parseable fonts found`);
+  }
+  const args = normalizeFingerprintArgs(rawArgs);
   const key = JSON.stringify([args, options.stealthArgs]);
   let entry = _personaGeoCache.get(options);
   if (!entry || entry.key !== key) {
@@ -136,8 +143,6 @@ export function buildArgs({ stealthArgs = true, extraArgs = [], timezone, locale
   const seen = new Map();
   const put = (arg) => seen.set(arg.split("=", 1)[0], arg);
   if (stealthArgs) for (const a of getDefaultStealthArgs()) put(a);
-  // Keep the GPU off the software-fallback path (SwiftShader is an instant tell).
-  if (!headless || process.platform === "win32") put("--ignore-gpu-blocklist");
   for (const a of extraArgs || []) put(a);
   if (timezone) put(`--fingerprint-timezone=${timezone}`);
   if (locale) { put(`--lang=${locale}`); put(`--fingerprint-locale=${locale}`); }
@@ -149,7 +154,7 @@ export function buildArgs({ stealthArgs = true, extraArgs = [], timezone, locale
   const keys = [...seen.keys()];
   if (startMaximized && !["--start-maximized", "--window-size", "--window-position"].some((k) => keys.includes(k)))
     put("--start-maximized");
-  return normalizeFingerprintArgs([...seen.values()]);
+  return normalizeFingerprintArgs([...seen.values()], { final: true });
 }
 
 function resolveAbs(p) {
@@ -296,13 +301,6 @@ export async function buildLaunchOptions(options = {}) {
     const cdm = findWidevineCdm();
     if (cdm) args = [...(args || []), `--uxr-widevine-cdm=${cdm}`];
   }
-  // Custom font directory: whitelist exactly the families it contains.
-  // Injected before user args so an explicit --uxr-font-whitelist still wins.
-  if (options.fontsDir) {
-    const whitelist = fontDirWhitelistArg(options.fontsDir);
-    if (whitelist) args = [whitelist, ...(args || [])];
-    else console.warn(`[chromix] fontsDir=${options.fontsDir}: no parseable fonts found`);
-  }
   // Headed windows use the same outer geometry as the persona.
   if (!headless && persona.geometry && !(args || []).some((a) => a.startsWith("--window-size"))) {
     args = [`--window-size=${persona.geometry.outerWidth},${persona.geometry.outerHeight}`, ...(args || [])];
@@ -325,6 +323,7 @@ export async function buildLaunchOptions(options = {}) {
       startMaximized: options.startMaximized ?? true,
     });
   }
+  chromeArgs = normalizeFingerprintArgs(chromeArgs, { final: true });
   const fontEnv = fontLaunchEnv(binary, options.launchOptions?.env, options.fontsDir);
   const env = nativeSocksEnv(fontEnv, nativeProxy.auth);
   if (nativeProxy.auth) chromeArgs = chromeArgs.filter(arg => !/^--proxy-server(?:=|$)/.test(arg));

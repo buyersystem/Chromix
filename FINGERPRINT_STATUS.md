@@ -4,9 +4,69 @@ This record tracks the implementation requested by `/root/fingerprint-p0-p2-back
 
 ## Acceptance rules
 
+### 2026-09-14 update — backend policies and executable acceptance probes
+
+The current series contains **191 patches**. New patches `0166`–`0191`:
+
+- Route public WebAuthn/PDF/speech/keyboard queries through actual backends;
+  synthetic capability tables remain explicit fixtures.
+- Apply CSS/input preferences to WebPreferences and share a millisecond timer
+  policy across V8 wall clocks and Blink's exposed-clock consumers.
+- Make the shared native GPU policy the ordinary default, remove automatic
+  SDK GPU-blocklist bypass, and add optional audio graph output isolation.
+- Enforce five-family codec restrictions in shared capability queries,
+  decoder selection, WebCodecs encoders, MediaRecorder and WebRTC factories.
+- Restrict resolved native font families, glyph fallback and local enumeration;
+  preserve UTF-8 snapshot names and downloaded author fonts.
+- Apply restrictive native WebRTC UDP defaults to direct and SDK proxy/PAC/
+  auto-detect launches while preserving explicit caller policy.
+
+The acceptance runner now executes **15 suites**, including actual backend
+operations, native/disabled/VP8-only codec matrices, TLS 1.3 ticket resumption
+with H2 GOAWAY/reuse, and explicitly forced owned-loopback QUIC/H3 observations.
+It rechecks raw observations and connection/request bindings. Missing native
+codec fixtures, BFCache observations, empty speech/keyboard inventories and
+optional APIs remain gaps. Matching malformed capability inventories cannot pass.
+
+Local validation used FreeBSD 14.3, Python 3.11, Node 22.22.2 and GCC 13.
+The initial new extracted-method/source/transport batch passed **263 checks**;
+sanitizers and `-Werror` remained enabled. Subsequent final checks:
+
+| Check | Result |
+|---|---|
+| Backend/media audit validators, TLS/H3 lifecycle, release gate, snapshot and GPU policy contracts | **257 passed, 29 skipped** |
+| GPU compatibility and seed contracts | **786 passed, 36 skipped** |
+| Full Python SDK | **433 passed, 1 skipped** |
+| Full Node SDK, serial test execution | **443 passed, 0 skipped** |
+| Patch-set lint | **191 patches passed** |
+| Changed Python/JavaScript syntax, workflow YAML, diff whitespace | **Passed** |
+
+The broader tool regression ran in overlapping batches; do not add their counts.
+The initial batch reached **3463 passed, 135 skipped** before a now-fixed C++
+fixture warning. The remaining-module run had **1433 passed, 212 skipped,
+32 failed**. Thread-linkage fixes and a retry with the required GNU tools resolved
+11 of those failures. Remaining host limits: **19** snapshot-publication cases
+requiring an unavailable no-replace primitive, **1** Linux-only object-graph case,
+and **1** set-ID fixture denied by this host. The snapshot-downloader module was
+excluded after separately reproducing the same unsupported publication primitive.
+No unrestricted whole-repository pass is claimed.
+
+These are tooling, dependency-shim and Python/OpenSSL/aioquic loopback results.
+The four new browser suites have **not** run on a matching Chromix build. The source
+manifest and new regression suites are wired into cross-platform CI; that wiring
+is not a completed CI run.
+Current detailed behavior, commands and limits: [backend policies](docs/backend-policy.md).
+
+Still open: matching native compilation/runtime, common cross-API graphics
+privacy, font-file/rasterization equivalence, physical audio/media/input devices,
+DRM/remote decoder paths, SOCKS UDP ASSOCIATE, external DNS/ICE/TURN/IPv6 and
+QUIC migration/0-RTT/Alt-Svc. The matrix remains **0 reviewed devices / 33
+unsampled cells**. Earlier counts below are historical checkpoints, not current
+191-patch acceptance.
+
 ### 2026-09-14 update — shared native GPU policy and reviewed device matrix
 
-The current series contains **165 patches**. `0158`–`0164` add the immutable
+At this earlier checkpoint the series contained **165 patches**. `0158`–`0164` added the immutable
 `--uxr-gpu-backend=native` policy shared by Canvas pixels/text/export/Bridge,
 WebGL persona/capabilities and WebGPU feature negotiation. Conflicting synthetic
 flags cannot enable those paths. Unset/`compatibility` retains legacy behavior;
@@ -27,7 +87,7 @@ fails opaque HTML Canvas reset readback; full collection also retains the older
 Canvas alpha/OOB failures and is rejected. The committed matrix is an unsampled
 33-cell plan: **0 reviewed devices**, all cells **not_sampled**. Controls never count.
 
-Current regression: Linux **5113 passed, 343 skipped**; Windows contract-focused
+Regression at that checkpoint: Linux **5113 passed, 343 skipped**; Windows contract-focused
 **1296 passed, 6 skipped**; Node **372/4** on Windows and **376/0** on Linux
 (passed/skipped). Wheel/sdist/npm archives and isolated imports match current
 source and all five probe assets. Windows whole-repository success is still not
@@ -315,7 +375,7 @@ A standalone C++ test with stubs checks the extracted algorithm or getter contra
 | MediaDevices | Native permission filtering, IDs and ordering; new audit exercises Chromium's explicit fake capture backend through denial, constraints, frame inspection and recording/decoding. | Physical-device transitions/devicechange and profile restart. Reload tests cover deviceId stability and document-salted groupId rotation, not browser restart. No new virtual-device backend is supplied. |
 | Intl / ICU | Move locale initialization before JS use rather than changing process-global ICU state from a language getter. | Default and explicit locale/calendar/numbering/hour-cycle cases across all contexts; ICU fallback, timezone initialization, and restart tests. |
 | Canvas | Coordinate-correct RGBA/BGRA readback, transparent-pixel preservation and private-copy encoding; suppress duplicate upstream noise. Async idle/worker/thread-pool encoding prepares and owns one buffer, with failure completion and late-task guards. | Native browser PNG/JPEG/WebP and ImageBitmap results, F16 privacy, transformed color-space/premultiplication agreement, and common WebGL/WebGPU origin/profile seed isolation remain open. |
-| WebAudio | Native AudioBuffer/silence/analyser/sample rate; new audit executes OfflineAudioContext oscillator/compressor and mutable PCM. | Graph-level privacy, physical output/channel/latency qualification and matching-build validation. Getter-only noise is not a graph-level solution. |
+| WebAudio | Native default plus optional seed-dependent output-bus quantization after actual node processing; immutable launch seed and stable sample grid. Offline/Analyser/Worklet/realtime graph audit added. | Matching native graph/performance tests, physical output/channel/latency qualification and cross-platform DSP equivalence. |
 | WebGPU | Feature allowlists intersect real support; explicit empty sets deny features, and embedded NUL tokens cannot alias valid names. Adapter/device limits and alignment validation retain Dawn semantics. Native preferred format preserves interoperability. Public adapter identity stays wholly native; identity templates are synthetic-only and software fallback stays native. | Subgroup data and real canvas configure/copy/map/request tests remain unverified on matching hardware. Windows/Linux/macOS GPU templates are not measured-device samples or market-share weights. |
 | Screen / Window / Viewport | Launch-time emulation backend; validated work area, viewport, DPR and signed position; one effective screen, ScreenDetails/events and OOPIF propagation. Getter-only substitutions retired. | Matching-build layout/compositor/input tests, CDP clear/override, fullscreen, orientation and physical monitor transitions. No extra physical monitors are emulated. |
 | Performance Timing | Remove the recursive synthetic network-phase fallback and preserve native ordering/zero rules. | Navigation/resource/paint/event/longtask/worker/RAF precision and background lifecycle tests. |
@@ -325,13 +385,13 @@ A standalone C++ test with stubs checks the extracted algorithm or getter contra
 | Category | Status and next verification |
 |---|---|
 | Permissions | Notification getters/query results must use the browser authority also used by requests and observers. Clipboard, USB, Bluetooth, serial, sensors, and geolocation need end-to-end verification. Never bypass a permission check to make a reported status appear consistent. |
-| Codecs / MSE / EME | MediaCapabilities filters intersect native results, including WebRTC callbacks and missing-history fallback; EME fallback retains key-system access. Mixed recording configs also check their audio codec. MediaRecorder MIME queries remain native, and synchronous encoder-start failure restores inactive state. A shared codec policy across playback, MSE, EME, WebRTC and actual decoding remains open. Queries and standalone callback tests do not verify a real encoder/decoder. |
+| Codecs / MSE / EME | Shared five-family restrictions now cover supported-types queries, DecoderSelector, WebCodecs encoder, MediaRecorder default/explicit selection and WebRTC software/hardware factories. Audio-only paths remain native. Actual encode/decode/file/MSE/record/RTC probes are runnable but await a matching build. EME/DRM, remote/Media Foundation and utility/GPU bypass paths remain open. |
 | Storage | Renderer-only quota replacement remains removed. Patch 0129 adds launch-local browser quota policy for estimates, bucket allocation and writes; DevTools overrides win and usage/individual limits remain native. Enforcement, persistence and IndexedDB/Cache partitioning need matching-browser tests. |
 | Network Information | Removed RTT/downlink-only overrides so getters, cached state, effectiveType, saveData and native change events share the notifier again. Real network transitions and any future notifier-level test policy remain unverified. |
-| Font provenance | Native font selection; legacy whitelist/substitution/fallback require synthetic-test opt-in. Public Windows metric alignment on Linux requires an actual matching family/table. `0151`–`0153` add actual shaped-run table digests; an independent SFNT/TTC collector binds content to file hashes/faces and preserves ambiguous matches. Matching-native-build verification, per-glyph/variation mapping and DirectWrite/rasterization equivalence remain open. |
-| Plugins / MIME / PDF | A reported PDF plugin cannot create a missing/disabled viewer. Verify actual PDF display and extension exposure. |
-| Input / device capabilities | Keyboard map overrides do not change actual key/code input. Touch/pointer CSS, gamepad, orientation, motion, and sensors remain open. |
-| CSS media features | Existing overrides cover selected preferences, not full gamut/HDR rendering, print media, scrollbars, and layout. |
+| Font provenance | Explicit public restricted pools check resolved families, `src:local`, ordered glyph fallback and local enumeration. Missing pools retain an empty last-resort face; downloaded author fonts remain usable. Existing shaped-run table digests and SFNT/TTC binding remain separate from family restriction. Native missing-pool/variation behavior and DirectWrite/rasterization equivalence need acceptance. |
+| Plugins / MIME / PDF | Public inventory/viewer queries retain the actual installed backend; synthetic override only in explicit fixtures. Verify actual PDF display and extension exposure. |
+| Input / device capabilities | Public keyboard maps retain native layout/denial/errors. Effective touch count and pointer/hover support mixed input with validation. CDP dispatch probes do not attest physical input; gamepad, orientation, motion and sensors remain open. |
+| CSS media features | Launch preferences now update WebPreferences before settings/style publication; getter-only media-query overrides are removed. Actual forced-color styles and reload consistency have probes. HDR/gamut remain native; print, scrollbars, display transitions and native CDP precedence need acceptance. |
 | WebGL | Native readback bytes/errors/pack layout are retained across CPU/PBO/float paths; removed CPU-only postprocessing and unsafe bridge replacement. Extension enumeration and requests share one native support filter; shader precision stays native and limit clamps preserve zero capability. A common backend-level readback privacy mechanism is not implemented; real GPU acceptance remains open. |
 | Wasm / SIMD / threads / SharedArrayBuffer | Public CPU/RAM getters accept explicit values/default 8/8; independent seeded hardware pools require synthetic-test opt-in. Heap and execution capabilities remain native. Probe v2 tests Wasm/SIMD, bounded memory and isolated SAB/Atomics; maximum allocation and matching-build acceptance remain open. |
 
@@ -339,14 +399,14 @@ A standalone C++ test with stubs checks the extracted algorithm or getter contra
 
 | Category | Status and next verification |
 |---|---|
-| TLS ClientHello | Owned-loopback full-handshake capture/comparison of versions, ciphers, extensions, GREASE, groups, key shares and signatures. No persona TLS configuration layer; ticket resumption remains untested. |
-| ALPN / HTTP/2 / HTTP/3 | Owned endpoint verifies actual h2 negotiation; HTTP/3 and persona protocol-selection policy remain unimplemented. |
-| HTTP/2 | Real initial SETTINGS and pseudo-header order compared across contexts; priority/flow control under load remains open. |
-| HTTP/3 / QUIC | Transport parameters and connection retry behavior require packet-level verification. |
+| TLS ClientHello | Owned full/resumed handshake collectors bind ClientHello to connections and actual TLS 1.3 session state. Full and PSK profiles compare separately. Python/OpenSSL fixture exchanges pass; matching browser and external routes remain unverified. No persona TLS configuration layer. |
+| ALPN / HTTP/2 / HTTP/3 | Owned endpoints collect actual h2 and forced-loopback QUIC v1/h3 negotiation. Native protocol behavior is retained; no persona protocol-selection layer. |
+| HTTP/2 | Initial SETTINGS, pseudo-header order, controlled GOAWAY/reconnect and request reuse have runnable audits; priority/flow control under load remains open. |
+| HTTP/3 / QUIC | Received transport parameters, peer SETTINGS, distinct request streams and connection reuse collected with pinned aioquic. Forced-loopback qualification does not cover proxy/Alt-Svc/migration/0-RTT or physical routes. |
 | HTTP headers | UA, Accept-Language and high-entropy hints checked against JS over owned HTTP/TLS fixtures. Accept-Encoding/decoder, proxy and external-route matrices remain open. |
 | DNS / proxy / connection reuse | SDK GeoIP/auto metadata uses the effective HTTP/HTTPS/SOCKS proxy without environment bypass or direct fallback. Proxied launches restrict non-proxied UDP. `0154`–`0157` separately implement native SOCKS5 TCP authentication and endpoint-bound launch credentials; matching browser acceptance is still pending. UDP ASSOCIATE, actual routes, IPv4/IPv6, reuse and bare-browser startup auto remain open; TLS/HTTP personas remain unimplemented. |
 | Date / timezone / DST / Temporal | Explicit New York DST and optional Temporal checks added; default timezone initialization, host changes and full zone/calendar matrix remain open. |
-| Timer quantization | No unified persona quantization for Date.now, performance.now, RAF and IdleCallback. |
+| Timer quantization | Optional 0–1000 ms launch policy is shared by V8 exposed wall clocks and Blink TimeClamper. Zero retains native behavior; internal scheduling clocks remain native. Window/iframe/Worker/RAF/Idle and lifecycle probes await matching-build execution. |
 | Page lifecycle | Native freeze/resume and history observations added; BFCache absence stays unobserved, not guaranteed acceptance or a custom policy. |
 
 ## Real-device pool gaps and next priorities
@@ -363,8 +423,9 @@ verifies all five contexts before returning them. Measured mode keeps native
 geometry and `--fingerprint=off`. Public mode separately supplies fixed CPU/RAM/
 screen/quota defaults, while seed-only GPU identity remains native. Independent seeded
 CPU/RAM/display, GPU identity and GL-capability pools require `--uxr-synthetic-device-tests=true`,
-as do legacy font substitution/whitelisting. Public explicit CPU/RAM/GPU identity
-flags no longer require that flag, but detected software WebGL contexts suppress
+as do legacy font substitution/whitelisting. Public restricted font pools use a
+separate resolved-family policy. Public explicit CPU/RAM fields remain available;
+GPU identity hints additionally require compatibility mode, and detected software WebGL contexts suppress
 presentation and public WebGPU identity stays native. Heap limits and GL/Dawn capabilities remain
 native; these overrides are not cross-device backend emulation.
 No reviewed real-hardware pool or cross-device backend emulation is bundled.
@@ -408,7 +469,7 @@ Renderer-only overrides that contradicted actual browser behavior are retired; c
 
 - `--uxr-storage-quota` / `--fingerprint-storage-quota` now configure a browser-owned launch quota (MiB), not a renderer-only capacity. Canvas seeds no longer generate quotas. Usage, individual bucket caps, disk exhaustion and DevTools precedence remain native.
 - `--uxr-net-rtt` and `--uxr-net-downlink` no longer override isolated getters. Network Information values and change events remain notifier-owned; zero RTT/downlink is a valid observation.
-- `--uxr-codec-*` / `--fingerprint-codec-*` filters only restrict native supported/smooth/power-efficient results. They cannot enable a decoder, smooth playback or hardware acceleration. `--uxr-codec-matrix` no longer bypasses MediaRecorder's native MIME/encoder checks.
+- `--uxr-codec-*` / `--fingerprint-codec-*` now also disable codec families across shared capability/operation entrypoints. Legacy supported/smooth/power-efficient masks only restrict native results. No flag installs a decoder or acceleration, and DRM/remote paths remain unverified.
 - Canvas export no longer applies the legacy random transform inside `ImageEncoder`. Valid persona seeds use the prepared Canvas buffer once; `--uxr-disable-fingerprint-noise` keeps that path unmodified. Without a valid persona seed, the optional legacy Canvas readback feature can still affect `getImageData`; legacy readback/export privacy is not a unified implementation.
 - `--uxr-webgpu-canvas-format` no longer replaces the backend's preferred format; an application can explicitly request a supported format through normal WebGPU configuration.
 - WebGL readback no longer applies CPU-only noise or replaces packed pixels from Canvas Bridge. PBO, floating-point, error and native pack semantics remain intact; unified GPU privacy is still open.
@@ -417,7 +478,7 @@ Renderer-only overrides that contradicted actual browser behavior are retired; c
 - `--uxr-media-devices` no longer inserts nonexistent devices into an empty enumeration. Use a real or explicitly configured Chromium test device backend when testing media capture.
 - `--uxr-notification-permission` no longer rewrites permission getters or query results. Configure real browser permissions instead.
 - `--uxr-audio-samplerate` no longer changes only the reported sample rate. Use `AudioContext({sampleRate: ...})` or the corresponding OfflineAudioContext option; validate the resulting actual rate.
-- `--uxr-audio-seed` no longer mutates AudioBuffer PCM on read or adds separate time/frequency analyser noise. The legacy CLI may still supply this key; that does not imply a working graph-level audio privacy mechanism.
+- `--uxr-audio-seed` is consumed by the optional `audio-render=isolated` output-bus policy. It does not mutate AudioBuffer getters or add separate analyser noise. Native mode remains the default; physical/cross-platform privacy is not attested.
 
 The numbered patches retain short invariant comments so existing patch numbering remains stable. The functional change is removal of the incorrect overrides, not the comments themselves. Apply the revised series to a clean, matching pre-Chromix source layer; do not stack revised patches over old versions of the same patches.
 

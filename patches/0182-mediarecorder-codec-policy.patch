@@ -1,0 +1,43 @@
+diff --git a/third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc b/third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc
+index 615d12b8f4fc3958404fab90832f4423cb4be1b6..607c1712b2294640b4b40fdd00c5b2b9e40fe162 100644
+--- a/third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc
++++ b/third_party/blink/renderer/modules/mediarecorder/media_recorder_handler.cc
+@@ -231,8 +231,15 @@
+   std::vector<std::string> codecs_list;
+   media::SplitCodecs(web_codecs.Utf8(), &codecs_list);
+ 
++  if (video && codecs_list.empty() &&
++      VideoTrackRecorderImpl::GetPreferredCodec(GetMediaContainerTypeFromString(type)) ==
++          media::VideoCodec::kUnknown)
++    return false;
++
+   for (const auto& codec : codecs_list) {
+     const auto profile = VideoStringToCodecProfile(String(codec));
++    if (!media::IsUxrVideoCodecAllowed(profile.codec))
++      return false;
+     const bool can_support = CanSupportMimeTypeForCodec(type, codec);
+ 
+     Vector<String> uma_key_vector;
+@@ -472,7 +479,9 @@
+     return false;
+   }
+ 
+-  passthrough_enabled_ = type_.empty();
++  // An encoded input track may use a codec excluded by the launch policy.
++  // Re-encode through the selected allowed codec when restrictions are active.
++  passthrough_enabled_ = type_.empty() && !media::HasUxrVideoCodecRestrictions();
+ 
+   // Once established that we support the codec(s), hunt then individually.
+   video_codec_profile_ = VideoStringToCodecProfile(codecs);
+@@ -554,6 +563,11 @@
+     LOG(WARNING) << __func__ << ": no tracks to be recorded.";
+     return false;
+   }
++
++  if (use_video_tracks &&
++      (video_codec_profile_.codec == media::VideoCodec::kUnknown ||
++       !media::IsUxrVideoCodecAllowed(video_codec_profile_.codec)))
++    return false;
+ 
+   const bool use_mp4_muxer = IsMp4MuxerRequired(type);
+ 

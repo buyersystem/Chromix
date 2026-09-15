@@ -1,0 +1,238 @@
+diff --git a/base/uxr_config.cc b/base/uxr_config.cc
+index 1fe739b7e8c62351211a84170d8e6577b7a6d0c7..cb7b3134846e6c2375cf4a36969cc6978ade458a 100644
+--- a/base/uxr_config.cc
++++ b/base/uxr_config.cc
+@@ -4,7 +4,10 @@
+ #include <array>
+ #include <cmath>
+ #include <cstdint>
++#include <initializer_list>
++#include <limits>
+ #include <random>
++#include <string_view>
+ 
+ #include "base/no_destructor.h"
+ #include "base/strings/string_number_conversions.h"
+@@ -89,20 +92,170 @@
+ }
+ bool ParseGpuBackend(const flat_map<std::string, std::string>& cfg,
+                      UxrGpuBackendPolicy* policy) {
++  const auto synthetic = cfg.find("uxr-synthetic-device-tests");
++  const bool synthetic_tests = synthetic != cfg.end() && synthetic->second == "true";
++  // Public launches retain one native rendering/capability contract by default.
++  // Legacy presentation and noise remain explicit compatibility/test choices.
++  policy->native = !synthetic_tests;
+   if (auto it = cfg.find("uxr-gpu-backend"); it != cfg.end()) {
+     if (it->second != "native" && it->second != "compatibility")
+       return false;
+     policy->native = it->second == "native";
+   }
+-  const auto synthetic = cfg.find("uxr-synthetic-device-tests");
+-  const bool allow_synthetic = !policy->native && synthetic != cfg.end() &&
+-                               synthetic->second == "true";
++  const bool allow_synthetic = !policy->native && synthetic_tests;
+   const bool noise_disabled = cfg.contains("uxr-disable-fingerprint-noise");
+   policy->canvas_pixel_noise = allow_synthetic && !noise_disabled;
+   policy->canvas_text_noise = !policy->native && !noise_disabled;
+   policy->canvas_bridge = allow_synthetic;
+   policy->capability_overrides = !policy->native;
+   return true;
++}
++
++bool ValidateWebPreferences(const flat_map<std::string, std::string>& cfg) {
++  const auto allowed = [&](const char* key,
++                           std::initializer_list<std::string_view> values) {
++    auto it = cfg.find(key);
++    if (it == cfg.end())
++      return true;
++    for (std::string_view value : values)
++      if (it->second == value)
++        return true;
++    return false;
++  };
++  for (const char* key : {"uxr-reduced-motion", "uxr-reduced-transparency",
++                          "uxr-inverted-colors"}) {
++    if (!allowed(key, {"true", "false", "1", "0"}))
++      return false;
++  }
++  if (!allowed("uxr-color-scheme", {"dark", "light"}) ||
++      !allowed("uxr-preferred-contrast", {"more", "less", "no-preference"}) ||
++      !allowed("uxr-forced-colors", {"active", "none", "true", "false", "1", "0"}) ||
++      !allowed("uxr-pointer", {"fine", "coarse", "none"}) ||
++      !allowed("uxr-hover", {"hover", "none"}) ||
++      !allowed("uxr-hdr", {"native"})) {
++    return false;
++  }
++  int touch = -1;
++  // These new launch switches use the same decimal syntax as both SDKs.
++  for (const char* key : {"uxr-max-touch-points", "uxr-timer-resolution"}) {
++    if (auto it = cfg.find(key); it != cfg.end() &&
++        (it->second.empty() ||
++         it->second.find_first_not_of("0123456789") != std::string::npos))
++      return false;
++  }
++  if (!ReadDimension(cfg, "uxr-max-touch-points", &touch, 0, 16))
++    return false;
++  const auto pointer = cfg.find("uxr-pointer");
++  if (pointer != cfg.end()) {
++    if ((pointer->second == "none" && touch > 0) ||
++        (pointer->second == "coarse" && touch == 0))
++      return false;
++    if (auto hover = cfg.find("uxr-hover"); hover != cfg.end() &&
++        pointer->second == "none" && hover->second == "hover")
++      return false;
++  }
++  // Changing a layout map alone does not change the platform key mapping.
++  if (auto keyboard = cfg.find("uxr-keyboard-layout"); keyboard != cfg.end() &&
++      keyboard->second != "native") {
++    auto synthetic = cfg.find("uxr-synthetic-device-tests");
++    if (synthetic == cfg.end() || synthetic->second != "true" ||
++        (keyboard->second != "us" && keyboard->second != "en-US"))
++      return false;
++  }
++  return true;
++}
++
++bool ValidateCodecPolicy(const flat_map<std::string, std::string>& cfg) {
++  for (const char* key : {"uxr-codec-h264", "uxr-codec-vp8", "uxr-codec-vp9",
++                          "uxr-codec-av1", "uxr-codec-hevc"}) {
++    const auto it = cfg.find(key);
++    if (it == cfg.end() || it->second.empty() || it->second == "disabled" ||
++        it->second == "native")
++      continue;
++    std::string_view remaining = it->second;
++    bool supported = false;
++    while (!remaining.empty()) {
++      const auto comma = remaining.find(',');
++      const auto token = remaining.substr(0, comma);
++      if (token == "supported")
++        supported = true;
++      else if (token != "smooth" && token != "power-efficient")
++        return false;
++      if (comma == std::string_view::npos)
++        break;
++      remaining.remove_prefix(comma + 1);
++      if (remaining.empty())
++        return false;
++    }
++    if (!supported)
++      return false;
++  }
++  return true;
++}
++
++bool ParseAudioIsolation(const flat_map<std::string, std::string>& cfg,
++                        uint64_t* seed) {
++  const auto valid_seed = [](const std::string& text, uint64_t* out) {
++    return !text.empty() && text.find_first_not_of("0123456789") == std::string::npos &&
++           StringToUint64(text, out) && *out != 0;
++  };
++  uint64_t parsed = 0;
++  auto value = cfg.find("uxr-audio-seed");
++  if (value != cfg.end() && !valid_seed(value->second, &parsed))
++    return false;
++  auto mode = cfg.find("uxr-audio-render");
++  if (mode == cfg.end() || mode->second == "native")
++    return true;
++  if (mode->second != "isolated")
++    return false;
++  if (value == cfg.end())
++    value = cfg.find("uxr-fingerprint-seed");
++  if (value == cfg.end() || !valid_seed(value->second, &parsed))
++    return false;
++  if (!cfg.contains("uxr-disable-fingerprint-noise"))
++    *seed = parsed;
++  return true;
++}
++
++bool ValidateFontPolicy(const flat_map<std::string, std::string>& cfg) {
++  auto mode = cfg.find("uxr-font-policy");
++  if (mode == cfg.end() || mode->second == "native")
++    return true;
++  if (mode->second != "restricted")
++    return false;
++  auto families = cfg.find("uxr-font-whitelist");
++  if (families == cfg.end() || families->second.empty())
++    return false;
++  std::string_view remaining = families->second;
++  size_t count = 0;
++  while (!remaining.empty()) {
++    const auto comma = remaining.find(',');
++    const auto family = remaining.substr(0, comma);
++    if (++count > 256 || family.find_first_not_of(" \t") == std::string_view::npos)
++      return false;
++    for (unsigned char c : family)
++      if ((c < 0x20 && c != '\t') || c == 0x7f)
++        return false;
++    if (comma == std::string_view::npos)
++      return true;
++    remaining.remove_prefix(comma + 1);
++  }
++  return false;
++}
++
++int64_t QuantizeClock(int64_t value, int64_t quantum) {
++  if (quantum <= 1)
++    return value;
++  // Preserve the native infinite/sentinel values and saturate at int64 bounds.
++  if (value == std::numeric_limits<int64_t>::min() ||
++      value == std::numeric_limits<int64_t>::max())
++    return value;
++  int64_t remainder = value % quantum;
++  if (remainder < 0)
++    remainder += quantum;
++  if (value < std::numeric_limits<int64_t>::min() + remainder)
++    return std::numeric_limits<int64_t>::min();
++  return value - remainder;
+ }
+ }  // namespace
+ 
+@@ -142,6 +295,16 @@
+     validation_error_ = "persona snapshot exceeds bounds";
+     return false;
+   }
++  int timer_resolution_ms = 0;
++  uint64_t audio_isolation_seed = 0;
++  if (!ValidateWebPreferences(cfg) ||
++      !ValidateFontPolicy(cfg) ||
++      !ValidateCodecPolicy(cfg) ||
++      !ParseAudioIsolation(cfg, &audio_isolation_seed) ||
++      !ReadDimension(cfg, "uxr-timer-resolution", &timer_resolution_ms, 0, 1000)) {
++    validation_error_ = "invalid input, font, clock, audio or codec policy";
++    return false;
++  }
+   UxrDisplayConfig display;
+   if (!ParseDisplay(cfg, &display)) {
+     validation_error_ = "invalid or inconsistent display geometry";
+@@ -155,6 +318,8 @@
+   map_ = cfg;
+   display_ = display;
+   gpu_backend_policy_ = gpu_backend_policy;
++  timer_resolution_ms_.store(timer_resolution_ms, std::memory_order_relaxed);
++  audio_isolation_seed_.store(audio_isolation_seed, std::memory_order_relaxed);
+   initialized_ = true;
+   validation_error_.clear();
+   return true;
+@@ -178,6 +343,22 @@
+ UxrGpuBackendPolicy UxrConfig::GpuBackendPolicy() const {
+   AutoLock locker(lock_);
+   return gpu_backend_policy_;
++}
++
++int64_t UxrConfig::TimerResolutionMicroseconds() const {
++  return int64_t{timer_resolution_ms_.load(std::memory_order_relaxed)} * 1000;
++}
++
++int64_t UxrConfig::QuantizeClockMicroseconds(int64_t value) const {
++  return QuantizeClock(value, TimerResolutionMicroseconds());
++}
++
++int64_t UxrConfig::QuantizeClockMilliseconds(int64_t value) const {
++  return QuantizeClock(value, timer_resolution_ms_.load(std::memory_order_relaxed));
++}
++
++uint64_t UxrConfig::AudioIsolationSeed() const {
++  return audio_isolation_seed_.load(std::memory_order_relaxed);
+ }
+ 
+ std::string UxrConfig::ValidationError() const {

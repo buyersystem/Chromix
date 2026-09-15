@@ -105,7 +105,9 @@ a browser rebuilt from the current patch stack.
 All listed public flags are passed through `args`: GPU vendor/renderer,
 hardware concurrency, device memory, screen/taskbar, brand/version/platform
 version, timezone/locale, storage quota, Windows font metrics, WebRTC IP/auto,
-noise/off, third-party cookies, Windows voice tables and `FakeShadowRoot`.
+noise/off, third-party cookies and `FakeShadowRoot`. Backend policy flags add
+GPU mode, restricted fonts, graph audio isolation, clock resolution, codec
+restrictions and effective CSS/input preferences. Voice tables are synthetic fixtures.
 See the [complete flag contract](../../docs/fingerprint-flags.md) for defaults
 and native-versus-SDK boundaries. These source changes require a rebuilt browser;
 updating this Python package alone does not upgrade an older executable.
@@ -126,6 +128,13 @@ injected platform. Explicit timezone/locale and `geoip=True` still apply their
 regional settings; omit them for a native-persona comparison. `noise=false`
 keeps identity seeds and disables existing perturbation paths, not four new
 Canvas/WebGL/audio/client-rect noise implementations.
+
+Ordinary launches now default to `--fingerprint-gpu-backend=native`; explicit
+WebGL name hints require `compatibility`. The SDK no longer injects
+`--ignore-gpu-blocklist`. Optional `--fingerprint-audio-render=isolated` uses
+the fingerprint seed (or an explicit audio seed), and
+`--fingerprint-timer-resolution=7` means **7 milliseconds**. See
+[backend policy](../../docs/backend-policy.md) for limits and native acceptance status.
 
 ### Encrypted Cookie migration
 
@@ -165,13 +174,14 @@ for collection, configuration, native fallback and remaining acceptance limits.
 `fonts_dir="path/to/fonts"` parses `.ttf` / `.otf` / `.ttc` family names and,
 on Linux, configures the actual Fontconfig directory. It does not install fonts
 into the Windows/macOS font backend or prove the file used for each glyph.
-Family whitelisting, substitution and persona fallback now require
-`--uxr-synthetic-device-tests=true`; normal launches keep native font selection.
-An explicit whitelist overrides SDK-generated names only in that test mode.
+Normal launches keep native font selection. Add
+`--fingerprint-font-policy=restricted` to enforce the parsed family pool on
+resolved native fonts and fallback; an explicit whitelist overrides generated names.
+Legacy substitutions and persona fallback still require synthetic-test opt-in.
 Measured device mode rejects `fonts_dir` and other per-field overrides.
 
 ```python
-browser = launch(fonts_dir="C:/fontsets/win11-segoe-only")
+browser = launch(fonts_dir="/path/to/fonts", args=["--fingerprint-font-policy=restricted"])
 ```
 
 ## Env vars

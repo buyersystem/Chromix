@@ -1,0 +1,206 @@
+diff --git a/third_party/blink/renderer/core/css/media_values.cc b/third_party/blink/renderer/core/css/media_values.cc
+index 2c0bcc32d9cb6a6cc2954e7fc3c79260b5040571..72e276520ae1f821afe22733ba468dddbcc6dbdd 100644
+--- a/third_party/blink/renderer/core/css/media_values.cc
++++ b/third_party/blink/renderer/core/css/media_values.cc
+@@ -3,9 +3,6 @@
+ // found in the LICENSE file.
+ 
+ #include "third_party/blink/renderer/core/css/media_values.h"
+-
+-#include "base/strings/string_util.h"  // UXR
+-#include "base/uxr_config.h"  // UXR
+ 
+ #include "third_party/blink/public/common/css/scripting.h"
+ #include "third_party/blink/renderer/core/css/css_resolution_units.h"
+@@ -199,15 +196,11 @@
+   return frame->DevicePixelRatio();
+ }
+ 
++// HDR and gamut use the actual ScreenInfo. Launch preferences are applied
++// to WebPreferences before publishing settings, never substituted in getters.
+ bool MediaValues::CalculateDeviceSupportsHDR(LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetPage());
+-  {  // UXR: persona HDR capability (dynamic-range media feature)
+-    std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-hdr");
+-    if (!ph_v.empty()) {
+-      return ph_v == "true" || ph_v == "1";
+-    }
+-  }
+   return frame->GetPage()
+       ->GetChromeClient()
+       .GetScreenInfo(*frame)
+@@ -239,12 +232,6 @@
+ bool MediaValues::CalculateInvertedColors(LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: persona inverted-colors (OS display setting)
+-    std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-inverted-colors");
+-    if (!ph_v.empty()) {
+-      return ph_v == "true" || ph_v == "1";
+-    }
+-  }
+   return frame->GetSettings()->GetInvertedColors();
+ }
+ 
+@@ -368,45 +355,12 @@
+     LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: persona primary pointer. A touchscreen host reports coarse here
+-    // (and coarse in any-pointer) — the desktop persona must say fine, in
+-    // lockstep with uxr-max-touch-points.
+-    const std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-pointer");
+-    const std::string ph_persona =
+-        base::UxrConfig::GetInstance().Get("uxr-platform");
+-    const bool ph_desktop =
+-        base::EqualsCaseInsensitiveASCII(ph_persona, "windows") ||
+-        base::EqualsCaseInsensitiveASCII(ph_persona, "win32");
+-    if (ph_v == "coarse")
+-      return mojom::blink::PointerType::kPointerCoarseType;
+-    if (ph_v == "none")
+-      return mojom::blink::PointerType::kPointerNone;
+-    if (ph_v == "fine" || ph_desktop)
+-      return mojom::blink::PointerType::kPointerFineType;
+-  }
+   return frame->GetSettings()->GetPrimaryPointerType();
+ }
+ 
+ int MediaValues::CalculateAvailablePointerTypes(LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: keep any-pointer coherent with the primary pointer above.
+-    // blink::PointerType shares bit values with ui::PointerType
+-    // (NONE=1, COARSE=2, FINE=4) per the static asserts in
+-    // web_preferences.cc.
+-    const std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-pointer");
+-    const std::string ph_persona =
+-        base::UxrConfig::GetInstance().Get("uxr-platform");
+-    const bool ph_desktop =
+-        base::EqualsCaseInsensitiveASCII(ph_persona, "windows") ||
+-        base::EqualsCaseInsensitiveASCII(ph_persona, "win32");
+-    if (ph_v == "coarse")
+-      return static_cast<int>(mojom::blink::PointerType::kPointerCoarseType);
+-    if (ph_v == "none")
+-      return static_cast<int>(mojom::blink::PointerType::kPointerNone);
+-    if (ph_v == "fine" || ph_desktop)
+-      return static_cast<int>(mojom::blink::PointerType::kPointerFineType);
+-  }
+   return frame->GetSettings()->GetAvailablePointerTypes();
+ }
+ 
+@@ -414,18 +368,6 @@
+     LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: persona primary hover — the desktop persona reports hover:hover.
+-    const std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-hover");
+-    const std::string ph_persona =
+-        base::UxrConfig::GetInstance().Get("uxr-platform");
+-    const bool ph_desktop =
+-        base::EqualsCaseInsensitiveASCII(ph_persona, "windows") ||
+-        base::EqualsCaseInsensitiveASCII(ph_persona, "win32");
+-    if (ph_v == "none")
+-      return mojom::blink::HoverType::kHoverNone;
+-    if (ph_v == "hover" || ph_desktop)
+-      return mojom::blink::HoverType::kHoverHoverType;
+-  }
+   return frame->GetSettings()->GetPrimaryHoverType();
+ }
+ 
+@@ -439,19 +381,6 @@
+ int MediaValues::CalculateAvailableHoverTypes(LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: keep any-hover coherent with the primary hover above
+-    // (HOVER_TYPE_HOVER = 1 << 1).
+-    const std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-hover");
+-    const std::string ph_persona =
+-        base::UxrConfig::GetInstance().Get("uxr-platform");
+-    const bool ph_desktop =
+-        base::EqualsCaseInsensitiveASCII(ph_persona, "windows") ||
+-        base::EqualsCaseInsensitiveASCII(ph_persona, "win32");
+-    if (ph_v == "none")
+-      return static_cast<int>(mojom::blink::HoverType::kHoverNone);
+-    if (ph_v == "hover" || ph_desktop)
+-      return static_cast<int>(mojom::blink::HoverType::kHoverHoverType);
+-  }
+   return frame->GetSettings()->GetAvailableHoverTypes();
+ }
+ 
+@@ -470,14 +399,6 @@
+     LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: persona prefers-color-scheme (OS theme reflects the host, not
+-    // the persona — pin it so matchMedia agrees with the claimed machine).
+-    std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-color-scheme");
+-    if (!ph_v.empty()) {
+-      return ph_v == "dark" ? mojom::blink::PreferredColorScheme::kDark
+-                            : mojom::blink::PreferredColorScheme::kLight;
+-    }
+-  }
+   DCHECK(frame->GetDocument());
+   DCHECK(frame->GetPage());
+   const MediaFeatureOverrides* overrides =
+@@ -501,18 +422,6 @@
+     LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: persona prefers-contrast
+-    std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-preferred-contrast");
+-    if (ph_v == "more") {
+-      return mojom::blink::PreferredContrast::kMore;
+-    }
+-    if (ph_v == "less") {
+-      return mojom::blink::PreferredContrast::kLess;
+-    }
+-    if (ph_v == "no-preference") {
+-      return mojom::blink::PreferredContrast::kNoPreference;
+-    }
+-  }
+   DCHECK(frame->GetPage());
+   const MediaFeatureOverrides* overrides =
+       frame->GetPage()->GetMediaFeatureOverrides();
+@@ -534,12 +443,6 @@
+ bool MediaValues::CalculatePrefersReducedMotion(LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: persona prefers-reduced-motion (OS accessibility setting)
+-    std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-reduced-motion");
+-    if (!ph_v.empty()) {
+-      return ph_v == "true" || ph_v == "1";
+-    }
+-  }
+   const MediaFeatureOverrides* overrides =
+       frame->GetPage()->GetMediaFeatureOverrides();
+   std::optional<bool> override_value =
+@@ -580,13 +483,6 @@
+ bool MediaValues::CalculatePrefersReducedTransparency(LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: persona prefers-reduced-transparency
+-    std::string ph_v =
+-        base::UxrConfig::GetInstance().Get("uxr-reduced-transparency");
+-    if (!ph_v.empty()) {
+-      return ph_v == "true" || ph_v == "1";
+-    }
+-  }
+   const MediaFeatureOverrides* overrides =
+       frame->GetPage()->GetMediaFeatureOverrides();
+   std::optional<bool> override_value =
+@@ -608,14 +504,6 @@
+ ForcedColors MediaValues::CalculateForcedColors(LocalFrame* frame) {
+   DCHECK(frame);
+   DCHECK(frame->GetSettings());
+-  {  // UXR: persona forced-colors (Windows high-contrast mode)
+-    std::string ph_v = base::UxrConfig::GetInstance().Get("uxr-forced-colors");
+-    if (!ph_v.empty()) {
+-      return (ph_v == "true" || ph_v == "1" || ph_v == "active")
+-                 ? ForcedColors::kActive
+-                 : ForcedColors::kNone;
+-    }
+-  }
+   const MediaFeatureOverrides* overrides =
+       frame->GetPage()->GetMediaFeatureOverrides();
+   std::optional<ForcedColors> override_value =

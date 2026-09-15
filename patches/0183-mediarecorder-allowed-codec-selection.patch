@@ -1,0 +1,39 @@
+diff --git a/third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc b/third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc
+index 0cb6f488ed6441d829ff93327fdc0e08fbae7427..f0cf17aa2d47adfdec67a04e7e5507ed2762dee9 100644
+--- a/third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc
++++ b/third_party/blink/renderer/modules/mediarecorder/video_track_recorder.cc
+@@ -705,6 +705,8 @@
+   for (const auto& supported_profile : GetVEASupportedProfiles()) {
+     const media::VideoCodecProfile codec_profile = supported_profile.profile;
+     for (auto& entry : kPreferredCodecAndVEAProfiles) {
++      if (!media::IsUxrVideoCodecAllowed(entry.codec))
++        continue;
+       if (codec_profile >= entry.min_profile &&
+           codec_profile <= entry.max_profile &&
+           std::find(entry.supported_container_types.begin(),
+@@ -723,12 +725,19 @@
+     }
+   }
+ 
+-  if (type == MediaTrackContainerType::kVideoMp4 ||
+-      type == MediaTrackContainerType::kAudioMp4) {
+-    return media::VideoCodec::kVP9;
+-  }
+-
+-  return media::VideoCodec::kVP8;
++  const bool mp4 = type == MediaTrackContainerType::kVideoMp4 ||
++                   type == MediaTrackContainerType::kAudioMp4;
++  for (media::VideoCodec codec : {media::VideoCodec::kVP8, media::VideoCodec::kVP9,
++                                  media::VideoCodec::kAV1, media::VideoCodec::kH264}) {
++    if (mp4 && codec == media::VideoCodec::kVP8)
++      continue;
++    if (codec == media::VideoCodec::kH264 && !mp4 &&
++        type != MediaTrackContainerType::kVideoMatroska)
++      continue;
++    if (media::IsUxrVideoCodecAllowed(codec) && IsSoftwareEncoderAvailable(codec))
++      return codec;
++  }
++  return media::VideoCodec::kUnknown;
+ }
+ 
+ // static

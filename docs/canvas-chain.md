@@ -2,11 +2,12 @@
 
 ## Shared Native GPU Policy (2026-09-14)
 
-The current 165-patch series adds `--uxr-gpu-backend=native`: one immutable UXR
+Patches `0158`–`0164` add `--uxr-gpu-backend=native`: one immutable UXR
 policy now gates Canvas readback/export/text noise, Canvas Bridge, WebGL persona
 capabilities and WebGPU feature negotiation. It overrides conflicting synthetic
-flags without forcing GPU-off or a particular adapter. Unset/`compatibility`
-keeps the earlier behavior below. This is a shared **native contract**, not a
+flags without forcing GPU-off or a particular adapter. The current 191-patch
+stack makes native the ordinary default. Explicit compatibility, or synthetic
+tests without a policy, keep the earlier behavior below. This is a shared **native contract**, not a
 common cross-platform privacy rasterizer.
 
 `0165` additionally repairs lazy opaque Canvas readback: no snapshot must still

@@ -157,8 +157,10 @@ browser rebuilt from the current patch stack.
 
 GPU vendor/renderer, CPU/RAM, screen/taskbar, brand/version/platform version,
 timezone/locale, quota, Windows font metrics, WebRTC IP/auto, noise/off,
-third-party cookies, Windows voice tables and `FakeShadowRoot` are available
-through `args`. See the [complete flag contract](../../docs/fingerprint-flags.md)
+third-party cookies and `FakeShadowRoot` are available through `args`, along
+with GPU mode, restricted fonts, graph audio isolation, millisecond clock
+resolution, codec restrictions and effective CSS/input preferences. Voice tables
+are synthetic fixtures. See the [complete flag contract](../../docs/fingerprint-flags.md)
 for defaults and limitations. Updating this SDK does not add native features
 to an old executable; use a browser rebuilt from the matching patch stack.
 
@@ -178,6 +180,14 @@ platform. Explicit timezone/locale and `geoip: true` still apply regional
 settings; omit them for a native-persona comparison. `noise=false` keeps seeds
 while disabling existing perturbations; it does not install four independent
 Canvas/WebGL/audio/client-rect noise implementations.
+
+Ordinary launches default to `--fingerprint-gpu-backend=native`; explicit WebGL
+name hints require `compatibility`. The SDK no longer adds `--ignore-gpu-blocklist`.
+Use `--fingerprint-audio-render=isolated` with the fingerprint seed or an explicit
+audio seed, and `--fingerprint-timer-resolution=7` for **7 milliseconds**.
+`fontsDir` supplies a parsed default family whitelist before validating
+`--fingerprint-font-policy=restricted`; Linux also loads the actual directory
+through Fontconfig. See [backend policy](../../docs/backend-policy.md).
 
 ## Measured device launch
 

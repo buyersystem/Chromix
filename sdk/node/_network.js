@@ -76,7 +76,8 @@ export function networkArgs(args = [], proxy) {
     }
   }
   const flags = new Set(result.map((a) => a.split("=", 1)[0]));
-  const proxied = !flags.has('--no-proxy-server') && (proxy || flags.has('--proxy-server'));
+  const proxied = !flags.has('--no-proxy-server') && (proxy ||
+    ['--proxy-server', '--proxy-pac-url', '--proxy-auto-detect'].some((key) => flags.has(key)));
   if (proxied && !flags.has('--force-webrtc-ip-handling-policy'))
     result.push("--force-webrtc-ip-handling-policy=disable_non_proxied_udp");
   return result;

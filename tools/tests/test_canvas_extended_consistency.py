@@ -450,8 +450,8 @@ PIXMAP_CONVERSION = r'''  bool readPixels(const SkImageInfo& info, void* dst, si
       if (info.ct == kRGBA_F16_SkColorType) {
         _Float16 channels[4]; std::memcpy(channels, in, 8);
         float alpha = info_.at == kOpaque_SkAlphaType ? 1.0f : float(channels[3]);
-        for (int c = 0; c < 3; ++c) channels[c] = alpha == 0 ? 0 : float(channels[c]) / alpha;
-        channels[3] = alpha;
+        for (int c = 0; c < 3; ++c) channels[c] = static_cast<_Float16>(alpha == 0 ? 0 : float(channels[c]) / alpha);
+        channels[3] = static_cast<_Float16>(alpha);
         std::memcpy(out, channels, 8);
       } else {
         unsigned alpha = info_.at == kOpaque_SkAlphaType ? 255 : in[3];

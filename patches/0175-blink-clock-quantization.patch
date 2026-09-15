@@ -1,0 +1,17 @@
+diff --git a/third_party/blink/renderer/core/timing/time_clamper.cc b/third_party/blink/renderer/core/timing/time_clamper.cc
+index 51f90c3321e9caeb60c6878e5980bdb50e3dc51d..3bb6575f900b2d1ba1b4c4fd46a4f6a3c8f8583c 100644
+--- a/third_party/blink/renderer/core/timing/time_clamper.cc
++++ b/third_party/blink/renderer/core/timing/time_clamper.cc
+@@ -38,6 +38,12 @@
+ base::TimeDelta TimeClamper::ClampTimeResolution(
+     base::TimeDelta time,
+     bool cross_origin_isolated_capability) const {
++  // The optional grid is >= 1 ms, hence never exposes finer timestamps than
++  // Chromium's isolated/non-isolated defaults. All Performance consumers,
++  // event timestamps and animation timestamps retain one monotone policy.
++  const auto& config = base::UxrConfig::GetInstance();
++  if (config.TimerResolutionMicroseconds() > 0)
++    return base::Microseconds(config.QuantizeClockMicroseconds(time.InMicroseconds()));
+   int64_t time_microseconds = time.InMicroseconds();
+   bool was_negative = false;
+ 
