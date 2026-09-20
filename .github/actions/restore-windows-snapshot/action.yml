@@ -59,6 +59,69 @@ runs:
             throw 'verify-source cannot enable migration'
           }
         }
+    - name: Preflight native Windows MIDL reads
+      if: ${{ inputs.mode == 'verify-source' && inputs.source-sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' }}
+      shell: python
+      env:
+        PYTHONDONTWRITEBYTECODE: '1'
+      run: |
+        import os
+        from pathlib import Path
+        import stat
+        import sys
+        import tempfile
+
+        print(f"sys.version={sys.version}; executable={sys.executable}", flush=True)
+        if sys.platform != "win32":
+            raise RuntimeError("MIDL read preflight requires native Windows Python")
+        sys.path.insert(0, os.environ["GITHUB_WORKSPACE"])
+        from tools.repair_windows_midl import _read
+
+        payload = b"# Windows MIDL read preflight\r\nvalue = 1\r\n"
+        fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
+                  "st_mtime_ns", "st_ctime_ns", "st_birthtime_ns",
+                  "st_file_attributes", "st_reparse_tag")
+
+        def write(path):
+            with path.open("wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+
+        def check(case, path, *, readonly=False, mtime_ns=None):
+            before = path.lstat()
+            with path.open("rb") as stream:
+                opened = os.fstat(stream.fileno())
+            left = {key: getattr(before, key, None) for key in fields}
+            right = {key: getattr(opened, key, None) for key in fields}
+            differences = {key: (left[key], right[key]) for key in fields if left[key] != right[key]}
+            print(f"{case}: lstat={left}; fstat={right}; differences={differences}", flush=True)
+            if readonly and before.st_mode & stat.S_IWRITE:
+                raise RuntimeError("MIDL read preflight did not preserve readonly mode")
+            if mtime_ns is not None and before.st_mtime_ns != mtime_ns:
+                raise RuntimeError("MIDL read preflight did not preserve 100ns mtime")
+            if _read(path)[0] != payload:
+                raise RuntimeError(f"MIDL read preflight content mismatch: {case}")
+            print(f"{case}: OK", flush=True)
+
+        with tempfile.TemporaryDirectory(prefix="chromix-midl-read-", dir=os.environ["RUNNER_TEMP"]) as directory:
+            root = Path(directory)
+            try:
+                path = root / "probe.py"
+                write(path)
+                check("write-fsync", path)
+                path.chmod(stat.S_IREAD)
+                check("readonly", path, readonly=True)
+                path.chmod(stat.S_IREAD | stat.S_IWRITE)
+                timestamp = 1_700_000_000_123_456_700
+                os.utime(path, ns=(timestamp, timestamp))
+                check("100ns-mtime", path, mtime_ns=timestamp)
+                temporary = root / ".midl-temp.tmp"
+                write(temporary)
+                check("midl-temp", temporary)
+            finally:
+                for path in root.iterdir():
+                    path.chmod(stat.S_IREAD | stat.S_IWRITE)
     - name: Validate exact Windows snapshot origin
       id: donor
       shell: powershell
