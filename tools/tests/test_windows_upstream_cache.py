@@ -85,7 +85,8 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
 
         jobs = yaml.safe_load(self.workflow)["jobs"]
         evidence_paths = {r"C:\c\chromix\upstream-reuse\baseline.json",
-                          r"C:\c\chromix\upstream-reuse\result.json"}
+                          r"C:\c\chromix\upstream-reuse\result.json",
+                          r"C:\c\chromix\upstream-cache-preparation.json"}
         for number in range(1, 13):
             with self.subTest(stage=number):
                 steps = jobs[f"build-{number}"]["steps"]
@@ -108,7 +109,8 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
     def test_snapshot_outputs_fail_closed_but_keep_small_diagnostics(self):
         import yaml
 
-        self.assertIn("Write-OutVar snapshot_safe true\nAssert-CiScripts", self.stage)
+        self.assertIn('Write-OutVar snapshot_safe $(if ($env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or '
+                      '$env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA) { "false" } else { "true" })\nAssert-CiScripts', self.stage)
         tracked_start = self.stage.index("function Invoke-Tracked {")
         tracked_end = self.stage.index("function Get-FreeGB", tracked_start)
         tracked = self.stage[tracked_start:tracked_end]

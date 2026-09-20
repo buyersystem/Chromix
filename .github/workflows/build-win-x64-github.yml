@@ -133,7 +133,7 @@ on:
         default: ''
         type: string
       resume_source_sha:
-        description: 'Exact donor commit for an explicit verified Windows source migration'
+        description: 'Exact donor commit for an explicit verified Windows snapshot restore'
         required: false
         default: ''
         type: string
@@ -163,7 +163,6 @@ concurrency:
 
 env:
   CHROMIX_BUILD_PROFILE: ${{ inputs.build_profile || 'native' }}
-  CHROMIX_WINDOWS_MIGRATION_PROFILE: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'windows-152-x64-stage9' || 'windows-152-x64-legacy-0152' }}
   CHROMIX_JOBS: ${{ inputs.compile_jobs || 'auto' }}
   # Pushes prefer the pinned cache, but its normal artifact expiry may use the
   # pinned cold-source pipeline. Explicit cache requests remain fail-closed.
@@ -195,6 +194,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -202,7 +202,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -230,13 +241,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Verify native process-tree cleanup
         shell: powershell
@@ -367,6 +379,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -374,7 +387,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -402,13 +426,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '2' }}
@@ -441,6 +466,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -526,6 +552,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -533,7 +560,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -561,13 +599,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '3' }}
@@ -600,6 +639,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -685,6 +725,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -692,7 +733,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -720,13 +772,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '4' }}
@@ -759,6 +812,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -844,6 +898,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -851,7 +906,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -879,13 +945,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '5' }}
@@ -918,6 +985,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -1003,6 +1071,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -1010,7 +1079,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -1038,13 +1118,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '6' }}
@@ -1077,6 +1158,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -1162,6 +1244,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -1169,7 +1252,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -1197,13 +1291,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '7' }}
@@ -1236,6 +1331,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -1321,6 +1417,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -1328,7 +1425,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -1356,13 +1464,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '8' }}
@@ -1395,6 +1504,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -1480,6 +1590,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -1487,7 +1598,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -1515,13 +1637,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '9' }}
@@ -1554,6 +1677,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -1639,6 +1763,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -1646,7 +1771,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -1674,13 +1810,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '10' }}
@@ -1713,6 +1850,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -1798,6 +1936,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -1805,7 +1944,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -1833,13 +1983,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '11' }}
@@ -1872,6 +2023,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
@@ -1957,6 +2109,7 @@ jobs:
           RESUME_ARTIFACT_IDS: ${{ inputs.resume_artifact_ids }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_TREE_STAGE: ${{ inputs.resume_tree_stage }}
+          RESUME_STAGE: ${{ inputs.resume_stage }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
           USE_UPSTREAM_CACHE: ${{ inputs.use_upstream_cache }}
           UPSTREAM_RUN_ID: ${{ inputs.upstream_run_id }}
@@ -1964,7 +2117,18 @@ jobs:
           if ([bool]$env:RESUME_SOURCE_SHA -ne [bool]$env:RESUME_ARTIFACT_IDS) {
             throw 'resume_source_sha and resume_artifact_ids must be supplied together'
           }
-          if ($env:RESUME_SOURCE_SHA) {
+          if ($env:RESUME_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c') {
+            $windowsPins = & (Join-Path $env:GITHUB_WORKSPACE 'build/windows/read-platform-pins.ps1') -Repo $env:GITHUB_WORKSPACE
+            $artifactIds = @($env:RESUME_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+            if ($windowsPins.ChromiumVersion -cne '153.0.8010.47' -or
+                $env:RESUME_RUN_ID -cne '35387701778' -or $env:RESUME_STAGE -cne '6' -or
+                $env:RESUME_TREE_STAGE -cne '6' -or $env:RESUME_ATTEMPT -cne '1' -or
+                ($artifactIds -join ',') -cne '10593823308,10593998213' -or
+                $env:CHROMIX_BUILD_PROFILE -cne 'native' -or $env:USE_UPSTREAM_CACHE -cne 'true' -or
+                $env:UPSTREAM_RUN_ID -cne '35059013905') {
+              throw 'Unchanged-source restore requires the exact Windows153 native x64 stage6 upstream configuration'
+            }
+          } elseif ($env:RESUME_SOURCE_SHA) {
             $targetVersion = (Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CHROMIUM_VERSION') -Raw).Trim()
             $targetPins = Import-PowerShellDataFile (Join-Path $env:GITHUB_WORKSPACE 'build/ungoogled-revisions.psd1')
             if ($targetVersion -cne '152.0.7977.82' -or $targetPins.ChromiumVersion -cne '152.0.7977.82') {
@@ -1992,13 +2156,14 @@ jobs:
         if: ${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}
         uses: ./.github/actions/restore-windows-snapshot
         with:
+          mode: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'verify-source' || 'migration' }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.resume_run_id }}
           stage: ${{ inputs.resume_tree_stage }}
           attempt: ${{ inputs.resume_attempt }}
           source-sha: ${{ inputs.resume_source_sha }}
           artifact-ids: ${{ inputs.resume_artifact_ids }}
-          recovery-branch: ${{ inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
+          recovery-branch: ${{ inputs.resume_source_sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' && 'main' || inputs.resume_source_sha == '30dbab28692793fa311c82ae639186003f3a67d9' && 'fix/issue3-font-resume-20260917' || 'fix/issue3-resource-timing-20260916' }}
           token: ${{ github.token }}
       - name: Download tree from previous stage
         if: ${{ inputs.resume_run_id == '' || inputs.resume_stage != '12' }}
@@ -2031,6 +2196,7 @@ jobs:
           path: |
             C:\c\chromix\upstream-reuse\baseline.json
             C:\c\chromix\upstream-reuse\result.json
+            C:\c\chromix\upstream-cache-preparation.json
           if-no-files-found: ignore
           retention-days: 3
       - name: Ensure build tree snapshot
