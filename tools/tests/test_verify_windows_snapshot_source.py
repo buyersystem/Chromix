@@ -117,9 +117,18 @@ class Fixture:
         return verify.verify(self.work, self.previous, self.repo, kwargs.pop("sha", self.sha), **kwargs)
 
 
-@pytest.fixture
-def fx(tmp_path, monkeypatch):
-    return Fixture(tmp_path, monkeypatch)
+@pytest.fixture(params=[6, 8])
+def fx(tmp_path, monkeypatch, request):
+    fixture = Fixture(tmp_path, monkeypatch)
+    fixture.stage = request.param
+    if fixture.stage == 8:
+        monkeypatch.setattr(verify, "STAGE8_SHA", fixture.sha)
+        put(fixture.repo, "tools/verify_windows_snapshot_source.py", "# target helper\n")
+        target = commit(fixture.repo)
+        for key, value in {"GITHUB_RUN_ID": "90001", "GITHUB_RUN_ATTEMPT": "1",
+                           "GITHUB_JOB": "build-8", "GITHUB_SHA": target}.items():
+            monkeypatch.setenv(key, value)
+    return fixture
 
 
 def test_verification_is_read_only_and_repeatable_with_real_git_stack(fx):
@@ -133,24 +142,49 @@ def test_verification_is_read_only_and_repeatable_with_real_git_stack(fx):
     assert snapshot(fx.work) == before
 
 
-@pytest.mark.parametrize("name", sorted(verify.ALLOWED_CHANGES))
+@pytest.mark.parametrize("name", sorted(verify.ALLOWED_CHANGES | verify.STAGE8_ALLOWED_CHANGES))
 @pytest.mark.parametrize("committed", [False, True])
-def test_exact_allowlisted_repair_and_orchestration_changes_are_allowed(fx, name, committed):
+def test_exact_allowlisted_repair_and_orchestration_changes_are_allowed(fx, name, committed, monkeypatch):
     put(fx.repo, name, "# changed target helper; never run by verifier\n")
     if committed:
-        commit(fx.repo)
-    assert fx.run()["status"] == "verified"
+        if fx.stage == 8:
+            git(fx.repo, "add", ".")
+            git(fx.repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "--amend", "--no-edit", "-q")
+            monkeypatch.setenv("GITHUB_SHA", git(fx.repo, "rev-parse", "HEAD").decode().strip())
+        else:
+            commit(fx.repo)
+    allowed = verify.STAGE8_ALLOWED_CHANGES if fx.stage == 8 else verify.ALLOWED_CHANGES
+    if name not in allowed:
+        with pytest.raises((ValueError, verify.arp.ApplyError)):
+            fx.run()
+    else:
+        result = fx.run()
+        assert result["status"] == "verified"
+        if fx.stage == 8:
+            assert result["profile"] == verify.STAGE8_PROFILE
+            assert result["run"]["GITHUB_SHA"] == os.environ["GITHUB_SHA"]
+            assert name in result["repository_changed_files"]
 
 
 @pytest.mark.parametrize("name", ["build/upstream-cache.json", "build/ungoogled-revisions.psd1", "CHROMIUM_WINDOWS_VERSION",
                                    "build/args.windows.gn", "build/windows/prepare-ungoogled.ps1", "assets/fixture.dat",
                                    PATCH, "patches/series", verify.arp.LITE + "/" + LITE, "tools/unknown.py",
+                                   "tools/tests/test_transport_lifecycle_diagnostics_extra.py",
+                                   "tools/tests/test_transport_lifecycle_diagnostics.py.bak",
+                                   "tools/tests/diagnostics/test_transport_lifecycle_diagnostics.py",
                                    ".github/workflows/build-win-arm64-github.yml", "README.md"])
 @pytest.mark.parametrize("committed", [False, True])
-def test_other_repository_changes_fail_closed(fx, name, committed):
+def test_other_repository_changes_fail_closed(fx, name, committed, monkeypatch):
     put(fx.repo, name, "unexpected change\n")
     if committed:
-        commit(fx.repo)
+        if fx.stage == 8:
+            git(fx.repo, "add", ".")
+            git(fx.repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "--amend", "--no-edit", "-q")
+            monkeypatch.setenv("GITHUB_SHA", git(fx.repo, "rev-parse", "HEAD").decode().strip())
+        else:
+            commit(fx.repo)
     before = snapshot(fx.work)
     with pytest.raises((ValueError, verify.arp.ApplyError)):
         fx.run()
@@ -283,3 +317,97 @@ def test_current_base_has_216_patches_and_no_midl_overlap():
         _, entries = verify.arp.transform_patch((ROOT / name).read_bytes(), set(), [])
         assert verify.MIDL_SOURCE not in {entry[0] for entry in entries}
     assert verify.load_pins(ROOT, "windows")["ChromiumVersion"] == verify.VERSION
+
+
+@pytest.mark.parametrize("mutation", ["shallow", "target-sha", "missing-run", "wrong-job", "grandchild", "same-sha"])
+def test_stage8_consumer_and_direct_parent_are_exact(fx, monkeypatch, mutation):
+    if fx.stage != 8:
+        return
+    if mutation == "shallow":
+        (fx.repo / ".git/shallow").write_text(os.environ["GITHUB_SHA"] + "\n")
+        assert fx.run()["status"] == "verified"
+        return
+    if mutation == "target-sha":
+        monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    elif mutation == "missing-run":
+        monkeypatch.delenv("GITHUB_RUN_ID")
+    elif mutation == "wrong-job":
+        monkeypatch.setenv("GITHUB_JOB", "build-6")
+    elif mutation == "grandchild":
+        put(fx.repo, "tools/tests/test_windows_snapshot_workflow.py", "# another commit\n")
+        monkeypatch.setenv("GITHUB_SHA", commit(fx.repo))
+    elif mutation == "same-sha":
+        git(fx.repo, "reset", "--hard", fx.sha)
+        monkeypatch.setenv("GITHUB_SHA", fx.sha)
+    with pytest.raises(ValueError):
+        fx.run()
+
+
+def test_stage8_permissions_do_not_expand_historical_preparation_profile():
+    diagnostics = {"tools/fingerprint_transport_audit.py", "tools/fingerprint_transport_lifecycle_audit.py",
+                   "tools/tests/test_transport_lifecycle.py", "tools/tests/test_transport_lifecycle_diagnostics.py"}
+    recovery = {".github/actions/restore-windows-snapshot/action.yml", ".github/workflows/build-win-x64-github.yml",
+                "build/windows/ci-stage.ps1", "tools/verify_windows_snapshot_source.py",
+                "tools/tests/test_verify_windows_snapshot_source.py", "tools/tests/test_windows_snapshot_workflow.py",
+                "tools/tests/test_windows_upstream_cache.py"}
+    assert verify.STAGE8_ALLOWED_CHANGES == recovery | diagnostics
+    assert len(verify.STAGE8_ALLOWED_CHANGES) == 11
+    assert verify.STAGE8_ALLOWED_CHANGES - verify.ALLOWED_CHANGES == diagnostics
+    assert not diagnostics & verify.ALLOWED_CHANGES
+    assert "tools/repair_windows_midl.py" not in verify.STAGE8_ALLOWED_CHANGES
+    assert "tools/prepare_restored_build.py" not in verify.STAGE8_ALLOWED_CHANGES
+    assert all(not any(char in name for char in "*?[") for name in verify.STAGE8_ALLOWED_CHANGES)
+
+
+@pytest.mark.parametrize("mutation", ["valid", "wrong-directory", "source-run", "source-target", "source-profile", "source-status",
+    "download-status", "download-phase", "download-publication", "download-artifact", "origin-job", "existing-report", "report-link"])
+def test_stage8_hop_publication_binds_current_identity_paths_and_hashes(tmp_path, monkeypatch, mutation):
+    consumer = {"GITHUB_RUN_ID": "90001", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_JOB": "build-8", "GITHUB_SHA": "a" * 40}
+    for key, value in consumer.items():
+        monkeypatch.setenv(key, value)
+    hop = tmp_path / "fingerprint-diagnostics/recovery-hops/d35485726877-a1-s8-j106081168976" / ("c90001-a2-build-8-" + "a" * 40)
+    if mutation == "wrong-directory":
+        hop = hop.with_name("historical")
+    hop.mkdir(parents=True)
+    origin = {key: value for key, value in verify.STAGE8_DONOR.items() if key != "branch"}
+    origin.update(platform="windows", arch="x64", workflow="build-win-x64-github",
+                  pattern="tree-s8-attempt-1-part*", artifacts=verify.STAGE8_ARTIFACTS)
+    download = {**origin, "status": "success", "phase": "complete", "publication": "published"}
+    source = {"status": "verified", "operation": "windows-unchanged-source", "profile": verify.STAGE8_PROFILE,
+              "previous_sha": verify.STAGE8_SHA, "target_sha": consumer["GITHUB_SHA"], "run": consumer, "changed_files": []}
+    if mutation == "source-run":
+        source["run"] = {**consumer, "GITHUB_RUN_ID": "90000"}
+    elif mutation == "source-target":
+        source["target_sha"] = "b" * 40
+    elif mutation == "source-profile":
+        source["profile"] = "windows-153-x64-stage6"
+    elif mutation == "source-status":
+        source["status"] = "failed"
+    elif mutation.startswith("download-"):
+        key, value = {"download-status": ("status", "verified"), "download-phase": ("phase", "publish"),
+                      "download-publication": ("publication", "unconfirmed"), "download-artifact": ("artifacts", [])}[mutation]
+        download[key] = value
+    elif mutation == "origin-job":
+        origin["job_id"] += 1
+    for name, data in (("windows-snapshot.json", origin), ("windows-snapshot-download.json", download),
+                       ("windows-unchanged-source.json", source)):
+        put(hop, name, json.dumps(data))
+    if mutation == "existing-report":
+        put(hop, "recovery-hop.json", '{"status":"historical"}')
+    elif mutation == "report-link":
+        destination = put(tmp_path, "historical.json", "preserve\n")
+        (hop / "recovery-hop.json").symlink_to(destination)
+    before = snapshot(hop)
+    if mutation == "valid":
+        verify.publish_stage8_hop(hop)
+        report = json.loads((hop / "recovery-hop.json").read_bytes())
+        assert report["consumer"] == consumer
+        assert report["donor"] == verify.STAGE8_DONOR
+        for record in report["reports"].values():
+            assert record["sha256"] == hashlib.sha256((hop / record["path"]).read_bytes()).hexdigest()
+        for name, value in before.items():
+            assert snapshot(hop)[name] == value
+    else:
+        with pytest.raises((ValueError, OSError, verify.arp.ApplyError)):
+            verify.publish_stage8_hop(hop)
+        assert snapshot(hop) == before
