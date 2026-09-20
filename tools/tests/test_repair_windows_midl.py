@@ -68,6 +68,189 @@ def load_midl(payload=None):
     return namespace
 
 
+class WindowsMidlReadTest(unittest.TestCase):
+    FIELDS = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="windows midl stat ")
+        self.addCleanup(temporary.cleanup)
+        self.path = Path(temporary.name) / "midl.py"
+        self.path.write_bytes(b"stable\n")
+        self.before = SimpleNamespace(
+            st_dev=0x1234567890ABCDEF, st_ino=(1 << 100) + 17,
+            st_mode=stat.S_IFREG | 0o666, st_nlink=1, st_size=7,
+            st_mtime_ns=1700000000000000200, st_ctime_ns=1700000000000000000,
+            st_birthtime_ns=1700000000000000000, st_file_attributes=0x20)
+        self.opened = self.changed(self.before, st_ctime_ns=1700000000001234500)
+
+    def changed(self, info, **changes):
+        return SimpleNamespace(**(vars(info) | changes))
+
+    def simulated(self, *, before=None, opened=None, after=None, final=None, windows=True, **kwargs):
+        before = self.before if before is None else before
+        opened = self.opened if opened is None else opened
+        after = before if after is None else after
+        final = opened if final is None else final
+        with mock.patch.object(repair, "WINDOWS", windows), \
+                mock.patch.object(repair, "_safe_stat", side_effect=[before, after]), \
+                mock.patch.object(repair.os, "fstat", side_effect=[opened, final]):
+            return repair._read(self.path, **kwargs)
+
+    def test_windows_stable_ctime_difference_and_full_width_ids_return_path_stat(self):
+        self.assertNotEqual(repair._identity(self.before), repair._identity(self.opened))
+        payload, info = self.simulated()
+        self.assertEqual(payload, b"stable\n")
+        self.assertIs(info, self.before)
+        self.assertGreater(info.st_dev, (1 << 32) - 1)
+        self.assertGreater(info.st_ino, (1 << 64) - 1)
+        high_only = self.changed(self.before, st_dev=1 << 48, st_ino=1 << 100)
+        self.assertEqual(self.simulated(before=high_only, opened=high_only)[0], payload)
+
+    def test_windows_cross_api_differences_retain_full_identity_and_diagnostics(self):
+        changes = {
+            "st_dev": self.opened.st_dev + (1 << 32),
+            "st_ino": self.opened.st_ino + (1 << 64),
+            "st_mode": stat.S_IFREG | 0o444,
+            "st_nlink": 2,
+            "st_size": 8,
+            "st_mtime_ns": self.opened.st_mtime_ns + 1,
+            "st_birthtime_ns": self.opened.st_birthtime_ns + 1,
+        }
+        for field, value in changes.items():
+            with self.subTest(field=field), self.assertRaises(ValueError) as caught:
+                self.simulated(opened=self.changed(self.opened, **{field: value}))
+            message = str(caught.exception)
+            self.assertIn(str(self.path), message)
+            self.assertIn(field, message)
+            self.assertIn(str(value), message)
+            if field != "st_nlink":
+                self.assertIn("P0/H0", message)
+                self.assertIn(str(getattr(self.before, field)), message)
+            self.assertNotIn("st_ctime_ns", message)
+        self.assertEqual(self.path.read_bytes(), b"stable\n")
+
+    def test_windows_each_api_retains_all_before_after_checks(self):
+        for where, original, phase in (("after", self.before, "P0/P1"),
+                                        ("final", self.opened, "H0/H1")):
+            for field in self.FIELDS + ("st_birthtime_ns",):
+                value = getattr(original, field) + 1
+                with self.subTest(where=where, field=field), self.assertRaises(ValueError) as caught:
+                    self.simulated(**{where: self.changed(original, **{field: value})})
+                message = str(caught.exception)
+                self.assertIn(str(self.path), message)
+                self.assertIn(field, message)
+                self.assertIn(str(value), message)
+                if field != "st_nlink" or where == "after":
+                    self.assertIn(phase, message)
+
+    def test_windows_both_apis_changing_together_is_not_a_stable_read(self):
+        for field in self.FIELDS + ("st_birthtime_ns",):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
+                self.simulated(after=self.changed(self.before, **{field: getattr(self.before, field) + 1}),
+                               final=self.changed(self.opened, **{field: getattr(self.opened, field) + 1}))
+
+    def test_windows_missing_or_invalid_identity_is_rejected_on_every_snapshot(self):
+        for where in ("before", "opened", "after", "final"):
+            original = self.before if where in ("before", "after") else self.opened
+            for field in self.FIELDS + ("st_birthtime_ns",):
+                for value in ("missing", None, True, 1.5, "invalid"):
+                    changed = self.changed(original, **{field: value})
+                    if value == "missing":
+                        delattr(changed, field)
+                    with self.subTest(where=where, field=field, value=value), \
+                            self.assertRaises(ValueError) as caught:
+                        self.simulated(**{where: changed})
+                    self.assertIn(str(self.path), str(caught.exception))
+                    self.assertIn(field, str(caught.exception))
+
+    def test_windows_zero_negative_or_truncated_ids_are_never_wildcards(self):
+        for field, width in (("st_dev", 32), ("st_ino", 64)):
+            for value in (0, -1, getattr(self.opened, field) & ((1 << width) - 1)):
+                for where in ("before", "opened", "after", "final"):
+                    original = self.before if where in ("before", "after") else self.opened
+                    with self.subTest(field=field, value=value, where=where), \
+                            self.assertRaisesRegex(ValueError, field):
+                        self.simulated(**{where: self.changed(original, **{field: value})})
+            for value in (0, -1):
+                with self.subTest(field=field, both=value), self.assertRaisesRegex(ValueError, field):
+                    self.simulated(before=self.changed(self.before, **{field: value}),
+                                   opened=self.changed(self.opened, **{field: value}))
+        for field, value in (("st_mode", 0), ("st_nlink", 0), ("st_size", -1)):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
+                self.simulated(before=self.changed(self.before, **{field: value}),
+                               opened=self.changed(self.opened, **{field: value}))
+
+    def test_windows_handles_reject_links_reparse_and_non_regular_before_and_after(self):
+        changes = ({"st_file_attributes": stat.FILE_ATTRIBUTE_REPARSE_POINT},
+                   {"st_nlink": 2}, {"st_mode": stat.S_IFLNK | 0o666},
+                   {"st_mode": stat.S_IFDIR | 0o777})
+        for where in ("opened", "final"):
+            for fields in changes:
+                with self.subTest(where=where, fields=fields), \
+                        self.assertRaisesRegex(ValueError, "linked or unsafe") as caught:
+                    self.simulated(**{where: self.changed(self.opened, **fields)})
+                self.assertIn(str(self.path), str(caught.exception))
+                for field, value in fields.items():
+                    self.assertIn(f"{field}={value}", str(caught.exception))
+
+    def test_read_checks_final_handle_and_corresponding_path(self):
+        with mock.patch.object(repair, "_check_info", wraps=repair._check_info) as check, \
+                mock.patch.object(repair, "_check_identity", wraps=repair._check_identity) as compare:
+            self.simulated()
+        self.assertEqual(check.call_args_list,
+                         [mock.call(self.path, self.opened), mock.call(self.path, self.opened)])
+        self.assertEqual(compare.call_args_list, [
+            mock.call(self.path, self.before, self.opened, "before reading (P0/H0)", cross_api=True),
+            mock.call(self.path, self.before, self.before, "during reading (P0/P1)"),
+            mock.call(self.path, self.opened, self.opened, "during reading (H0/H1)"),
+            mock.call(self.path, self.before, self.opened, "during reading (P1/H1)", cross_api=True),
+        ])
+
+    def test_posix_keeps_all_original_fields_without_requiring_birthtime(self):
+        before = self.changed(self.before)
+        del before.st_birthtime_ns
+        self.assertEqual(self.simulated(before=before, opened=before, windows=False)[0], b"stable\n")
+        self.assertEqual(self.simulated(opened=self.changed(self.before, st_birthtime_ns=0),
+                                        windows=False)[0], b"stable\n")
+        for field in self.FIELDS:
+            changed = self.changed(before, **{field: getattr(before, field) + 1})
+            for where in ("opened", "after", "final"):
+                snapshots = dict(before=before, opened=before, after=before, final=before)
+                snapshots[where] = changed
+                with self.subTest(field=field, where=where), self.assertRaisesRegex(ValueError, field):
+                    self.simulated(windows=False, **snapshots)
+        zero = self.changed(before, st_dev=0, st_ino=0)
+        self.assertEqual(self.simulated(before=zero, opened=zero, windows=False)[0], b"stable\n")
+
+    def test_native_readonly_and_temporary_reads(self):
+        self.path.chmod(0o444)
+        try:
+            payload, info = repair._read(self.path)
+            self.assertEqual(payload, b"stable\n")
+            self.assertEqual(repair._identity(info), repair._identity(self.path.lstat()))
+        finally:
+            self.path.chmod(0o666)
+        with tempfile.TemporaryDirectory(dir=self.path.parent) as directory:
+            fd, name = tempfile.mkstemp(dir=directory)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(b"temporary\n")
+            self.assertEqual(repair._read(Path(name))[0], b"temporary\n")
+
+    def test_windows_limit_and_disappearance_still_fail_closed(self):
+        self.assertEqual(self.simulated(limit=7)[0], b"stable\n")
+        with self.assertRaisesRegex(ValueError, "oversized") as caught:
+            self.simulated(limit=6)
+        self.assertIn(str(self.path), str(caught.exception))
+        self.assertIn("bytes_read=7, limit=6", str(caught.exception))
+        for snapshots in ([None], [self.before, None]):
+            with self.subTest(snapshots=snapshots), mock.patch.object(repair, "WINDOWS", True), \
+                    mock.patch.object(repair, "_safe_stat", side_effect=snapshots), \
+                    mock.patch.object(repair.os, "fstat", return_value=self.opened), \
+                    self.assertRaisesRegex(ValueError, "disappeared") as caught:
+                repair._read(self.path)
+            self.assertIn(str(self.path), str(caught.exception))
+
+
 class WindowsMidlRepairTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="windows midl ")
@@ -120,6 +303,55 @@ class WindowsMidlRepairTest(unittest.TestCase):
         self.assertEqual(again["before_sha256"], repair.REPAIRED_SHA256)
         self.assertEqual(self.script.stat().st_mtime_ns, before.st_mtime_ns)
         self.assertEqual(list(self.script.parent.iterdir()), [self.script])
+
+    def test_windows_ctime_difference_through_temporary_readonly_and_idempotent_apply(self):
+        original_lstat, original_fstat = Path.lstat, os.fstat
+        birthtime = 1700000000000000000
+        reads = []
+
+        def snapshot(info, *, handle=False):
+            fields = {key: getattr(info, key) for key in dir(info) if key.startswith("st_")}
+            fields.update(st_birthtime_ns=birthtime,
+                          st_ctime_ns=birthtime + 1234500 if handle else birthtime)
+            return SimpleNamespace(**fields)
+
+        def lstat(path, *args, **kwargs):
+            info = original_lstat(path, *args, **kwargs)
+            if not stat.S_ISREG(info.st_mode):
+                return info
+            reads.append(path)
+            return snapshot(info)
+
+        def fstat(fd):
+            return snapshot(original_fstat(fd), handle=True)
+
+        self.script.chmod(0o444)
+        try:
+            with mock.patch.object(repair, "WINDOWS", True), \
+                    mock.patch.object(Path, "lstat", lstat), \
+                    mock.patch.object(repair.os, "fstat", side_effect=fstat):
+                payload, before = repair._read(self.script)
+                self.assertEqual(payload, ORIGINAL)
+                self.assertEqual(before.st_ctime_ns, birthtime)
+                self.assertEqual(stat.S_IMODE(before.st_mode), 0o444)
+                self.script.chmod(0o666)
+                self.assertTrue(self.apply()["changed"])
+                self.assertEqual(stat.S_IMODE(self.script.stat().st_mode), 0o666)
+                self.assertEqual(self.script.read_bytes(), repair.transform(ORIGINAL))
+                record = self.src / repair.RECORD
+                baseline = {p: (p.read_bytes(), repair._identity(p.lstat())) for p in (self.script, record)}
+                with mock.patch.object(repair.os, "replace") as publish:
+                    self.assertFalse(self.apply()["changed"])
+                    publish.assert_not_called()
+                for path, state in baseline.items():
+                    self.assertEqual((path.read_bytes(), repair._identity(path.lstat())), state)
+                self.assertTrue(any(p.name.startswith(".midl-repair-") for p in reads))
+                self.assertTrue(any(p.name.startswith(".midl-record-") for p in reads))
+                self.assertIn(record, reads)
+                self.assertEqual(list(self.script.parent.iterdir()), [self.script])
+                self.assertEqual(list(self.src.glob(".midl-record-*")), [])
+        finally:
+            self.script.chmod(0o666)
 
     def test_unknown_partial_duplicate_and_crlf_scripts_fail_closed(self):
         repaired = repair.transform(ORIGINAL)

@@ -1,9 +1,13 @@
 """Explicit Windows snapshot migration stays opt-in and precedes preparation."""
+import builtins
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
+import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -271,6 +275,152 @@ def test_verify_source_mode_is_separate_and_only_enabled_after_exact_download():
         checkout = next(s for s in steps if s.get("uses") == "actions/checkout@v4")
         assert "ref" not in checkout.get("with", {})
         assert steps.index(checkout) < steps.index(restore)
+
+
+def native_midl_read_preflight():
+    steps = yaml.safe_load(ACTION.read_text())["runs"]["steps"]
+    return next(s for s in steps if s.get("name") == "Preflight native Windows MIDL reads")
+
+
+def test_native_midl_read_preflight_is_strict_and_precedes_all_restore_io():
+    action = yaml.safe_load(ACTION.read_text())
+    steps = action["runs"]["steps"]
+    preflight = native_midl_read_preflight()
+    assert steps[0]["name"] == "Check explicit restore mode"
+    assert steps[1] == preflight
+    assert preflight["if"] == "${{ inputs.mode == 'verify-source' && inputs.source-sha == '" + WINDOWS153_SHA + "' }}"
+    assert preflight["shell"] == "python"
+    assert preflight["env"] == {"PYTHONDONTWRITEBYTECODE": "1"}
+    assert "continue-on-error" not in preflight
+    assert "from tools.repair_windows_midl import _read" in preflight["run"]
+    assert '${{' not in preflight["run"]
+    assert not any("setup-python" in s.get("uses", "") for s in steps)
+    for name in ("Validate exact Windows snapshot origin", "Checkout exact previous source identity",
+                 "Download digest-pinned Windows snapshot", "Enable explicit unchanged-source verification"):
+        assert steps.index(preflight) < next(i for i, s in enumerate(steps) if s.get("name") == name)
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    for index in range(1, 13):
+        job = workflow["jobs"][f"build-{index}"]
+        assert job["runs-on"] == "windows-2022"
+        steps = job["steps"]
+        guard = next(s for s in steps if s.get("name") == "Check explicit snapshot migration inputs")
+        restore = next(s for s in steps if s.get("name") == "Restore exact source-migration snapshot")
+        assert steps.index(guard) + 1 == steps.index(restore)
+        assert "continue-on-error" not in guard and "continue-on-error" not in restore
+        assert restore["if"] == "${{ inputs.resume_source_sha != '' && github.job == format('build-{0}', inputs.resume_stage) }}"
+        assert restore["with"]["mode"] == "${{ inputs.resume_source_sha == '" + WINDOWS153_SHA + "' && 'verify-source' || 'migration' }}"
+        assert restore["with"]["source-sha"] == "${{ inputs.resume_source_sha }}"
+        assert not any("setup-python" in s.get("uses", "") for s in steps)
+
+
+def execute_midl_read_preflight(tmp_path, monkeypatch, *, platform="win32"):
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(ROOT))
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    native_import = builtins.__import__
+    interpreter = SimpleNamespace(platform=platform, version=sys.version, executable=sys.executable, path=list(sys.path))
+
+    def fixture_import(name, *args, **kwargs):
+        return interpreter if name == "sys" else native_import(name, *args, **kwargs)
+
+    namespace = {"__builtins__": {**vars(builtins), "__import__": fixture_import}}
+    exec(compile(native_midl_read_preflight()["run"], str(ACTION), "exec"), namespace)
+
+
+@pytest.mark.parametrize("failed_case", [None, "write-fsync", "readonly", "100ns-mtime", "midl-temp"])
+@pytest.mark.parametrize("failure", ["read-error", "content-mismatch"])
+def test_native_midl_read_preflight_cases_diagnostics_and_cleanup(tmp_path, monkeypatch, capsys, failed_case, failure):
+    from tools import repair_windows_midl as midl
+
+    cases = ["write-fsync", "readonly", "100ns-mtime", "midl-temp"]
+    read, fsync, chmod, fstat = midl._read, os.fsync, Path.chmod, os.fstat
+    calls, syncs, modes = [], [], []
+
+    def record_fsync(fd):
+        syncs.append(fd)
+        fsync(fd)
+
+    def record_chmod(path, mode):
+        modes.append((path, mode))
+        chmod(path, mode)
+
+    def exercise_read(path):
+        case = cases[len(calls)]
+        calls.append(path)
+        assert path.parent.parent == tmp_path
+        assert path.name == (".midl-temp.tmp" if case == "midl-temp" else "probe.py")
+        assert len(syncs) == (2 if case == "midl-temp" else 1)
+        if case == "readonly":
+            assert not path.stat().st_mode & stat.S_IWRITE
+        if case == "100ns-mtime":
+            assert path.stat().st_mode & stat.S_IWRITE
+            assert path.stat().st_mtime_ns == 1_700_000_000_123_456_700
+        if case == failed_case:
+            if failure == "read-error":
+                raise ValueError("injected MIDL read failure")
+            return b"different", path.stat()
+        # Keep the diagnostic-only difference out of the real helper read.
+        with monkeypatch.context() as context:
+            context.setattr(os, "fstat", fstat)
+            return read(path)
+
+    def diagnostic_fstat(fd):
+        info = fstat(fd)
+        values = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+        values["st_ctime_ns"] += 100
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(midl, "_read", exercise_read)
+    monkeypatch.setattr(os, "fsync", record_fsync)
+    monkeypatch.setattr(Path, "chmod", record_chmod)
+    monkeypatch.setattr(os, "fstat", diagnostic_fstat)
+    if failed_case is None:
+        execute_midl_read_preflight(tmp_path, monkeypatch)
+        expected = len(cases)
+    else:
+        error = "injected MIDL read failure" if failure == "read-error" else "content mismatch"
+        with pytest.raises((ValueError, RuntimeError), match=error):
+            execute_midl_read_preflight(tmp_path, monkeypatch)
+        expected = cases.index(failed_case) + 1
+    output = capsys.readouterr().out
+    assert "sys.version=" + sys.version in output
+    assert "executable=" + sys.executable in output
+    assert len(calls) == expected
+    for index, case in enumerate(cases):
+        assert (f"{case}: OK" in output) is (index < expected and case != failed_case)
+        assert (f"{case}: lstat=" in output) is (index < expected)
+    assert output.count("differences={'st_ctime_ns': (") == expected
+    for path in set(calls):
+        assert (path, stat.S_IREAD | stat.S_IWRITE) in modes
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("failure,error", [
+    ("platform", "requires native Windows Python"),
+    ("fsync", "unsupported fsync"),
+    ("utime", "unsupported utime"),
+    ("precision", "did not preserve 100ns mtime"),
+    ("readonly", "did not preserve readonly mode"),
+])
+def test_native_midl_read_preflight_rejects_unsupported_cases(tmp_path, monkeypatch, capsys, failure, error):
+    from tools import repair_windows_midl as midl
+
+    def unsupported(*args, **kwargs):
+        raise OSError("unsupported " + failure)
+
+    utime, chmod = os.utime, Path.chmod
+    if failure in ("fsync", "utime"):
+        monkeypatch.setattr(os, failure, unsupported)
+    elif failure == "precision":
+        monkeypatch.setattr(os, "utime", lambda path, *, ns: utime(path, ns=tuple(t // 1_000 * 1_000 for t in ns)))
+    elif failure == "readonly":
+        monkeypatch.setattr(Path, "chmod", lambda path, mode: None if mode == stat.S_IREAD else chmod(path, mode))
+    monkeypatch.setattr(midl, "_read", lambda path: (path.read_bytes(), path.stat()))
+    with pytest.raises((OSError, RuntimeError), match=error):
+        execute_midl_read_preflight(tmp_path, monkeypatch, platform="linux" if failure == "platform" else "win32")
+    output = capsys.readouterr().out
+    assert "sys.version=" in output
+    assert "midl-temp: OK" not in output
+    assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("mutation", ["valid", "reverse-artifacts", "sha", "uppercase", "run", "resume-stage", "tree-stage",

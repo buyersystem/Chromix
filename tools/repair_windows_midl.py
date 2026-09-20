@@ -45,6 +45,8 @@ AFTER = b"""            open(file_path, 'wb').close()
 COMPARE_BEFORE = b"        midl_output_dir, outdir, common_files\n"
 COMPARE_AFTER = b"        midl_output_dir, outdir, common_files, shallow=False\n"
 RECORD = ".chromix-windows-midl-repair.json"
+WINDOWS = os.name == "nt"
+_STAT_FIELDS = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")
 
 
 def transform(payload: bytes) -> bytes:
@@ -63,11 +65,15 @@ def transform(payload: bytes) -> bytes:
 
 
 def _check_info(path: Path, info, *, directory=False) -> None:
-    if (stat.S_ISLNK(info.st_mode)
-            or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
-            or not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))
-            or not directory and info.st_nlink != 1):
-        raise ValueError(f"linked or unsafe Windows MIDL path: {path}")
+    mode = getattr(info, "st_mode", None)
+    nlink = getattr(info, "st_nlink", None)
+    attributes = getattr(info, "st_file_attributes", 0)
+    if (type(mode) is not int or stat.S_ISLNK(mode)
+            or attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            or not (stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode))
+            or not directory and nlink != 1):
+        raise ValueError(f"linked or unsafe Windows MIDL path: {path}: "
+                         f"st_mode={mode!r}, st_nlink={nlink!r}, st_file_attributes={attributes!r}")
 
 
 def _safe_stat(path: Path):
@@ -88,8 +94,32 @@ def _safe_stat(path: Path):
 
 
 def _identity(info):
-    return tuple(getattr(info, key) for key in (
-        "st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns"))
+    return tuple(getattr(info, key) for key in _STAT_FIELDS)
+
+
+def _read_identity(path: Path, info, *, cross_api=False):
+    if not WINDOWS:
+        return _identity(info)
+    for key in (*_STAT_FIELDS, "st_birthtime_ns"):
+        value = getattr(info, key, None)
+        if (type(value) is not int
+                or key in ("st_dev", "st_ino", "st_mode", "st_nlink") and value <= 0
+                or key == "st_size" and value < 0):
+            raise ValueError(f"incomplete Windows MIDL file identity: {path}: {key}={value!r}")
+    identity = _identity(info)
+    # Windows path ctime can be BirthTime while handle ctime is ChangeTime.
+    return (identity[:-1] if cross_api else identity) + (info.st_birthtime_ns,)
+
+
+def _check_identity(path: Path, left, right, phase: str, *, cross_api=False) -> None:
+    before = _read_identity(path, left, cross_api=cross_api)
+    after = _read_identity(path, right, cross_api=cross_api)
+    fields = _STAT_FIELDS
+    if WINDOWS:
+        fields = (fields[:-1] if cross_api else fields) + ("st_birthtime_ns",)
+    differences = [f"{key}={a!r}->{b!r}" for key, a, b in zip(fields, before, after) if a != b]
+    if differences:
+        raise ValueError(f"Windows MIDL script changed {phase}: {path}: " + ", ".join(differences))
 
 
 def _read(path: Path, *, limit=65536):
@@ -100,14 +130,19 @@ def _read(path: Path, *, limit=65536):
     with os.fdopen(os.open(path, flags), "rb") as stream:
         opened = os.fstat(stream.fileno())
         _check_info(path, opened)
-        if _identity(opened) != _identity(before):
-            raise ValueError("Windows MIDL script changed before reading")
+        _check_identity(path, before, opened, "before reading (P0/H0)", cross_api=True)
         payload = stream.read(limit + 1)
         after = _safe_stat(path)
-        if (len(payload) > limit or after is None
-                or _identity(os.fstat(stream.fileno())) != _identity(before)
-                or _identity(after) != _identity(before)):
-            raise ValueError("Windows MIDL script changed or oversized during reading")
+        final = os.fstat(stream.fileno())
+        _check_info(path, final)
+        if len(payload) > limit:
+            raise ValueError(f"Windows MIDL script oversized during reading: {path}: "
+                             f"bytes_read={len(payload)}, limit={limit}")
+        if after is None:
+            raise ValueError(f"Windows MIDL script disappeared during reading: {path}")
+        _check_identity(path, before, after, "during reading (P0/P1)")
+        _check_identity(path, opened, final, "during reading (H0/H1)")
+        _check_identity(path, after, final, "during reading (P1/H1)", cross_api=True)
     return payload, before
 
 
