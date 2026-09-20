@@ -1126,6 +1126,15 @@ function Invoke-FixtureNinja {
         self.assertEqual((self.out / "args.gn").read_text(), args)
         self.assertEqual(baseline.read_bytes(), baseline_bytes)
         self.assertEqual(baseline.stat().st_mtime_ns, baseline_time)
+        self.calls.unlink()
+        self.env["MOCK_STAGE"] = "8"
+        resumed_stage8 = self.run_prep()
+        self.assertEqual(resumed_stage8.returncode, 0, resumed_stage8.stdout + resumed_stage8.stderr)
+        self.assertEqual(self.phases(), ["verify", "verify", "inspect", "ninja-guard", "finish", "gn-gen", "ninja-plan",
+                                         "evidence-before", "ninja", "evidence-after", "package", "verify-bundle"])
+        self.assertEqual(times, {name: (self.out / name).stat().st_mtime_ns for name in times})
+        self.assertEqual((self.out / "args.gn").read_text(), args)
+        self.assertEqual((baseline.read_bytes(), baseline.stat().st_mtime_ns), (baseline_bytes, baseline_time))
 
     def test_ninja_failure_and_timeout_record_exit_before_throw_or_handoff(self):
         for rc in (9, 124):

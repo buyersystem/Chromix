@@ -41,6 +41,8 @@ runs:
         SNAPSHOT_STAGE: ${{ inputs.stage }}
         SNAPSHOT_ATTEMPT: ${{ inputs.attempt }}
         SNAPSHOT_ARTIFACT_IDS: ${{ inputs.artifact-ids }}
+        SNAPSHOT_BRANCH: ${{ inputs.recovery-branch }}
+        SNAPSHOT_REPOSITORY: ${{ inputs.repository }}
       run: |
         $ErrorActionPreference = 'Stop'
         if ($env:SNAPSHOT_MODE -cnotin @('migration', 'verify-source')) { throw 'Unsupported Windows snapshot mode' }
@@ -50,17 +52,24 @@ runs:
         }
         if ($env:SNAPSHOT_MODE -ceq 'verify-source') {
           $artifactIds = @($env:SNAPSHOT_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
-          if ($env:SNAPSHOT_SHA -cne 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' -or
-              $env:SNAPSHOT_RUN -cne '35387701778' -or $env:SNAPSHOT_STAGE -cne '6' -or
-              $env:SNAPSHOT_ATTEMPT -cne '1' -or ($artifactIds -join ',') -cne '10593823308,10593998213') {
-            throw 'verify-source requires the exact Windows153 x64 stage6 donor and complete artifact set'
+          $stage6 = $env:SNAPSHOT_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' -and
+            $env:SNAPSHOT_RUN -ceq '35387701778' -and $env:SNAPSHOT_STAGE -ceq '6' -and
+            $env:SNAPSHOT_ATTEMPT -ceq '1' -and ($artifactIds -join ',') -ceq '10593823308,10593998213'
+          $stage8 = $env:SNAPSHOT_SHA -ceq '2a55082adb89cb8bac7aa7ab8bb61162b53f4c35' -and
+            $env:SNAPSHOT_RUN -ceq '35485726877' -and $env:SNAPSHOT_STAGE -ceq '8' -and
+            $env:SNAPSHOT_ATTEMPT -ceq '1' -and ($artifactIds -join ',') -ceq '10608606403,10608631230' -and
+            $env:SNAPSHOT_BRANCH -ceq 'fix/win153-midl-stat-20260920' -and
+            $env:SNAPSHOT_REPOSITORY -ceq 'xiaozhou26/Chromix' -and
+            $env:CHROMIX_BUILD_PROFILE -ceq 'native' -and $env:CHROMIX_USE_UPSTREAM_CACHE -ceq '1'
+          if (-not ($stage6 -or $stage8)) {
+            throw 'verify-source requires an exact Windows153 x64 stage6 or stage8 donor profile'
           }
           if ($env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA -or $env:CHROMIX_WINDOWS_MIGRATION_PROFILE) {
             throw 'verify-source cannot enable migration'
           }
         }
     - name: Preflight native Windows MIDL reads
-      if: ${{ inputs.mode == 'verify-source' && inputs.source-sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' }}
+      if: ${{ inputs.mode == 'verify-source' && (inputs.source-sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' || inputs.source-sha == '2a55082adb89cb8bac7aa7ab8bb61162b53f4c35') }}
       shell: python
       env:
         PYTHONDONTWRITEBYTECODE: '1'
@@ -141,6 +150,40 @@ runs:
           --expected-sha "$env:SNAPSHOT_SHA" --artifact-ids "$env:SNAPSHOT_ARTIFACT_IDS" `
           --recovery-branch "$env:SNAPSHOT_BRANCH" --report "$env:RUNNER_TEMP\windows-snapshot.json"
         if ($LASTEXITCODE -ne 0) { throw 'Windows snapshot origin verification failed' }
+    - name: Bind exact stage8 checkpoint metadata
+      if: ${{ inputs.mode == 'verify-source' && inputs.source-sha == '2a55082adb89cb8bac7aa7ab8bb61162b53f4c35' }}
+      shell: python
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PYTHONDONTWRITEBYTECODE: '1'
+      run: |
+        import json
+        import os
+        from pathlib import Path
+        import sys
+
+        sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "tools"))
+        from verify_windows_snapshot_source import STAGE8_DONOR, verify_stage8_origin
+        from validate_windows_snapshot import Client
+
+        manifest = json.loads((Path(os.environ["RUNNER_TEMP"]) / "windows-snapshot.json").read_bytes())
+        verify_stage8_origin(manifest)
+        donor = STAGE8_DONOR
+        client = Client(donor["repository"], os.environ["GH_TOKEN"])
+        run = client.get(f'/actions/runs/{donor["run_id"]}')
+        if (run.get("head_branch") != donor["branch"] or run.get("event") != "workflow_dispatch"
+                or run.get("workflow_id") != 339967931 or run.get("run_attempt") != 1
+                or run.get("head_sha") != donor["head_sha"] or run.get("status") != "completed"
+                or run.get("conclusion") != "failure"
+                or any(run.get(key, {}).get("id") != 1342691290 for key in ("repository", "head_repository"))):
+            raise RuntimeError("stage8 donor run differs from the recorded failed checkpoint")
+        jobs = client.items(f'/actions/runs/{donor["run_id"]}/attempts/1/jobs', "jobs")
+        jobs = [job for job in jobs if job.get("id") == donor["job_id"]]
+        if len(jobs) != 1 or jobs[0].get("status") != "completed" or jobs[0].get("conclusion") != "failure":
+            raise RuntimeError("stage8 donor job differs from the recorded failed checkpoint")
+        steps = [step for step in jobs[0]["steps"] if step.get("name") == "Run stage 8"]
+        if len(steps) != 1 or steps[0].get("conclusion") != "failure":
+            raise RuntimeError("stage8 donor must retain its failed execution evidence")
     - name: Checkout exact previous source identity
       uses: actions/checkout@v4
       with:

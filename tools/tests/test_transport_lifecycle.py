@@ -59,6 +59,33 @@ def lifecycle_report():
     return result
 
 
+def native_netlog_fixture(report, *, global_source_id=0):
+    names = ('SOCKET_ALIVE', 'HTTP2_SESSION_INITIALIZED', 'HTTP2_SESSION_CLOSE',
+             'HTTP2_SESSION_RECV_GOAWAY', 'CERTIFICATE_DATABASE_TRUST_STORE_CHANGED')
+    value = {'constants': {'logCaptureMode': 'HeavilyRedacted',
+        'logEventTypes': {name: i for i, name in enumerate(names)},
+        'logSourceType': {'SOCKET': 1, 'HTTP2_SESSION': 2, 'NONE': 0},
+        'logEventPhase': {'PHASE_NONE': 0, 'PHASE_BEGIN': 1, 'PHASE_END': 2},
+        'clientInfo': {'command_line': 'PRIVATE-native-profile', 'version': '153.0.8010.47'},
+        'timeTickOffset': '123456789'},
+        'polledData': [{'hostResolverInfo': {'dns_config': {'search': ['PRIVATE-dns']},
+                         'cache': {'entries': ['PRIVATE-external-host']}},
+                        'proxySettings': {'original': 'PRIVATE-proxy'}}], 'events': []}
+    for c in report['connections']:
+        socket_id, session_id = c['id'] + 70, c['id'] + 80
+        rows = [(0, 1, socket_id, 1, {}),
+                (1, 2, session_id, 0, {'source_dependency': {'type': 1, 'id': socket_id}})]
+        if 'goaway_stream' in c:
+            rows.append((3, 2, session_id, 0, {}))
+        rows.extend([(2, 2, session_id, 0, {'net_error': -100}), (0, 1, socket_id, 2, {})])
+        for event_type, source_type, source_id, phase, params in rows:
+            value['events'].append({'type': event_type, 'phase': phase, 'time': str(len(value['events']) + 100),
+                'source': {'type': source_type, 'id': source_id, 'start_time': '100'}, 'params': params})
+    value['events'].append({'type': 4, 'phase': 0, 'time': '200',
+        'source': {'type': 0, 'id': global_source_id}, 'params': {}})
+    return value
+
+
 def test_lifecycle_raw_fixture_has_separate_full_and_resumed_comparisons():
     errors, comparisons = lifecycle.assess(lifecycle_report())
     assert errors == []
@@ -66,11 +93,22 @@ def test_lifecycle_raw_fixture_has_separate_full_and_resumed_comparisons():
     assert all(c['status'] == 'observed_match' for c in comparisons)
 
 
-@pytest.mark.parametrize('status', [200, 503, None])
-def test_lifecycle_collector_binds_initial_phase_to_navigation(monkeypatch, tmp_path, status):
+@pytest.mark.parametrize('global_source_id', [0, -2**31])
+@pytest.mark.parametrize('status', [200, 503, None, 'launch_error'])
+@pytest.mark.parametrize('capture', [True, False])
+def test_lifecycle_collector_binds_initial_phase_to_navigation(monkeypatch, tmp_path, status, capture, global_source_id):
     fixture = lifecycle_report()
     rows, navigations, closed = iter(fixture['runs']), [], []
+    directory = lifecycle.diagnostic_directory(tmp_path / 'report.json')
+    callbacks, responses = {}, []
     origin = 'https://localhost:1234'
+
+    def emit(row, wire):
+        event = {'requestId': str(len(responses)), 'timestamp': len(responses), 'response': {
+            'url': origin + wire['headers'][':path'], 'connectionId': wire['connection_id'] + 70,
+            'connectionReused': True, 'protocol': 'h2', 'status': 200}}
+        responses.append(event)
+        callbacks[row['context']](event)
 
     def new_context(**kwargs):
         row = next(rows)
@@ -80,29 +118,74 @@ def test_lifecycle_collector_binds_initial_phase_to_navigation(monkeypatch, tmp_
             assert url == origin + f'/echo?context={row["context"]}&phase=initial'
             if status is None:
                 return None
+            emit(row, row['phases'][0]['wire'])
             return SimpleNamespace(ok=status == 200, json=lambda: deepcopy(row['phases'][0]['wire']))
 
         def evaluate(script, argument):
             if script == lifecycle.launch.bounded(lifecycle.PROBE):
                 assert argument == row['context']
                 assert "'initial'" not in lifecycle.PROBE
+                for phase in row['phases'][1:]:
+                    emit(row, phase['wire'])
                 return deepcopy(row['phases'][1:])
             assert script == lifecycle.launch.bounded(lifecycle.IDENTITY) and argument is None
             return deepcopy(row['identity'])
 
         page = SimpleNamespace(goto=goto, evaluate=evaluate)
-        return SimpleNamespace(new_page=lambda: page, close=lambda: closed.append(row['context']))
+        session = SimpleNamespace(on=lambda name, callback: callbacks.update({row['context']: callback}),
+            send=lambda method: {'arguments': ['mock-browser', '--enable-automation']} if method == 'Browser.getBrowserCommandLine' else {})
+        return SimpleNamespace(new_page=lambda: page, close=lambda: closed.append(row['context']),
+                               new_cdp_session=lambda page: session)
 
-    instance = SimpleNamespace(version='152.0.7977.82', new_context=new_context,
-                               close=lambda: closed.append('browser'))
-    pw = SimpleNamespace(chromium=SimpleNamespace(launch=lambda **kwargs: instance))
+    original_paths, original_bytes = [], []
+    def close_browser():
+        closed.append('browser')
+        data = json.dumps(native_netlog_fixture(fixture, global_source_id=global_source_id)).encode()
+        original_bytes.append(data)
+        if capture:
+            original_paths[0].write_bytes(data)
+
+    instance = SimpleNamespace(version='152.0.7977.82', new_context=new_context, close=close_browser)
+    def launch_browser(**kwargs):
+        path = Path(next(a.split('=', 1)[1] for a in kwargs['args'] if a.startswith('--log-net-log=')))
+        original_paths.append(path)
+        assert not path.exists() and not path.is_relative_to(tmp_path)
+        assert kwargs['args'] == [*lifecycle.launch.NATIVE_ARGS, '--ignore-certificate-errors-spki-list=fixture',
+            '--log-net-log=' + str(path), '--net-log-capture-mode=HeavilyRedacted', '--net-log-max-size-mb=8']
+        assert kwargs['chromium_sandbox'] is True
+        if status == 'launch_error':
+            raise RuntimeError('mock browser error: ' + str(path))
+        return instance
+    pw = SimpleNamespace(chromium=SimpleNamespace(launch=launch_browser))
     server = SimpleNamespace(spki='fixture', hellos=fixture['client_hellos'],
-                             connections=fixture['connections'], handshake_errors=[])
+                             connections=fixture['connections'], handshake_errors=[],
+                             connection_diagnostics=[], dropped_connection_diagnostics=0)
     monkeypatch.setitem(sys.modules, 'playwright.sync_api', SimpleNamespace(sync_playwright=lambda: nullcontext(pw)))
     monkeypatch.setattr(lifecycle, 'endpoint', lambda *args, **kwargs: nullcontext((server, origin)))
     monkeypatch.setattr(lifecycle.launch.pool, 'file_hash', lambda _: 'a' * 64)
-    report = lifecycle.run(tmp_path / 'browser')
+    report = lifecycle.run(tmp_path / 'browser', diagnostics_dir=directory)
+    netlog = report['diagnostics']['netlog']
+    if status == 'launch_error':
+        assert report['status'] == 'failed' and not netlog['browser_closed']
+        assert not original_paths[0].parent.exists() and not list(directory.iterdir())
+        assert str(original_paths[0].parent) not in json.dumps(report)
+        assert '<ephemeral-private>' in report['errors'][0]
+        return
+    assert netlog['browser_closed'] and netlog['original']['cleanup_status'] == 'deleted'
+    assert not original_paths[0].parent.exists()
+    assert str(original_paths[0].parent) not in json.dumps(report)
+    if capture:
+        assert netlog['original']['sha256'] == lifecycle.hashlib.sha256(original_bytes[0]).hexdigest()
+        derivative = (directory / 'netlog.sanitized.json').read_bytes()
+        assert b'PRIVATE' not in derivative
+        assert netlog['derivative']['sha256'] == lifecycle.hashlib.sha256(derivative).hexdigest()
+    else:
+        assert netlog['status'] == 'error' and netlog['original']['read_status'] == 'unavailable'
+        assert not list(directory.iterdir())
     if status == 200:
+        if capture:
+            assert report['diagnostics']['netlog']['status'] == 'captured'
+            assert report['diagnostics']['netlog']['errors'] == []
         assert report['errors'] == [] and report['status'] == 'passed'
         assert report['runs'] == fixture['runs']
         assert len(navigations) == 2 and closed == [0, 1, 'browser']
@@ -213,6 +296,19 @@ def test_owned_tls13_tickets_goaway_and_connection_binding(tmp_path):
             assert resumed.session_reused
             assert request(resumed, h2, '/echo?phase=reuse_after')['connection_id'] == c['connection_id']
         assert a['connection_id'] == b['connection_id'] == closed['connection_id'] != c['connection_id']
+    by_diagnostic_id = {c['connection_id']: c for c in server.connection_diagnostics}
+    for wire in (a, c):
+        diagnostic = by_diagnostic_id[wire['connection_id']]
+        times = [event['monotonic_ns'] for event in diagnostic['events']]
+        assert times == sorted(times)
+        assert diagnostic['peer'][0] == diagnostic['local'][0] == '127.0.0.1'
+        names = [event['event'] for event in diagnostic['events']]
+        assert names[0] == 'accepted' and names[-1] == 'closed'
+        assert names.index('tls_handshake_completed') < names.index('request_received') < names.index('response_sent')
+    first_events = [e['event'] for e in by_diagnostic_id[a['connection_id']]['events']]
+    assert first_events.index('goaway_queued') < first_events.index('goaway_sent') < first_events.index('closed')
+    assert by_diagnostic_id[a['connection_id']]['close_reason'] == 'server_goaway'
+    assert by_diagnostic_id[c['connection_id']]['close_reason'] == 'peer_eof'
     by_id = {c['id']: c for c in server.connections}
     assert by_id[a['connection_id']]['goaway_stream'] == 5
     assert by_id[c['connection_id']]['session_reused'] is True

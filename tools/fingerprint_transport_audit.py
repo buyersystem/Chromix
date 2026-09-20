@@ -19,6 +19,7 @@ import ssl
 import sys
 import tempfile
 import threading
+import time
 from urllib.parse import parse_qs, urlsplit
 
 from fingerprint_protocols import parse_client_hello, compare
@@ -32,27 +33,63 @@ HINTS = ('Sec-CH-UA-Full-Version-List, Sec-CH-UA-Platform-Version, Sec-CH-UA-Arc
 
 
 class Handler(socketserver.BaseRequestHandler):
+    def event(self, name, **fields):
+        row = {'event': name, 'monotonic_ns': time.monotonic_ns(), **fields}
+        events = self.diagnostic['events']
+        if len(events) < 256:
+            events.append(row)
+        else:
+            self.diagnostic['dropped_events'] += 1
+            if name == 'closed':
+                events[-1] = row
+
     def handle(self):
         self.request.settimeout(10)
-        connection_key = None
+        connection_key, connection = None, None
+        with self.server.lock:
+            self.connection_id = self.server.next_id
+            self.server.next_id += 1
+            self.diagnostic = {'connection_id': self.connection_id,
+                'peer': list(self.client_address), 'local': list(self.request.getsockname()),
+                'events': [], 'dropped_events': 0}
+            if len(self.server.connection_diagnostics) < 64:
+                self.server.connection_diagnostics.append(self.diagnostic)
+            else:
+                self.server.dropped_connection_diagnostics += 1
+        self.stage, self.close_reason = 'tls_handshake', 'handler_return'
+        self.event('accepted')
         try:
-            with self.server.tls.wrap_socket(self.request, server_side=True,
-                                            do_handshake_on_connect=False) as connection:
-                connection_key = id(connection)
-                with self.server.lock:
-                    self.connection_id = self.server.next_id
-                    self.server.next_id += 1
-                    self.server.connection_ids[connection_key] = self.connection_id
-                connection.do_handshake()
-                self.request = connection
-                self.handle_http2()
-        except (TimeoutError, ConnectionError, ssl.SSLError, OSError):
-            # Aborted speculative connections have no request evidence. An
-            # actual missing connection/request is rejected by assess().
-            pass
-        finally:
+            connection = self.server.tls.wrap_socket(self.request, server_side=True,
+                                                     do_handshake_on_connect=False)
+            connection_key = id(connection)
             with self.server.lock:
-                self.server.connection_ids.pop(connection_key, None)
+                self.server.connection_ids[connection_key] = self.connection_id
+            self.event('tls_handshake_started')
+            connection.do_handshake()
+            self.request = connection
+            self.event('tls_handshake_completed', tls=connection.version(),
+                       alpn=connection.selected_alpn_protocol(), session_reused=connection.session_reused)
+            self.handle_http2()
+        except Exception as error:
+            self.close_reason = 'timeout' if isinstance(error, TimeoutError) else 'exception'
+            self.event(self.close_reason, stage=self.stage, error_type=type(error).__name__,
+                       errno=getattr(error, 'errno', None))
+            # Preserve speculative-connection handling; request gates remain in assess().
+            if not isinstance(error, (TimeoutError, ConnectionError, ssl.SSLError, OSError)):
+                raise
+        finally:
+            try:
+                if connection is not None:
+                    connection.close()
+            except Exception as error:
+                self.close_reason = 'close_exception'
+                self.event('close_exception', error_type=type(error).__name__)
+                raise
+            finally:
+                self.diagnostic['close_reason'] = self.close_reason
+                self.event('closed', reason=self.close_reason)
+                with self.server.lock:
+                    self.server.connection_ids.pop(connection_key, None)
 
     def handle_http2(self):
         from h2.config import H2Configuration
@@ -65,20 +102,29 @@ class Handler(socketserver.BaseRequestHandler):
         with self.server.lock:
             self.server.connections.append(record)
         if record['alpn'] != 'h2':
+            self.close_reason = 'alpn_not_h2'
             return
         connection = H2Connection(H2Configuration(client_side=False, header_encoding='utf-8'))
+        self.stage = 'http2_preface_send'
         connection.initiate_connection(); self.request.sendall(connection.data_to_send())
+        self.event('http2_preface_sent')
         digest = hashlib.sha256()
         try:
             while True:
+                self.stage = 'http2_receive'
                 data = self.request.recv(65536)
                 if not data:
+                    self.close_reason = 'peer_eof'
+                    self.event('peer_eof')
                     break
                 digest.update(data)
                 close_after_response = False
+                response_streams = []
+                self.stage = 'http2_decode'
                 for event in connection.receive_data(data):
                     if isinstance(event, RemoteSettingsChanged):
                         record['settings'].append([[int(k), v.new_value] for k, v in event.changed_settings.items()])
+                        self.event('peer_settings_received')
                     elif isinstance(event, RequestReceived):
                         # hpack.HeaderTuple has special construction/deepcopy
                         # semantics; store plain JSON pairs at the wire boundary.
@@ -86,29 +132,48 @@ class Handler(socketserver.BaseRequestHandler):
                         record['requests'].append({'stream': event.stream_id, 'headers': headers,
                             'pseudo_order': [k for k, _ in headers if k.startswith(':')]})
                         target = urlsplit(dict(headers).get(':path', '/'))
+                        query = parse_qs(target.query)
+                        binding = {}
+                        if target.path == '/echo' and query.get('context') in (['0'], ['1']):
+                            binding['context'] = int(query['context'][0])
+                            if query.get('phase') in ([p] for p in ('initial', 'reuse', 'goaway', 'resumed', 'reuse_after')):
+                                binding['phase'] = query['phase'][0]
+                        self.event('request_received', stream=event.stream_id, **binding)
                         if target.path == '/echo':
                             body = json.dumps({'headers': dict(headers), 'connection_id': self.connection_id}).encode()
                             mime = 'application/json'
-                            close_after_response = self.server.lifecycle and parse_qs(target.query).get('close') == ['1']
+                            close_after_response = self.server.lifecycle and query.get('close') == ['1']
                         else:
                             body = b'<!doctype html><title>Owned TLS fixture</title>'
                             mime = 'text/html'
+                        self.stage = 'http2_response_queue'
                         connection.send_headers(event.stream_id, [(':status', '200'), ('content-type', mime),
                             ('content-length', str(len(body))), ('accept-ch', HINTS), ('cache-control', 'no-store')])
                         connection.send_data(event.stream_id, body, end_stream=True)
+                        response_streams.append(event.stream_id)
+                        self.event('response_queued', stream=event.stream_id)
                         if close_after_response:
                             record['goaway_stream'] = event.stream_id
                             connection.close_connection(last_stream_id=event.stream_id)
+                            self.event('goaway_queued', last_stream_id=event.stream_id, error_code=0)
                             break
                     elif isinstance(event, ConnectionTerminated):
+                        self.close_reason = 'peer_goaway'
+                        self.event('peer_goaway', error_code=int(event.error_code), last_stream_id=event.last_stream_id)
                         return
                 response = connection.data_to_send()
                 if response:
+                    self.stage = 'http2_response_send'
                     self.request.sendall(response)
+                    self.event('response_sent' if response_streams else 'http2_control_sent',
+                               streams=response_streams, byte_count=len(response))
                 if close_after_response:
+                    self.event('goaway_sent', last_stream_id=record['goaway_stream'], error_code=0)
+                    self.close_reason = 'server_goaway'
                     return
         except (TimeoutError, ConnectionError, ssl.SSLError, OSError) as error:
             record['close_reason'] = type(error).__name__
+            raise
         finally:
             record['application_bytes_sha256'] = digest.hexdigest()
 
@@ -152,6 +217,7 @@ def endpoint(directory, *, tickets=False):
     # Non-daemon handlers are joined by server_close before report serialization.
     server.daemon_threads = False
     server.connections, server.hellos, server.handshake_errors = [], [], []
+    server.connection_diagnostics, server.dropped_connection_diagnostics = [], 0
     server.lock = threading.Lock()
     server.spki, server.lifecycle = spki, tickets
     server.connection_ids, server.next_id = {}, 1
