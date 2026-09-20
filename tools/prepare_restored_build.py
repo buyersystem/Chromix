@@ -22,6 +22,7 @@ try:
     from .macos_runtime import bindgen_environment, runtime_environment
     from .macos_sdk_identity import sdk_content_identity, validated_sdk_content
     from .platform_pins import load_pins
+    from .repair_windows_midl import apply as repair_windows_midl
     from .restore_upstream_cache import linked, verify_restored
     from .upstream_object_cache import ninja_deps, ninja_log, write_json
     from .upstream_script_identity import ENDPOINTS
@@ -30,6 +31,7 @@ except ImportError:
     from macos_runtime import bindgen_environment, runtime_environment
     from macos_sdk_identity import sdk_content_identity, validated_sdk_content
     from platform_pins import load_pins
+    from repair_windows_midl import apply as repair_windows_midl
     from restore_upstream_cache import linked, verify_restored
     from upstream_object_cache import ninja_deps, ninja_log, write_json
     from upstream_script_identity import ENDPOINTS
@@ -934,6 +936,9 @@ def _prepare(workdir: Path, platform: str, arch: str, *, phase: str, repo: Path,
     data["operation"] = "inspect_native_tools"
     inspection = validate_native_tools(src, platform, arch)
     data.update(inspection)
+    if platform == "windows":
+        data["operation"] = "repair_windows_midl"
+        data["windows_midl"] = repair_windows_midl(src, platform, arch, receipt["identity"])
     incompatible = (not inspection["toolchains_native"] or any(
         entry.get("wrong_host", False) for name, entry in inspection["tools"].items()
         if name not in ("node", "gn")))

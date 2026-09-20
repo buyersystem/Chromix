@@ -762,7 +762,7 @@ function Verify-FinalBundle {
 Write-Host "==> Chromix CI stage $StageIndex | Chromium $($Revisions.ChromiumVersion) | remaining $(Get-RemainingMin) min"
 Write-OutVar finished false
 Write-OutVar upload_parts false
-Write-OutVar snapshot_safe true
+Write-OutVar snapshot_safe $(if ($env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA) { "false" } else { "true" })
 Assert-CiScripts
 Free-Disk
 Initialize-VisualStudio
@@ -789,6 +789,28 @@ if ($FromArtifact) {
   & $sevenZip x "C:\restore\tree.7z.001" -o"$Root" -y | Select-Object -Last 3
   if ($LASTEXITCODE -ne 0) { throw "7z restore failed" }
   Remove-Item C:\restore -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA) {
+  Write-OutVar snapshot_safe false
+  if (-not $FromArtifact -or $StageIndex -ne 6 -or $Arch -cne "x64" -or
+      -not $RequireUpstreamCache -or $BuildProfile -cne "native" -or
+      -not $env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or -not $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA -or
+      $env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA -or $env:CHROMIX_WINDOWS_MIGRATION_PROFILE) {
+    throw "unchanged-source verification requires an explicit native x64 stage6 upstream snapshot, without migration"
+  }
+  $verifyDiagnostics = Join-Path $WorkDir "fingerprint-diagnostics"
+  New-Item -ItemType Directory -Force -Path $verifyDiagnostics | Out-Null
+  $verifyReport = Join-Path $verifyDiagnostics ("windows-unchanged-source-" + [Guid]::NewGuid().ToString('N') + ".json")
+  & python -X utf8 (Join-Path $Repo "tools\verify_windows_snapshot_source.py") --workdir $WorkDir `
+    --previous-repo $env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO --repo $Repo `
+    --expected-previous-sha $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA --arch $Arch --build-profile $BuildProfile --report $verifyReport
+  if ($LASTEXITCODE -ne 0) { throw "Windows unchanged-source verification failed; restore a clean matching snapshot" }
+  foreach ($name in @("windows-snapshot.json", "windows-snapshot-download.json")) {
+    [IO.File]::Copy((Join-Path $env:RUNNER_TEMP $name), (Join-Path $verifyDiagnostics $name), $false)
+  }
+  Remove-Item Env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO, Env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA
+  Write-OutVar snapshot_safe true
 }
 
 if ($env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA) {

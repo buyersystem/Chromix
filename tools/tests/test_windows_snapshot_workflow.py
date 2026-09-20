@@ -51,7 +51,7 @@ def test_action_uses_validated_commit_and_enables_migration_only_after_download(
     checkout = next(s for s in steps if s.get("uses") == "actions/checkout@v4")
     isolate = next(s for s in steps if s.get("name", "").startswith("Isolate previous"))
     download = next(s for s in steps if "download_windows_snapshot.py" in s.get("run", ""))
-    enable = steps[-1]
+    enable = next(s for s in steps if s.get("name") == "Enable explicit verified source migration")
     assert steps.index(validation) < steps.index(checkout) < steps.index(isolate) < steps.index(download) < steps.index(enable)
     assert checkout["with"]["ref"] == "${{ steps.donor.outputs.head_sha }}"
     assert checkout["with"]["persist-credentials"] is False
@@ -147,7 +147,10 @@ LEGACY_SHA = "97f2881b0e5f43b7e9563569d92dfe702ed1df0b"
 
 def test_all_windows_migration_guards_pin_both_profiles_without_broadening_restore():
     workflow = yaml.safe_load(WORKFLOW.read_text())
-    profile = workflow["env"]["CHROMIX_WINDOWS_MIGRATION_PROFILE"]
+    assert not any(name.startswith("CHROMIX_WINDOWS_MIGRATION_") for name in workflow["env"])
+    action = yaml.safe_load(ACTION.read_text())
+    profile = next(s for s in action["runs"]["steps"]
+                   if s.get("name") == "Enable explicit verified source migration")["run"]
     assert STAGE9_SHA in profile and "windows-152-x64-stage9" in profile
     assert "windows-152-x64-legacy-0152" in profile
     guards = []
@@ -226,3 +229,333 @@ def test_historical_migration_guard_rejects_new_target_before_restore(tmp_path, 
     result = subprocess.run([powershell, '-NoProfile', '-NonInteractive', '-File', str(script)],
                             env=env, cwd=tmp_path, text=True, capture_output=True, timeout=30)
     assert result.returncode == expected, result.stderr
+
+
+WINDOWS153_SHA = "e5b29c58b44e381924a2dd4bd60f54d01abb9d9c"
+
+
+def run_powershell(tmp_path, script, env):
+    powershell = shutil.which("pwsh") or shutil.which("powershell") or "/opt/pwsh/pwsh"
+    if not Path(powershell).is_file():
+        pytest.skip("PowerShell is unavailable")
+    path = tmp_path / "exercise.ps1"
+    path.write_text("$ErrorActionPreference = 'Stop'\n" + script)
+    return subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-File", str(path)],
+                          env={**os.environ, **env}, cwd=tmp_path, text=True, capture_output=True, timeout=30)
+
+
+def test_verify_source_mode_is_separate_and_only_enabled_after_exact_download():
+    action = yaml.safe_load(ACTION.read_text())
+    assert action["inputs"]["mode"]["default"] == "migration"
+    steps = action["runs"]["steps"]
+    guard = steps[0]
+    enable = next(s for s in steps if s.get("name") == "Enable explicit unchanged-source verification")
+    migration = next(s for s in steps if s.get("name") == "Enable explicit verified source migration")
+    download = next(s for s in steps if "download_windows_snapshot.py" in s.get("run", ""))
+    assert steps.index(guard) < steps.index(download) < steps.index(enable)
+    assert "-cnotin @('migration', 'verify-source')" in guard["run"]
+    assert enable["if"] == "${{ inputs.mode == 'verify-source' }}"
+    assert migration["if"] == "${{ inputs.mode == 'migration' }}"
+    assert "CHROMIX_WINDOWS_MIGRATION_" not in enable["run"]
+    assert "CHROMIX_WINDOWS_VERIFY_SOURCE_REPO=" in enable["run"]
+    assert "CHROMIX_WINDOWS_VERIFY_SOURCE_SHA=" in enable["run"]
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    assert not any("MIGRATION" in name or "VERIFY_SOURCE" in name for name in workflow["env"])
+    for index in range(1, 13):
+        steps = workflow["jobs"][f"build-{index}"]["steps"]
+        restore = next(s for s in steps if s.get("uses") == "./.github/actions/restore-windows-snapshot")
+        assert restore["with"]["mode"] == "${{ inputs.resume_source_sha == '" + WINDOWS153_SHA + "' && 'verify-source' || 'migration' }}"
+        assert WINDOWS153_SHA in restore["with"]["recovery-branch"]
+        assert "&& 'main'" in restore["with"]["recovery-branch"]
+        assert "github.job == format('build-{0}', inputs.resume_stage)" in restore["if"]
+        checkout = next(s for s in steps if s.get("uses") == "actions/checkout@v4")
+        assert "ref" not in checkout.get("with", {})
+        assert steps.index(checkout) < steps.index(restore)
+
+
+@pytest.mark.parametrize("mutation", ["valid", "reverse-artifacts", "sha", "uppercase", "run", "resume-stage", "tree-stage",
+    "attempt", "fast", "release", "upstream-false", "upstream-run", "upstream-empty", "missing-artifact", "extra-artifact",
+    "duplicate-artifact", "sha-only", "ids-only", "wrong-version", "wrong-pin"])
+def test_windows153_workflow_guard_checks_exact_native_upstream_resume(tmp_path, mutation):
+    for name in ("CHROMIUM_VERSION", "CHROMIUM_WINDOWS_VERSION", "build/ungoogled-revisions.psd1",
+                 "build/windows/read-platform-pins.ps1", "tools/platform_pins.py"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, path)
+    steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["build-6"]["steps"]
+    guard = next(s for s in steps if s.get("name") == "Check explicit snapshot migration inputs")
+    assert guard["env"]["RESUME_STAGE"] == "${{ inputs.resume_stage }}"
+    env = dict(RESUME_SOURCE_SHA=WINDOWS153_SHA, RESUME_RUN_ID="35387701778", RESUME_STAGE="6", RESUME_TREE_STAGE="6",
+               RESUME_ATTEMPT="1", RESUME_ARTIFACT_IDS="10593998213,10593823308", CHROMIX_BUILD_PROFILE="native",
+               USE_UPSTREAM_CACHE="true", UPSTREAM_RUN_ID="35059013905", GITHUB_WORKSPACE=str(tmp_path))
+    overrides = {
+        "valid": {}, "reverse-artifacts": {"RESUME_ARTIFACT_IDS": "10593823308, 10593998213"},
+        "sha": {"RESUME_SOURCE_SHA": "a" * 40}, "uppercase": {"RESUME_SOURCE_SHA": WINDOWS153_SHA.upper()},
+        "run": {"RESUME_RUN_ID": "35387701779"}, "resume-stage": {"RESUME_STAGE": "7"},
+        "tree-stage": {"RESUME_TREE_STAGE": "5"}, "attempt": {"RESUME_ATTEMPT": "2"},
+        "fast": {"CHROMIX_BUILD_PROFILE": "fast"}, "release": {"CHROMIX_BUILD_PROFILE": "release"},
+        "upstream-false": {"USE_UPSTREAM_CACHE": "false"}, "upstream-run": {"UPSTREAM_RUN_ID": "35059013906"},
+        "upstream-empty": {"UPSTREAM_RUN_ID": ""}, "missing-artifact": {"RESUME_ARTIFACT_IDS": "10593823308"},
+        "extra-artifact": {"RESUME_ARTIFACT_IDS": "10593823308,10593998213,1"},
+        "duplicate-artifact": {"RESUME_ARTIFACT_IDS": "10593823308,10593823308"},
+        "sha-only": {"RESUME_ARTIFACT_IDS": ""}, "ids-only": {"RESUME_SOURCE_SHA": ""},
+        "wrong-version": {}, "wrong-pin": {},
+    }
+    env.update(overrides[mutation])
+    if mutation == "wrong-version":
+        (tmp_path / "CHROMIUM_WINDOWS_VERSION").write_text("153.0.8010.36\n")
+    if mutation == "wrong-pin":
+        path = tmp_path / "build/ungoogled-revisions.psd1"
+        path.write_text(path.read_text().replace("153.0.8010.47", "153.0.8010.36"))
+    result = run_powershell(tmp_path, "try {\n" + guard["run"] + "\n} catch { Write-Host $_; exit 1 }\nexit 0\n", env)
+    assert result.returncode == (0 if mutation in ("valid", "reverse-artifacts") else 1), result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["valid", "migration", "153-migration", "unknown-migration", "unknown-mode", "uppercase-mode", "sha", "run", "stage", "attempt",
+                                       "artifact", "duplicate", "mixed-mode"])
+def test_action_mode_guard_is_fail_closed(tmp_path, mutation):
+    guard = yaml.safe_load(ACTION.read_text())["runs"]["steps"][0]["run"]
+    env = dict(SNAPSHOT_MODE="verify-source", SNAPSHOT_SHA=WINDOWS153_SHA, SNAPSHOT_RUN="35387701778",
+               SNAPSHOT_STAGE="6", SNAPSHOT_ATTEMPT="1", SNAPSHOT_ARTIFACT_IDS="10593998213,10593823308",
+               CHROMIX_WINDOWS_MIGRATION_REPO="", CHROMIX_WINDOWS_MIGRATION_SHA="", CHROMIX_WINDOWS_MIGRATION_PROFILE="")
+    overrides = {"valid": {}, "migration": {"SNAPSHOT_MODE": "migration", "SNAPSHOT_SHA": LEGACY_SHA},
+                 "153-migration": {"SNAPSHOT_MODE": "migration"},
+                 "unknown-migration": {"SNAPSHOT_MODE": "migration", "SNAPSHOT_SHA": "a" * 40},
+                 "unknown-mode": {"SNAPSHOT_MODE": "auto"}, "uppercase-mode": {"SNAPSHOT_MODE": "VERIFY-SOURCE"},
+                 "sha": {"SNAPSHOT_SHA": LEGACY_SHA}, "run": {"SNAPSHOT_RUN": "1"}, "stage": {"SNAPSHOT_STAGE": "7"},
+                 "attempt": {"SNAPSHOT_ATTEMPT": "2"}, "artifact": {"SNAPSHOT_ARTIFACT_IDS": "10593823308"},
+                 "duplicate": {"SNAPSHOT_ARTIFACT_IDS": "10593823308,10593823308"},
+                 "mixed-mode": {"CHROMIX_WINDOWS_MIGRATION_PROFILE": "windows-152-x64-stage9"}}
+    env.update(overrides[mutation])
+    result = run_powershell(tmp_path, "try {\n" + guard + "\n} catch { exit 1 }\nexit 0\n", env)
+    assert result.returncode == (0 if mutation in ("valid", "migration") else 1), result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["valid", "nonterminal", "wrong-workflow", "wrong-sha", "wrong-attempt", "wrong-stage",
+                                       "extra-id", "missing-id", "expired", "wrong-origin", "branch", "missing-digest"])
+def test_exact_windows153_donor_uses_existing_metadata_validator(mutation):
+    from tools import validate_windows_snapshot as validator
+    from tools.tests.test_validate_windows_snapshot import Client, REPO
+
+    identifiers = [10593998213, 10593823308]
+    client = Client(run_id=35387701778, stage=6, attempt=1, sha=WINDOWS153_SHA)
+    for artifact, identifier in zip(client.artifacts, identifiers):
+        artifact["id"] = identifier
+    options = dict(repository=REPO, run_id=35387701778, stage=6, attempt=1,
+                   expected_sha=WINDOWS153_SHA, expected_artifact_ids=identifiers, recovery_branch="main")
+    if mutation == "nonterminal":
+        client.run["status"] = "in_progress"
+    elif mutation == "wrong-workflow":
+        client.run["path"] = ".github/workflows/build-win-arm64-github.yml"
+    elif mutation == "wrong-sha":
+        options["expected_sha"] = LEGACY_SHA
+    elif mutation == "wrong-attempt":
+        options["attempt"] = 2
+    elif mutation == "wrong-stage":
+        options["stage"] = 5
+    elif mutation == "extra-id":
+        options["expected_artifact_ids"] = identifiers + [1]
+    elif mutation == "missing-id":
+        options["expected_artifact_ids"] = identifiers[:1]
+    elif mutation == "expired":
+        client.artifacts[0]["expired"] = True
+    elif mutation == "wrong-origin":
+        client.artifacts[0]["workflow_run"]["id"] = 1
+    elif mutation == "branch":
+        client.run.update(head_branch="other", event="workflow_dispatch")
+    elif mutation == "missing-digest":
+        client.artifacts[0].pop("digest")
+    if mutation != "valid":
+        with pytest.raises(ValueError):
+            validator.validate(client, **options)
+    else:
+        report = validator.validate(client, **options)
+        assert report["arch"] == "x64"
+        assert report["pattern"] == "tree-s6-attempt-1-part*"
+        assert [item["id"] for item in report["artifacts"]] == identifiers
+        assert client.calls == ["/actions/runs/35387701778", "/actions/runs/35387701778/attempts/1/jobs",
+                                "/actions/runs/35387701778/artifacts"]
+
+
+def stage_preflight_block():
+    source = STAGE.read_text()
+    start = source.index("Write-OutVar finished false\nWrite-OutVar upload_parts false")
+    end = source.index('\nif ($Arch -eq "arm64") { &', start)
+    return source[start:end]
+
+
+@pytest.mark.parametrize("mode", ["strict", "strict-repo-only", "strict-sha-only", "strict-not-artifact",
+                                  "normal-resume", "cold", "legacy152", "stage9-152", "arm64"])
+@pytest.mark.parametrize("failure", ["preflight", "disk", "vs", "sdk", "none"])
+def test_initial_snapshot_gate_precedes_preflight_and_sdk_failures(tmp_path, mode, failure):
+    script = r'''
+$script:events = [Collections.Generic.List[string]]::new()
+function Write-OutVar($key, $value) { $script:events.Add("$key=$value") }
+function Invoke-PreflightFixture($name) {
+  $script:events.Add("preflight:$name")
+  if ($env:TEST_FAILURE -eq $name) { throw "injected $name failure before extraction" }
+}
+function Assert-CiScripts { Invoke-PreflightFixture 'preflight' }
+function Free-Disk { Invoke-PreflightFixture 'disk' }
+function Initialize-VisualStudio { Invoke-PreflightFixture 'vs' }
+function Install-WindowsSdk { Invoke-PreflightFixture 'sdk' }
+$FromArtifact = $env:TEST_MODE -notin @('cold', 'strict-not-artifact')
+$Arch = $(if ($env:TEST_MODE -eq 'arm64') { 'arm64' } else { 'x64' })
+$failed = $false
+try {
+''' + stage_preflight_block() + r'''
+} catch { $failed = $true }
+[pscustomobject]@{failed=$failed; events=@($script:events)} | ConvertTo-Json -Compress
+'''
+    strict = mode.startswith("strict")
+    env = dict(TEST_MODE=mode, TEST_FAILURE=failure,
+               CHROMIX_WINDOWS_VERIFY_SOURCE_REPO="previous" if strict and mode != "strict-sha-only" else "",
+               CHROMIX_WINDOWS_VERIFY_SOURCE_SHA=WINDOWS153_SHA if strict and mode != "strict-repo-only" else "",
+               CHROMIX_WINDOWS_MIGRATION_REPO="previous" if mode in ("legacy152", "stage9-152") else "",
+               CHROMIX_WINDOWS_MIGRATION_SHA={"legacy152": LEGACY_SHA, "stage9-152": STAGE9_SHA}.get(mode, ""),
+               CHROMIX_WINDOWS_MIGRATION_PROFILE={"legacy152": "windows-152-x64-legacy-0152",
+                                                  "stage9-152": "windows-152-x64-stage9"}.get(mode, ""))
+    result = run_powershell(tmp_path, script, env)
+    assert result.returncode == 0, result.stderr
+    state = json.loads(result.stdout)
+    assert state["failed"] is (failure != "none")
+    calls = ["preflight", "disk", "vs", "sdk"]
+    if failure != "none":
+        calls = calls[:calls.index(failure) + 1]
+    gate = "snapshot_safe=false" if strict else "snapshot_safe=true"
+    assert state["events"] == ["finished=false", "upload_parts=false", gate,
+                               *("preflight:" + name for name in calls)]
+
+
+def verify_source_block():
+    source = STAGE.read_text()
+    start = source.index("\nif ($env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or") + 1
+    end = source.index("if ($env:CHROMIX_WINDOWS_MIGRATION_REPO -or", start)
+    return source[start:end]
+
+
+def test_unchanged_source_verification_precedes_prepare_without_bypassing_any_existing_checks():
+    source = STAGE.read_text()
+    block = verify_source_block()
+    assert source.index('throw "7z restore failed"') < source.index(block)
+    assert source.index(block) < source.index('tools\\restore_upstream_cache.py')
+    assert source.index(block) < source.index('& "$PSScriptRoot\\prepare-ungoogled.ps1"')
+    assert "migrate_windows_snapshot.py" not in block
+    assert block.index("snapshot_safe false") < block.index("verify_windows_snapshot_source.py")
+    assert block.index("if ($LASTEXITCODE -ne 0)") < block.index("snapshot_safe true")
+    assert "Remove-Item Env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO, Env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA" in block
+    assert 'tools\\prepare_restored_build.py' in source
+    assert 'tools\\verify_patch_stack.py' in source
+    assert 'throw "required upstream cache: restore receipt missing;' in source
+    assert 'if ($RestoredUpstream) {\n    python (Join-Path $Repo "tools\\prepare_restored_build.py") --phase finish' in source
+    copy = block.index('[IO.File]::Copy(')
+    assert block.index('throw "Windows unchanged-source verification failed;') < copy
+    assert copy < block.index('Remove-Item Env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO') < block.index('snapshot_safe true')
+    assert '(Join-Path $env:RUNNER_TEMP $name), (Join-Path $verifyDiagnostics $name), $false)' in block
+    action_steps = yaml.safe_load(ACTION.read_text())["runs"]["steps"]
+    for name, helper in (("windows-snapshot.json", "validate_windows_snapshot.py"),
+                         ("windows-snapshot-download.json", "download_windows_snapshot.py")):
+        assert '"' + name + '"' in block
+        action_run = next(s["run"] for s in action_steps if helper in s.get("run", ""))
+        assert '--report "$env:RUNNER_TEMP\\' + name + '"' in action_run
+
+
+def test_every_stage_uploads_preparation_and_preserved_snapshot_diagnostics():
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    preparation = r"C:\c\chromix\upstream-cache-preparation.json"
+    for index in range(1, 13):
+        steps = workflow["jobs"][f"build-{index}"]["steps"]
+        evidence_name = "Upload upstream cache diagnostics" if index == 1 else "Upload restored reuse evidence"
+        evidence = next(s for s in steps if s.get("name") == evidence_name)
+        assert evidence["if"] == "${{ always() }}"
+        assert evidence["uses"] == "actions/upload-artifact@v4"
+        assert evidence["with"]["if-no-files-found"] == "ignore"
+        paths = evidence["with"]["path"].splitlines()
+        assert paths.count(preparation) == 1
+        assert r"C:\c\chromix\upstream-reuse\baseline.json" in paths
+        assert r"C:\c\chromix\upstream-reuse\result.json" in paths
+        fingerprint = next(s for s in steps if s.get("name") == "Upload fingerprint diagnostics")
+        assert fingerprint["if"] == "${{ always() }}"
+        assert fingerprint["with"]["if-no-files-found"] == "ignore"
+        assert fingerprint["with"]["path"] == "C:\\c\\chromix\\fingerprint-diagnostics\\"
+        stage = next(s for s in steps if s.get("id") == "stage")
+        assert steps.index(stage) < steps.index(evidence)
+        assert steps.index(stage) < steps.index(fingerprint)
+
+
+@pytest.mark.parametrize("mode", ["disabled", "success", "failure", "missing-sha", "missing-repo", "cold", "stage7", "arm64",
+                                  "not-artifact", "fast", "migration-repo", "migration-sha", "migration-profile",
+                                  "missing-origin", "missing-download", "existing-origin", "existing-download"])
+def test_powershell_unchanged_source_guard_and_one_shot_environment(tmp_path, mode):
+    script = r'''
+$script:events = [Collections.Generic.List[string]]::new()
+function Write-OutVar($key, $value) { $script:events.Add("$key=$value") }
+function python { $script:events.Add('python:' + ($args -join ' ')); $global:LASTEXITCODE = $(if ($env:TEST_MODE -eq 'failure') { 1 } else { 0 }) }
+$WorkDir = Join-Path $env:TEST_ROOT 'work'
+$Repo = Join-Path $env:TEST_ROOT 'repo'
+$FromArtifact = $env:TEST_MODE -ne 'not-artifact'
+$StageIndex = $(if ($env:TEST_MODE -eq 'stage7') { 7 } else { 6 })
+$Arch = $(if ($env:TEST_MODE -eq 'arm64') { 'arm64' } else { 'x64' })
+$BuildProfile = $(if ($env:TEST_MODE -eq 'fast') { 'fast' } else { 'native' })
+$RequireUpstreamCache = $env:TEST_MODE -ne 'cold'
+$env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO = $(if ($env:TEST_MODE -notin @('disabled', 'missing-repo')) { 'previous' } else { '' })
+$env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA = $(if ($env:TEST_MODE -notin @('disabled', 'missing-sha')) { 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' } else { '' })
+$env:CHROMIX_WINDOWS_MIGRATION_REPO = $(if ($env:TEST_MODE -eq 'migration-repo') { 'previous' } else { '' })
+$env:CHROMIX_WINDOWS_MIGRATION_SHA = $(if ($env:TEST_MODE -eq 'migration-sha') { 'sha' } else { '' })
+$env:CHROMIX_WINDOWS_MIGRATION_PROFILE = $(if ($env:TEST_MODE -eq 'migration-profile') { 'legacy' } else { '' })
+$failed = $false
+try {
+''' + verify_source_block() + r'''
+} catch { $failed = $true }
+[pscustomobject]@{failed=$failed; events=@($script:events); cleared=(-not $env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -and -not $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA)} | ConvertTo-Json -Compress
+'''
+    reports = {"windows-snapshot.json": b'{"run_id":35387701778,"stage":6,"attempt":1}\r\n',
+               "windows-snapshot-download.json": b'{"status":"verified","artifacts":[10593998213,10593823308]}\n'}
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    diagnostics = tmp_path / "work/fingerprint-diagnostics"
+    diagnostics.mkdir(parents=True)
+    existing_proof = diagnostics / "windows-unchanged-source-existing.json"
+    existing_proof.write_bytes(b'{"status":"prior-proof"}\n')
+    sources = {}
+    destinations = {}
+    for name, payload in reports.items():
+        kind = "origin" if name == "windows-snapshot.json" else "download"
+        if mode != "missing-" + kind:
+            path = runner_temp / name
+            path.write_bytes(payload)
+            sources[name] = (path.read_bytes(), path.stat().st_mtime_ns)
+        if mode == "existing-" + kind:
+            path = diagnostics / name
+            path.write_bytes(b'{"preserve":"existing diagnostic"}\n')
+            destinations[name] = (path.read_bytes(), path.stat().st_mtime_ns)
+    result = run_powershell(tmp_path, script, {"TEST_MODE": mode, "TEST_ROOT": str(tmp_path),
+                                             "RUNNER_TEMP": str(runner_temp)})
+    assert result.returncode == 0, result.stderr
+    state = json.loads(result.stdout)
+    assert state["failed"] is (mode not in ("success", "disabled"))
+    for name, before in sources.items():
+        path = runner_temp / name
+        assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    for name, before in destinations.items():
+        path = diagnostics / name
+        assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+    assert existing_proof.read_bytes() == b'{"status":"prior-proof"}\n'
+    for name, payload in reports.items():
+        path = diagnostics / name
+        copied = mode == "success" or (name == "windows-snapshot.json" and mode in ("missing-download", "existing-download"))
+        if copied:
+            assert path.read_bytes() == payload
+        elif name not in destinations:
+            assert not path.exists()
+    if mode == "disabled":
+        assert state["events"] == []
+    else:
+        assert state["events"][0] == "snapshot_safe=false"
+        assert ("snapshot_safe=true" in state["events"]) is (mode == "success")
+        assert state["cleared"] is (mode == "success")
+        if mode in ("success", "failure", "missing-origin", "missing-download", "existing-origin", "existing-download"):
+            assert "verify_windows_snapshot_source.py" in state["events"][1]
+            assert "--arch x64 --build-profile native" in state["events"][1]
+        else:
+            assert len(state["events"]) == 1

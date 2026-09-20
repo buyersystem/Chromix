@@ -1,6 +1,10 @@
 name: Restore verified Windows snapshot
-description: Validate the exact donor and artifact set before downloading a Windows source-migration snapshot.
+description: Validate the exact donor and artifact set before downloading a Windows snapshot.
 inputs:
+  mode:
+    description: 'Explicit restore mode: migration or verify-source.'
+    required: false
+    default: migration
   repository:
     description: Same-repository owner/name of the donor run.
     required: true
@@ -28,6 +32,33 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Check explicit restore mode
+      shell: powershell
+      env:
+        SNAPSHOT_MODE: ${{ inputs.mode }}
+        SNAPSHOT_SHA: ${{ inputs.source-sha }}
+        SNAPSHOT_RUN: ${{ inputs.run-id }}
+        SNAPSHOT_STAGE: ${{ inputs.stage }}
+        SNAPSHOT_ATTEMPT: ${{ inputs.attempt }}
+        SNAPSHOT_ARTIFACT_IDS: ${{ inputs.artifact-ids }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if ($env:SNAPSHOT_MODE -cnotin @('migration', 'verify-source')) { throw 'Unsupported Windows snapshot mode' }
+        if ($env:SNAPSHOT_MODE -ceq 'migration' -and
+            $env:SNAPSHOT_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+          throw 'No migration profile allows this donor SHA'
+        }
+        if ($env:SNAPSHOT_MODE -ceq 'verify-source') {
+          $artifactIds = @($env:SNAPSHOT_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+          if ($env:SNAPSHOT_SHA -cne 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' -or
+              $env:SNAPSHOT_RUN -cne '35387701778' -or $env:SNAPSHOT_STAGE -cne '6' -or
+              $env:SNAPSHOT_ATTEMPT -cne '1' -or ($artifactIds -join ',') -cne '10593823308,10593998213') {
+            throw 'verify-source requires the exact Windows153 x64 stage6 donor and complete artifact set'
+          }
+          if ($env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA -or $env:CHROMIX_WINDOWS_MIGRATION_PROFILE) {
+            throw 'verify-source cannot enable migration'
+          }
+        }
     - name: Validate exact Windows snapshot origin
       id: donor
       shell: powershell
@@ -71,10 +102,22 @@ runs:
           --destination 'C:\restore' --report "$env:RUNNER_TEMP\windows-snapshot-download.json"
         if ($LASTEXITCODE -ne 0) { throw 'Windows snapshot content verification failed' }
     - name: Enable explicit verified source migration
+      if: ${{ inputs.mode == 'migration' }}
       shell: powershell
       env:
         SNAPSHOT_SHA: ${{ inputs.source-sha }}
       run: |
         $previous = Join-Path $env:RUNNER_TEMP 'chromix-previous-repo'
+        $profile = if ($env:SNAPSHOT_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') { 'windows-152-x64-stage9' } else { 'windows-152-x64-legacy-0152' }
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_MIGRATION_PROFILE=$profile"
         Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_MIGRATION_REPO=$previous"
         Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_MIGRATION_SHA=$env:SNAPSHOT_SHA"
+    - name: Enable explicit unchanged-source verification
+      if: ${{ inputs.mode == 'verify-source' }}
+      shell: powershell
+      env:
+        SNAPSHOT_SHA: ${{ inputs.source-sha }}
+      run: |
+        $previous = Join-Path $env:RUNNER_TEMP 'chromix-previous-repo'
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_VERIFY_SOURCE_REPO=$previous"
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_VERIFY_SOURCE_SHA=$env:SNAPSHOT_SHA"
