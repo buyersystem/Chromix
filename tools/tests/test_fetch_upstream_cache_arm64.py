@@ -12,7 +12,7 @@ from tools import fetch_upstream_cache as cache
 from tools.tests import test_fetch_upstream_cache as fixtures
 
 NOW = datetime(2026, 9, 27, 8, 17, 32, tzinfo=timezone.utc)
-# Stage10 metadata from the supplied inspection; this fixture never selects a live donor.
+# A prior checkpoint fixture; this test never selects a live donor.
 ARM64 = {
     "id": 10922899704,
     "name": "build-artifact-arm",
@@ -139,7 +139,7 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
             ("run_attempt", True), ("run_attempt", "5"), ("run_attempt", 0), ("run_attempt", None),
             ("producer_job_id", True), ("producer_job_id", "108504640745"), ("producer_job_id", -1),
             ("producer_job_name", ""), ("producer_job_name", None), ("producer_job_name", "build / build-0"),
-            ("producer_job_name", "build / build-11\n"), ("producer_job_name", "build-x64 / build-11"),
+            ("producer_job_name", "build / build-13\n"), ("producer_job_name", "build-x64 / build-11"),
             ("producer", {}), ("arch", "x64"), ("head_sha", "0" * 40),
             ("allow_in_progress", True), ("checkpoint", True), ("unexpected", 1),
         )]
