@@ -210,6 +210,8 @@ def test_historical152_workflow_guard_executes_exact_profile_checks(tmp_path, mu
 
 
 @pytest.mark.parametrize('version,pin,enabled,expected', [
+    ('154.0.8037.57', '154.0.8037.57', True, 1),
+    ('154.0.8037.57', '154.0.8037.57', False, 0),
     ('153.0.8010.36', '153.0.8010.36', True, 1),
     ('152.0.7977.82', '153.0.8010.36', True, 1),
     ('153.0.8010.36', '152.0.7977.82', True, 1),
@@ -430,7 +432,7 @@ def test_native_midl_read_preflight_rejects_unsupported_cases(tmp_path, monkeypa
 
 @pytest.mark.parametrize("mutation", ["valid", "reverse-artifacts", "sha", "uppercase", "run", "resume-stage", "tree-stage",
     "attempt", "fast", "release", "upstream-false", "upstream-run", "upstream-empty", "missing-artifact", "extra-artifact",
-    "duplicate-artifact", "sha-only", "ids-only", "wrong-version", "wrong-pin", "cross-profile"])
+    "duplicate-artifact", "sha-only", "ids-only", "wrong-version", "wrong-pin", "cross-profile", "target154", "fresh154"])
 @pytest.mark.parametrize("stage", [6, 8])
 def test_windows153_workflow_guard_checks_exact_native_upstream_resume(tmp_path, mutation, stage):
     for name in ("CHROMIUM_VERSION", "CHROMIUM_WINDOWS_VERSION", "build/ungoogled-revisions.psd1",
@@ -438,6 +440,9 @@ def test_windows153_workflow_guard_checks_exact_native_upstream_resume(tmp_path,
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, path)
+    from tools.tests.test_fetch_upstream_cache import pinned_windows153_source
+
+    pinned_windows153_source(tmp_path)
     steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["build-6"]["steps"]
     guard = next(s for s in steps if s.get("name") == "Check explicit snapshot migration inputs")
     assert guard["env"]["RESUME_STAGE"] == "${{ inputs.resume_stage }}"
@@ -455,7 +460,9 @@ def test_windows153_workflow_guard_checks_exact_native_upstream_resume(tmp_path,
         "extra-artifact": {"RESUME_ARTIFACT_IDS": "10593823308,10593998213,1"},
         "duplicate-artifact": {"RESUME_ARTIFACT_IDS": "10593823308,10593823308"},
         "sha-only": {"RESUME_ARTIFACT_IDS": ""}, "ids-only": {"RESUME_SOURCE_SHA": ""},
-        "wrong-version": {}, "wrong-pin": {},
+        "wrong-version": {}, "wrong-pin": {}, "target154": {},
+        "fresh154": {"RESUME_SOURCE_SHA": "", "RESUME_ARTIFACT_IDS": "", "RESUME_RUN_ID": "",
+                     "UPSTREAM_RUN_ID": "36093095228"},
         "cross-profile": {"RESUME_SOURCE_SHA": STAGE8_SHA if stage == 6 else WINDOWS153_SHA},
     }
     if stage == 8:
@@ -464,13 +471,17 @@ def test_windows153_workflow_guard_checks_exact_native_upstream_resume(tmp_path,
         overrides["reverse-artifacts"] = {"RESUME_ARTIFACT_IDS": "10608606403, 10608631230"}
         overrides["uppercase"] = {"RESUME_SOURCE_SHA": STAGE8_SHA.upper()}
     env.update(overrides[mutation])
+    if mutation in ("target154", "fresh154"):
+        for name in ("CHROMIUM_WINDOWS_VERSION", "build/ungoogled-revisions.psd1"):
+            path = tmp_path / name
+            path.write_text(path.read_text().replace("153.0.8010.47", "154.0.8037.57"))
     if mutation == "wrong-version":
         (tmp_path / "CHROMIUM_WINDOWS_VERSION").write_text("153.0.8010.36\n")
     if mutation == "wrong-pin":
         path = tmp_path / "build/ungoogled-revisions.psd1"
         path.write_text(path.read_text().replace("153.0.8010.47", "153.0.8010.36"))
     result = run_powershell(tmp_path, "try {\n" + guard["run"] + "\n} catch { Write-Host $_; exit 1 }\nexit 0\n", env)
-    assert result.returncode == (0 if mutation in ("valid", "reverse-artifacts") else 1), result.stdout + result.stderr
+    assert result.returncode == (0 if mutation in ("valid", "reverse-artifacts", "fresh154") else 1), result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("mutation", ["valid", "migration", "153-migration", "unknown-migration", "unknown-mode", "uppercase-mode", "sha", "run", "stage", "attempt",

@@ -38,7 +38,7 @@ OWNER = "chromix-upstream-restore-v1"
 Miss = importer.Miss
 LocalError = fetcher.LocalError
 TARGETS = {("linux", "x64"), ("linux", "arm64"), ("macos", "x64"),
-           ("macos", "arm64"), ("windows", "x64")}
+           ("macos", "arm64"), ("windows", "x64"), ("windows", "arm64")}
 NANOSECOND = 1_000_000_000
 # Keep synchronized with importer.preserve_external_tool_lookups.
 HOST_LINKS = {"third_party/node/linux/node-linux-x64/bin/node",
@@ -47,6 +47,21 @@ HOST_LINKS = {"third_party/node/linux/node-linux-x64/bin/node",
               "third_party/dawn/tools/golang/linux-amd64/bin/go",
               "third_party/dawn/tools/golang/linux-arm64/bin/go",
               "buildtools/linux64-format/clang-format"}
+LINUX154_ESBUILD_LINK = "third_party/devtools-frontend/src/node_modules/esbuild"
+LINUX154_ESBUILD_IDENTITY = {
+    "chromium_version": "154.0.8037.57",
+    "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
+    "head_sha": "56b2567742c0423e8e70fd5da286f0762605d26c",
+    "platform": "linux", "repository": "ungoogled-software/ungoogled-chromium-portablelinux",
+    "repository_id": 177191557, "head_branch": "154.0.8037.57-1", "event": "push",
+    "workflow_path": ".github/workflows/build.yml", "run_id": 36144376832,
+}
+LINUX154_ESBUILD_ARTIFACTS = {
+    "x64": (10896197724, "build-cache-x86_64", 4736781615,
+            "sha256:88b9b494993940caafc5f9c3f0abf7af97a8f6a8705f6aec0f4ab820967ffdab"),
+    "arm64": (10902309838, "build-cache-arm64", 5671963322,
+              "sha256:7c27123cc1b93b0fa6a66ced3ad053d35eaa48e8ddf94d2ac433ce21f3c924ee"),
+}
 MAC_EXTERNAL_TOOL_LINKS = {"third_party/dawn/tools/golang/mac-arm64/bin/go",
                            "third_party/dawn/tools/golang/mac-amd64/bin/go"}
 MAC_XCODE_LINK_ROOT = Path("out/Default/sdk/xcode_links")
@@ -143,17 +158,26 @@ def source_args(src: Path, identity: dict) -> dict:
         raise Miss("restored chrome/VERSION does not match repository pins")
     path = src / "out/Default/args.gn"
     values = gn_assignments_last_wins(path)
-    for name in ("target_cpu", "v8_target_cpu"):
-        if (name == "target_cpu" or name in values) and values.get(name) != json.dumps(identity["arch"]):
-            raise Miss(f"GN {name} does not match requested architecture")
+    importer.validate_gn_target(values, identity["platform"], identity["arch"])
     raw = path.read_bytes()
     return {"path": "out/Default/args.gn", "text": raw.decode("utf-8"),
             "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "assignments": values}
 
 
-def is_known_external_link(relative: str, platform: str) -> bool:
+def is_known_external_link(relative: str, platform: str, identity: dict | None = None) -> bool:
     if relative in HOST_LINKS:
         return True
+    if relative == LINUX154_ESBUILD_LINK:
+        if platform != "linux" or not isinstance(identity, dict):
+            return False
+        arch = identity.get("arch")
+        if not isinstance(arch, str) or arch not in LINUX154_ESBUILD_ARTIFACTS:
+            return False
+        artifact_id, name, size, digest = LINUX154_ESBUILD_ARTIFACTS[arch]
+        expected = dict(LINUX154_ESBUILD_IDENTITY, arch=arch, artifact_id=artifact_id,
+                        artifact_name=name, artifact_size_in_bytes=size, artifact_digest=digest)
+        return (identity == expected
+                and all(type(identity[key]) is type(value) for key, value in expected.items()))
     if platform != "macos":
         return False
     if relative in MAC_EXTERNAL_TOOL_LINKS:
@@ -165,7 +189,8 @@ def is_known_external_link(relative: str, platform: str) -> bool:
     return "/" not in basename and (basename in MAC_XCODE_BASENAMES or MAC_SDK.fullmatch(basename) is not None)
 
 
-def missing_host_links(cache: Path, donor: Path, result: dict, platform: str) -> list[str]:
+def missing_host_links(cache: Path, donor: Path, result: dict, platform: str,
+                       identity: dict | None = None) -> list[str]:
     omitted = result.get("external_symlink_paths", [])
     count = result.get("skipped_external_symlinks", 0)
     if type(count) is not int or count < 0 or not isinstance(omitted, list) or len(omitted) != count:
@@ -176,7 +201,7 @@ def missing_host_links(cache: Path, donor: Path, result: dict, platform: str) ->
             raise Miss("incomplete donor source: invalid omitted link path")
         # Fetcher records archive-relative names, extracted beneath cache/tree.
         path = safe_path(cache, Path("tree") / name)
-        if not importer.contained(path, donor) or not is_known_external_link(path.relative_to(donor).as_posix(), platform):
+        if not importer.contained(path, donor) or not is_known_external_link(path.relative_to(donor).as_posix(), platform, identity):
             raise Miss("incomplete donor source: unknown external symlink")
         if path.exists() or linked(path):
             raise Miss("omitted external link unexpectedly exists")
@@ -379,9 +404,10 @@ def verify_restored(workdir: Path, platform: str, arch: str, repo: Path = REPO) 
     for name in ("target_cpu", "v8_target_cpu"):
         if (name == "target_cpu" or name in original_values) and original_values.get(name) != json.dumps(arch):
             raise Miss("restored original GN args architecture is inconsistent")
+    importer.validate_gn_target(original_values, platform, arch)
     links = receipt.get("external_symlink_paths")
     if (not isinstance(links, list)
-            or any(not isinstance(name, str) or not is_known_external_link(name, platform) for name in links)
+            or any(not isinstance(name, str) or not is_known_external_link(name, platform, identity) for name in links)
             or len(set(links)) != len(links)):
         raise Miss("restored receipt has unknown omitted host links")
     # Preparation may legitimately regenerate args and Ninja state after restoring.
@@ -576,7 +602,7 @@ def restore(workdir: Path, platform: str, arch: str, cache_dir: Path,
         report_phase("validate_source")
         try:
             original_args = source_args(donor, identity)
-            omitted = missing_host_links(cache, donor, result, platform)
+            omitted = missing_host_links(cache, donor, result, platform, identity)
             report_phase("donor_counts")
             counts = donor_counts(donor)
             entry["progress"].update(files_counted=counts["files_moved"],

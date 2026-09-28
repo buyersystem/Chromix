@@ -19,6 +19,11 @@ import sys
 import tempfile
 import time
 
+try:
+    from . import patch_selection
+except ImportError:
+    import patch_selection
+
 MARKER = ".chromix-restored-patches.json"
 IN_PROGRESS = ".chromix-restored-patches-in-progress"
 SCHEMA = 1
@@ -219,23 +224,21 @@ def transform_patch(data: bytes, listed: set[str], rules: list[tuple[re.Pattern,
     return b"".join(output), entries
 
 
-def _load(repo: Path, core: Path, tooling: Path, platform: str) -> tuple[dict, list, dict]:
-    series = _read(repo, "patches/series")
+def _load(repo: Path, core: Path, tooling: Path, platform: str,
+          *, src: Path | None = None) -> tuple[dict, list, dict]:
+    try:
+        selected, raw_patches = patch_selection.select(repo, platform, src=src, core=core)
+    except ValueError as exc:
+        raise ApplyError(str(exc)) from exc
     regex_data = _read(core, "domain_regex.list")
     list_root = tooling if platform == "windows" else core
     list_data = _read(list_root, "domain_substitution.list")
     listed = {_relative(line) for line in list_data.decode("utf-8").splitlines() if line}
     rules = _rules(regex_data)
-    names = [line.split("#", 1)[0].strip() for line in series.decode("utf-8").splitlines()]
-    names = [name for name in names if name]
-    if not names or len(set(names)) != len(names):
-        raise ApplyError("empty series or duplicate series entries")
-    patches, patch_ids = [], []
-    for name in names:
-        raw = _read(repo, name)
+    patches = []
+    for name, raw in raw_patches:
         transformed, entries = transform_patch(raw, listed, rules)
         patches.append((name, transformed, entries))
-        patch_ids.append({"path": name, "sha256": _sha(raw)})
     lite, lite_ids = {}, []
     payload_root = repo / LITE
     # Check all parents without accepting a directory as a file.
@@ -258,11 +261,14 @@ def _load(repo: Path, core: Path, tooling: Path, platform: str) -> tuple[dict, l
     identity = {
         "schema_version": SCHEMA,
         "platform": platform,
-        "series": {"path": "patches/series", "sha256": _sha(series), "patches": patch_ids},
+        "series": {"path": "patches/series", "sha256": selected["series_sha256"],
+                   "patches": selected["patches"]},
         "lite": {"path": LITE, "sha256": _sha(_json(lite_ids)), "files": lite_ids},
         "regex": {"path": str(core / "domain_regex.list"), "sha256": _sha(regex_data)},
         "list": {"path": str(list_root / "domain_substitution.list"), "sha256": _sha(list_data)},
     }
+    if "selection" in selected:
+        identity["selection"] = selected["selection"]
     return identity, patches, lite
 
 
@@ -417,7 +423,7 @@ def run_apply(src: Path | str, repo: Path | str, core: Path | str,
         raise ApplyError("SRC must not contain the repository or donor tooling")
     if _path(src, IN_PROGRESS, marker=True).exists():
         raise ApplyError(f"in-progress/partial restored patch run detected. {CLEAN}")
-    identity, patches, lite = _load(repo, core, tooling, platform)
+    identity, patches, lite = _load(repo, core, tooling, platform, src=src)
     names = set(lite) | {entry[0] for _, _, entries in patches for entry in entries}
     report = {"identity_sha256": _sha(_json(identity)), "patch_count": len(patches),
               "changed_files": []}
@@ -493,6 +499,8 @@ def run_apply(src: Path | str, repo: Path | str, core: Path | str,
             current = path.read_bytes() if path.exists() else None
             if current != data or (info and path.stat().st_mtime_ns != info.st_mtime_ns):
                 raise ApplyError(f"source changed concurrently: {name}. {CLEAN}")
+        if _load(repo, core, tooling, platform, src=src)[0] != identity:
+            raise ApplyError(f"patch/domain inputs changed during application. {CLEAN}")
         changed = [name for name in sorted(names) if before[name][0] != after[name][0]]
         for name in changed:
             path = _path(src, name)

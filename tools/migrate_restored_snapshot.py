@@ -34,7 +34,8 @@ TRANSACTION = ".chromix-domain-substitution-in-progress"
 PIN_FILES = ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json",
              *(filename for _, filename in OVERRIDES.values()))
 SCRIPT_FILES = ("build/prepare-ungoogled.sh", "build/apply-patches.sh",
-                "tools/apply_restored_patches.py")
+                "tools/apply_restored_patches.py", "tools/patch_selection.py",
+                "tools/platform_pins.py")
 PLATFORM_TOOLING = {
     "linux": ("ungoogled-chromium-portablelinux", "UngoogledLinuxCommit"),
     "macos": ("ungoogled-chromium-macos", "UngoogledMacOSCommit"),
@@ -71,21 +72,9 @@ def _same_inputs(previous: Path, repo: Path, platform: str = "linux") -> None:
 def source_ready_key(repo: Path, platform: str, arch: str) -> str:
     """Match prepare-ungoogled.sh's path-plus-content hash without running it."""
     pins = _pins(repo, platform)
-    names = ["build/prepare-ungoogled.sh", "build/apply-patches.sh", "patches/series"]
-    names.extend(name for line in arp._read(repo, "patches/series").decode().splitlines()
-                 if (name := line.split("#", 1)[0].strip()))
-    arp._path(repo, arp.LITE + "/.path-check")
-    for path in sorted((repo / arp.LITE).rglob("*")):
-        if path.is_symlink():
-            raise arp.ApplyError(f"symlink lite payload: {path}")
-        if path.is_file():
-            names.append(path.relative_to(repo).as_posix())
-    digest = hashlib.sha256()
-    for name in names:
-        digest.update(name.encode())
-        digest.update(arp._read(repo, name))
+    digest = arp.patch_selection.preparation_key(repo, platform, "posix")
     return "|".join((platform, arch, pins["ChromiumVersion"], pins["UngoogledCommit"],
-                     pins[PLATFORM_TOOLING[platform][1]], digest.hexdigest()))
+                     pins[PLATFORM_TOOLING[platform][1]], digest))
 
 
 def _host_program(name: str, roots: tuple[Path, ...]) -> str:

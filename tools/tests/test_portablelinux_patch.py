@@ -613,7 +613,7 @@ class PortableLinuxPatchTest(unittest.TestCase):
         ]
         positions = [script.index(step) for step in steps]
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("paths = [repo / 'build/prepare-ungoogled.sh'", script)
+        self.assertIn('tools/patch_selection.py" --repo "$REPO" --platform "$PLATFORM" --key posix', script)
         result = subprocess.run(["bash", "-n", str(PREPARE)], capture_output=True,
                                 text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -626,7 +626,8 @@ class PreparationPinsTest(unittest.TestCase):
         self.root = Path(temp.name)
         self.repo = self.root / "repo"
         self.work = self.root / "work"
-        for name in ("build/prepare-ungoogled.sh", "tools/platform_pins.py", RECOVERY_REL):
+        for name in ("build/prepare-ungoogled.sh", "tools/platform_pins.py", "tools/patch_selection.py",
+                     "tools/verify_patch_stack.py", "tools/apply_restored_patches.py", RECOVERY_REL):
             target = self.repo / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / name, target)
@@ -634,7 +635,8 @@ class PreparationPinsTest(unittest.TestCase):
         (self.repo / "build/windows/lite-tarball-files").mkdir(parents=True)
         (self.repo / "patches").mkdir()
         (self.repo / "patches/series").write_text("# fixture\npatches/one.patch\n")
-        (self.repo / "patches/one.patch").write_text("fixture payload\n")
+        (self.repo / "patches/one.patch").write_text(
+            '--- a/value.txt\n+++ b/value.txt\n@@ -1,3 +1,3 @@\n context\n-old\n+new\n tail\n')
         (self.repo / "CHROMIUM_VERSION").write_text("152.0.7977.82\n")
         (self.repo / "CHROMIUM_LINUX_VERSION").write_text("153.0.8010.36\n")
         self.pins = self.repo / "build/ungoogled-revisions.psd1"
@@ -668,6 +670,7 @@ class PreparationPinsTest(unittest.TestCase):
 
         src = self.work / "src"
         src.mkdir(parents=True)
+        (src / "value.txt").write_text("context\nnew\ntail\n")
         for platform in ("linux", "macos"):
             for arch in ("x64", "arm64"):
                 with self.subTest(platform=platform, arch=arch):

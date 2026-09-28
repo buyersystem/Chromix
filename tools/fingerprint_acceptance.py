@@ -58,7 +58,8 @@ def read_json(path):
 
 
 def provenance(repo=REPO):
-    identity, patches = load_stack(repo)
+    platform = {'linux': 'linux', 'win32': 'windows', 'darwin': 'macos'}.get(sys.platform)
+    identity, patches = load_stack(repo, platform=platform)
     paths = [repo / 'CHROMIUM_VERSION', repo / 'tools/fingerprint-requirements.txt',
              *sorted((repo / 'tools').glob('*.py')), *sorted((repo / 'tools').glob('*.js')),
              *sorted((repo / 'sdk/python/chromix').glob('*.py')),
@@ -93,13 +94,15 @@ def check_source(path, source_root, inputs, expected_targets=None):
     patches = identity.get('patches', series.get('patches'))
     series_hash = identity.get('series_sha256', series.get('sha256'))
     if (patches != inputs['patches'] or series_hash != inputs['series_sha256'] or
+            identity.get('selection') != inputs.get('selection') or
             type(report.get('patch_count')) is not int or report.get('patch_count') != len(patches)):
         raise ValueError('source receipt was produced for a different patch stack')
     outputs = report.get('outputs')
     if not isinstance(outputs, dict) or not outputs:
         raise ValueError('source receipt contains no source output hashes')
     if expected_targets is None:
-        _, current_patches = load_stack(REPO)
+        platform = {'linux': 'linux', 'win32': 'windows', 'darwin': 'macos'}.get(sys.platform)
+        _, current_patches = load_stack(REPO, platform=platform)
         expected_targets = {entry[0] for _, _, entries in current_patches for entry in entries}
     if set(outputs) != set(expected_targets):
         raise ValueError('source receipt does not cover exactly the current patch targets')

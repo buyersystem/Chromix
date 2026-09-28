@@ -105,6 +105,27 @@ def windows153_source(repo):
     return synthetic_windows_source(repo)
 
 
+def pinned_windows153_source(repo):
+    """Keep historical MIDL/snapshot fixtures independent of current build pins."""
+    from tools.repair_windows_midl import IDENTITIES
+
+    identity = IDENTITIES["x64"]
+    version = identity["chromium_version"]
+    pins = cache.load_shared_pins(repo)
+    pins.update(WindowsChromiumVersion=version, WindowsUngoogledVersion=version + "-1",
+                WindowsUngoogledCommit=identity["ungoogled_commit"],
+                UngoogledWindowsVersion=identity["head_branch"], UngoogledWindowsCommit=identity["head_sha"])
+    (repo / "build/ungoogled-revisions.psd1").write_text(
+        "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in pins.items()) + "}\n")
+    (repo / "CHROMIUM_WINDOWS_VERSION").write_text(version + "\n")
+    source = synthetic_windows_source(repo)
+    source["run_id"] = identity["run_id"]
+    source["artifacts"]["x64"].update(id=identity["artifact_id"], name=identity["artifact_name"],
+        size_in_bytes=identity["artifact_size_in_bytes"], digest=identity["artifact_digest"],
+        expires_at="2026-09-21T22:53:13Z")
+    return source
+
+
 def unavailable_source(repo, target, source):
     pins = cache.load_pins(repo, target)
     return {key: value for key, value in dict(
@@ -268,32 +289,36 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         self.assertEqual(manifest["chromium_version"], "153.0.8010.36")
         self.assertEqual(manifest["ungoogled_commit"], "dd8fb9b5c837982faf41ba58cd30a5664e77c329")
         source = manifest["sources"]["windows"]
-        self.assertEqual(source, {
-            "chromium_version": "153.0.8010.47",
-            "ungoogled_commit": "31e6f2dd3bb2f113800d25ae359f024684addb51",
+        x64_source = copy.deepcopy(source)
+        x64_source["artifacts"].pop("arm64", None)
+        self.assertEqual(x64_source, {
+            "chromium_version": "154.0.8037.57",
+            "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
             "repository": "ungoogled-software/ungoogled-chromium-windows",
             "repository_id": 177210827,
-            "head_sha": "657b9731b68aae35d4ee02428684ab8bdceb9181",
-            "head_branch": "153.0.8010.47-1.1",
+            "head_sha": "fc387c7527f875ca73c82ed4907fccaa86808c9a",
+            "head_branch": "154.0.8037.57-1.1",
             "event": "push", "workflow_path": ".github/workflows/build-x64.yml",
-            "run_id": 35059013905, "source_roots": ["src", "build/src"],
+            "run_id": 36093095228, "source_roots": ["src", "build/src"],
             "artifacts": {"x64": {
-                "id": 10523508661, "name": "build-artifact", "size_in_bytes": 15713545950,
-                "digest": "sha256:d5ae2b64ba9f819613482a9321107946b60b8d44bc2adad13ee9206c9dab238c",
-                "expires_at": "2026-09-21T22:53:13Z", "inner_archive": "artifacts.zip",
+                "id": 10915484727, "name": "build-artifact", "size_in_bytes": 15716545319,
+                "digest": "sha256:7a6ba27fa2d056759d1e635f486e68cbfed36ef2d73ee201527e1ddb52d0d4a4",
+                "expires_at": "2026-09-30T21:34:19Z", "inner_archive": "artifacts.zip",
             }},
         })
-        pin, identity = cache.load_manifest("windows", "x64", 35059013905, root=cache.ROOT)
+        pin, identity = cache.load_manifest("windows", "x64", 36093095228, root=cache.ROOT)
         self.assertEqual(pin, {**{key: value for key, value in source.items() if key != "artifacts"},
                                "artifact": source["artifacts"]["x64"]})
         self.assertEqual({key: identity[key] for key in (
             "chromium_version", "head_sha", "run_id", "artifact_id", "artifact_digest")}, {
-            "chromium_version": "153.0.8010.47", "head_sha": source["head_sha"],
-            "run_id": 35059013905, "artifact_id": 10523508661,
+            "chromium_version": "154.0.8037.57", "head_sha": source["head_sha"],
+            "run_id": 36093095228, "artifact_id": 10915484727,
             "artifact_digest": source["artifacts"]["x64"]["digest"],
         })
-        self.assert_metadata_provenance(pin, datetime(2026, 9, 19, tzinfo=timezone.utc))
-        for arch, run_id, reason in (("arm64", None, "unsupported_target"),
+        self.assert_metadata_provenance(pin, datetime(2026, 9, 27, tzinfo=timezone.utc))
+        for arch, run_id, reason in (("arm64", 36093095228,
+                                      "run_id_mismatch" if "arm64" in source["artifacts"] else "unsupported_target"),
+                                     ("x64", 36093095856, "run_id_mismatch"),
                                      ("x64", 34806882978, "run_id_mismatch"),
                                      ("x64", 33898278106, "run_id_mismatch")):
             with self.subTest(arch=arch, run_id=run_id):
@@ -354,9 +379,10 @@ class FetchUpstreamCacheTest(unittest.TestCase):
                     self.assertEqual(list(self.destination.iterdir()), [self.destination / "result.json"])
                     self.assertEqual(json.loads((self.destination / "result.json").read_text()), result)
                     self.assertEqual(client.mock_calls, [])
-        for target, version in (("linux", "153.0.8010.36"), ("macos", "152.0.7977.82")):
+        for target in ("linux", "macos"):
             for arch in ("x64", "arm64"):
-                self.assertEqual(cache.load_manifest(target, arch)[0]["chromium_version"], version)
+                self.assertEqual(cache.load_manifest(target, arch, root=self.root)[0]["chromium_version"],
+                                 cache.load_pins(self.root, target)["ChromiumVersion"])
 
     def test_disabled_source_cannot_reuse_previous_verified_hit(self):
         client = self.fixture_client()
@@ -516,7 +542,7 @@ class FetchUpstreamCacheTest(unittest.TestCase):
                         result = cache.fetch("linux", arch, self.destination, root=self.root, client=client)
                     self.assertEqual(result["status"], "miss")
                     self.assertEqual(result["reason"], "untrusted_run")
-                    self.assertEqual(result["manifest"]["chromium_version"], "153.0.8010.36")
+                    self.assertEqual(result["manifest"]["chromium_version"], pin["chromium_version"])
                     self.assertEqual(result["download_bytes"], 0)
                     self.assertIsNone(result["source"])
                     self.assertFalse((self.destination / "tree").exists())

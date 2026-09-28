@@ -22,24 +22,18 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def load_stack(repo, core=None, tooling=None, platform=None, substituted=False):
+def load_stack(repo, core=None, tooling=None, platform=None, substituted=False, *, src=None):
     if substituted:
         if core is None or tooling is None or platform not in ('windows', 'linux', 'macos'):
             raise ValueError('domain-substituted sources require core, platform-tooling and platform')
-        identity, patches, _ = arp._load(repo, core, tooling, platform)
+        identity, patches, _ = arp._load(repo, core, tooling, platform, src=src)
         return identity, patches
-    series = arp._read(repo, 'patches/series')
-    names = [line.split('#', 1)[0].strip() for line in series.decode('utf-8').splitlines()]
-    names = [name for name in names if name]
-    if not names or len(names) != len(set(names)):
-        raise ValueError('empty or duplicate patch series')
-    patches, identities = [], []
-    for name in names:
-        raw = arp._read(repo, name)
+    identity, raw_patches = arp.patch_selection.select(Path(repo), platform, src=src, core=core)
+    patches = []
+    for name, raw in raw_patches:
         data, entries = arp.transform_patch(raw, set(), [])
         patches.append((name, data, entries))
-        identities.append({'path': name, 'sha256': digest(raw)})
-    return {'series_sha256': digest(series), 'patches': identities}, patches
+    return identity, patches
 
 
 def verify(src, repo, *, core=None, tooling=None, platform=None):
@@ -51,7 +45,7 @@ def verify(src, repo, *, core=None, tooling=None, platform=None):
         if (src / name).exists():
             raise ValueError('source has unfinished preparation: ' + name)
     substituted = (src / '.chromix-domain-substituted').exists()
-    identity, patches = load_stack(repo, core, tooling, platform, substituted)
+    identity, patches = load_stack(repo, core, tooling, platform, substituted, src=src)
     names = {entry[0] for _, _, entries in patches for entry in entries}
     before = arp._snapshot(src, names)
     program = shutil.which('git')
@@ -101,7 +95,7 @@ def verify(src, repo, *, core=None, tooling=None, platform=None):
                     (info and original.stat().st_mtime_ns != info.st_mtime_ns)):
                 raise ValueError('source changed concurrently: ' + name)
     # Detect a concurrent repository edit too; don't certify a mixed patch set.
-    if load_stack(repo, core, tooling, platform, substituted)[0] != identity:
+    if load_stack(repo, core, tooling, platform, substituted, src=src)[0] != identity:
         raise ValueError('patch inputs changed during verification')
     return {'schema_version': 1, 'status': 'verified', 'method': 'reverse-forward-in-scratch',
             'qualification': 'current patch hunks/new files, not full upstream attestation',

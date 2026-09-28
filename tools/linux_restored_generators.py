@@ -1,0 +1,609 @@
+#!/usr/bin/env python3
+"""Exact Linux 154 restored DevTools identities and local esbuild provisioning."""
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+from pathlib import Path, PurePosixPath
+import stat
+import subprocess
+import tarfile
+import tempfile
+import ctypes
+import errno
+import secrets
+
+PINS = ("154.0.8037.57", "800d0bb5078472e4442c1fd73373172754a60939",
+        "56b2567742c0423e8e70fd5da286f0762605d26c")
+DEVTOOLS = "third_party/devtools-frontend/src"
+TYPESCRIPT_PORTABLE = "99034dad55a0805c052f928fca1f03c335a59a4e61bc3ad4c183bb3c0ff4c471"
+TYPESCRIPT_REPAIRED = {
+    "x64": "309b0cb8a713af2d493bdf99dcabdc16a1760f4f4c450a5b524496086ef6baac",
+    "arm64": "492b26da4772c7971149ae05739372b245f683bccf92334560fa4fa70011c52e",
+}
+# Sorted os.walk files, hashing JSON [relative path, SHA256] as in prepare_linux_typescript.
+TYPESCRIPT_TREE = "2dda99b559c5bbc04a1e5ec68440bf9afc14866593f4d9ca0de6c00556d2fb91"
+ESBUILD_VERSION = "0.25.1"
+ESBUILD_BINARY = DEVTOOLS + "/third_party/esbuild/chromix-linux/esbuild"
+ESBUILD_MODULE = DEVTOOLS + "/node_modules/esbuild"
+LOCK = DEVTOOLS + "/package-lock.json"
+LOCK_SHA256 = "aae038b752d0944d6c19d455f47f3d08134f60463a2bf84d4196d82036663fd2"
+MODULE_FILES = {
+    "bin/esbuild": "ac392c0990e6e7f1be8db82a182c596e1d6cfaad66bb254c7db0606ebe04f2fb",
+    "install.js": "417cbbaf3ea9cb878011832b70eeaa00ce49419a0589cbbf4b65d258c4d7c1dd",
+    "lib/main.js": "5e7dcf28613dbf0bc5558743d6253d38fee888b935dfeb4ef0e702de0a71f075",
+    "package.json": "c6dc442df570a4325880f3788e64f2e612629c365cb16145f429261386c793eb",
+    "LICENSE.md": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681",
+    "README.md": "6d481cd60ec3c679e5e395f547ab4221147f35642894f6b95a8df38fd25c87bd",
+    "lib/main.d.ts": "b8caba62c0d2ef625f31cbb4fde09d851251af2551086ccf068611b0a69efd81",
+}
+ARCHIVES = {
+    "module": ("https://registry.npmjs.org/esbuild/-/esbuild-0.25.1.tgz",
+               "ed9bf82566fe0e3a5e01317d676bed3c8f241656c0d4bd30f96b5c84fda0f9cb"),
+    "x64": ("https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.25.1.tgz",
+            "a3972c20d19545792ba6c6abe564b61c91f66cfa242ff9bffd9e5d59c65452e5"),
+    "arm64": ("https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.25.1.tgz",
+              "70771c9212585cfd1b190465f92dae98d1d3fc4a4fab5cacbef71457ee08e254"),
+}
+BINARY_HASHES = {
+    "x64": "cfbfcac245e272a19c709cea06cda74d8cdebf3c033ba9f4dc2b7fc5985fd516",
+    "arm64": "4d8f932cd7de4422d3b54baa5445a5eabd4afe4152f9f5f59d1b111e72b0d596",
+}
+GN_OLD = b'_esbuild = "/usr/bin/esbuild"'
+GN_NEW = b'_esbuild = devtools_location_prepend + "third_party/esbuild/chromix-linux/esbuild"'
+# DevTools 66df492aaa0129d090937e933dd44c5389ab24d2 plus portablelinux patches.
+SOURCE_REPAIRS = {
+    "scripts/build/esbuild.js": (
+        "c34fa6f77da6a2364a94b3a96ea39471578e33451b75ca8e2bfd695ef04e3e5e",
+        "2a51c265eaac9f315f9048629ef5768fb06f716cc35be61c5fc6cd9c4887f780",
+        b"    '/',\n    'usr',\n    'bin',\n",
+        b"    devtoolsRootPath(),\n    'third_party',\n    'esbuild',\n    'chromix-linux',\n"),
+    "scripts/build/ninja/bundle.gni": (
+        "50ae4c76e82f385712b6c34468fafe59bbbcb586beae7ea37209c880843110a4",
+        "24ada61a481c4617c59045219532b2a769e0b578118fbb8300963a2ea64a8983", GN_OLD, GN_NEW),
+    "scripts/build/typescript/typescript.gni": (
+        "de82419b6538ed10cb49e362c8025bc21b8301d72d15110237cc4ea5f58dd575",
+        "e9b2dc92202ce8e9f6deca5d2c166b10644c8f9bda4a252648228a1f785b3dc2", GN_OLD, GN_NEW),
+    "scripts/build/typescript/ts_library.py": (
+        "c16be050b46de839827ca8cf3ec03752ca11ca549a7e3ebf06fe94ceb314103c",
+        "64cd3e00db5b66e89f9a4aa37e96f1625fc27b39c1002bd3e84bfb9a2bc3df1e",
+        b"ESBUILD_LOCATION = devtools_paths.esbuild_path()",
+        b"ESBUILD_LOCATION = path.join(ROOT_DIRECTORY_OF_REPOSITORY, 'third_party',\n"
+        b"                             'esbuild', 'chromix-linux', 'esbuild')"),
+}
+
+
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+_AT_FDCWD = -100
+_AT_EMPTY_PATH = 0x1000
+_AT_SYMLINK_NOFOLLOW = 0x100
+_RENAME_NOREPLACE = 1
+_RENAME_EXCHANGE = 2
+_libc = ctypes.CDLL(None, use_errno=True)
+_renameat2 = getattr(_libc, "renameat2", None)
+if _renameat2 is not None:
+    _renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
+                           ctypes.c_uint]
+    _renameat2.restype = ctypes.c_int
+
+
+def _raise_errno(operation: str) -> None:
+    error = ctypes.get_errno()
+    raise OSError(error, f"{operation}: {os.strerror(error)}")
+
+
+def _rename_at(parent_fd: int, old: str, new: str, flags: int = 0,
+               *, destination_fd: int | None = None) -> None:
+    destination_fd = parent_fd if destination_fd is None else destination_fd
+    if flags and _renameat2 is None:
+        raise OSError(errno.ENOSYS, "renameat2 is unavailable")
+    if flags:
+        result = _renameat2(parent_fd, old.encode(), destination_fd, new.encode(), flags)
+        if result != 0:
+            _raise_errno("renameat")
+    else:
+        os.rename(old, new, src_dir_fd=parent_fd, dst_dir_fd=destination_fd)
+
+
+def _open_dir_nofollow(path: Path) -> int:
+    return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+
+
+def _open_relative_dir(parent_fd: int, name: str) -> int:
+    return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                   dir_fd=parent_fd)
+
+
+def _relative_parent_fd(src: Path, relative: str) -> tuple[int, str, list[int]]:
+    parts = PurePosixPath(relative).parts
+    if len(parts) < 2:
+        return _open_dir_nofollow(src), parts[0], []
+    fd = _open_dir_nofollow(src)
+    opened = [fd]
+    try:
+        for part in parts[:-1]:
+            child = _open_relative_dir(fd, part)
+            opened.append(child)
+            fd = child
+        return fd, parts[-1], opened[:-1]
+    except BaseException:
+        for item in reversed(opened):
+            os.close(item)
+        raise
+
+
+def _close_all(fds: list[int]) -> None:
+    for fd in reversed(fds):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _metadata(fd: int) -> tuple[int, int, int, int, int, int]:
+    info = os.fstat(fd)
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_size, info.st_mtime_ns)
+
+
+def _directory_identity(fd: int) -> tuple[int, int, int]:
+    info = os.fstat(fd)
+    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode))
+
+
+def _directory_chain(parent_fd: int, ancestors: list[int]) -> list[tuple[int, int, int]]:
+    return [_directory_identity(fd) for fd in (*ancestors, parent_fd)]
+
+
+def _assert_directory_chain(src: Path, relative: str,
+                            expected: list[tuple[int, int, int]]) -> None:
+    fresh_parent, _, fresh_ancestors = _relative_parent_fd(src, relative)
+    try:
+        if _directory_chain(fresh_parent, fresh_ancestors) != expected:
+            raise ValueError(f"Linux generator parent directory changed: {relative}")
+    finally:
+        os.close(fresh_parent)
+        _close_all(fresh_ancestors)
+
+
+def _read_fd(fd: int) -> tuple[bytes, tuple[int, int, int, int, int, int]]:
+    before = _metadata(fd)
+    if not stat.S_ISREG(before[2]) or before[3] != 1 or not before[4]:
+        raise ValueError("missing, empty or linked Linux generator input")
+    chunks = []
+    while True:
+        data = os.read(fd, 1024 * 1024)
+        if not data:
+            break
+        chunks.append(data)
+    after = _metadata(fd)
+    if after != before:
+        raise ValueError("Linux generator input changed during read")
+    first = b"".join(chunks)
+    os.lseek(fd, 0, os.SEEK_SET)
+    second_chunks = []
+    while True:
+        data = os.read(fd, 1024 * 1024)
+        if not data:
+            break
+        second_chunks.append(data)
+    if b"".join(second_chunks) != first or _metadata(fd) != before:
+        raise ValueError("Linux generator input content changed during read")
+    return first, before
+
+
+def _read_regular_at(parent_fd: int, name: str) -> tuple[bytes, tuple[int, int, int, int, int, int]]:
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+    except OSError as error:
+        raise ValueError(f"linked or unreadable Linux generator input: {name}") from error
+    try:
+        payload, metadata = _read_fd(fd)
+        path_metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        current = (path_metadata.st_dev, path_metadata.st_ino, path_metadata.st_mode,
+                   path_metadata.st_nlink, path_metadata.st_size, path_metadata.st_mtime_ns)
+        if current != metadata:
+            raise ValueError(f"Linux generator input changed after read: {name}")
+        return payload, metadata
+    finally:
+        os.close(fd)
+
+
+def _read_verified_with_metadata(src: Path, relative: str) -> tuple[bytes, tuple[int, int, int, int, int, int]]:
+    parent_fd, name, ancestors = _relative_parent_fd(src, relative)
+    expected_chain = _directory_chain(parent_fd, ancestors)
+    try:
+        _assert_directory_chain(src, relative, expected_chain)
+        payload, metadata = _read_regular_at(parent_fd, name)
+        _assert_directory_chain(src, relative, expected_chain)
+        return payload, metadata
+    finally:
+        os.close(parent_fd)
+        _close_all(ancestors)
+
+
+def read_verified(src: Path, relative: str) -> bytes:
+    """Read one source file through an anchored O_NOFOLLOW directory walk."""
+    return _read_verified_with_metadata(src, relative)[0]
+
+
+def _fsync_parent(parent_fd: int) -> None:
+    os.fsync(parent_fd)
+
+
+def _path_payload(parent_fd: int, name: str) -> tuple[bytes, tuple[int, int, int, int, int, int]]:
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+    try:
+        payload, metadata = _read_fd(fd)
+        info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        current = (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+                   info.st_size, info.st_mtime_ns)
+        if metadata != current:
+            raise ValueError(f"Linux generator path changed during verification: {name}")
+        return payload, metadata
+    finally:
+        os.close(fd)
+
+
+def _atomic_replace(src: Path, relative: str, expected: bytes, replacement: bytes,
+                    *, expected_metadata=None, before_publish=None) -> None:
+    """CAS-publish one regular file with Linux dirfd/O_NOFOLLOW and RENAME_EXCHANGE."""
+    parent_fd, name, ancestors = _relative_parent_fd(src, relative)
+    temp_name = f".chromix-{secrets.token_hex(12)}"
+    temp_fd = None
+    exchanged = False
+    try:
+        expected_chain = _directory_chain(parent_fd, ancestors)
+        current_bytes, current = _path_payload(parent_fd, name)
+        if (current_bytes != expected or current[3] != 1
+                or (expected_metadata is not None and current != expected_metadata)):
+            raise ValueError(f"Linux generator output changed before publish: {relative}")
+        _assert_directory_chain(src, relative, expected_chain)
+        temp_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                          0o600, dir_fd=parent_fd)
+        offset = 0
+        while offset < len(replacement):
+            offset += os.write(temp_fd, replacement[offset:])
+        os.fsync(temp_fd)
+        os.fchmod(temp_fd, stat.S_IMODE(current[2]))
+        os.fsync(temp_fd)
+        staged = _metadata(temp_fd)
+        if (not stat.S_ISREG(staged[2]) or staged[3] != 1 or staged[4] != len(replacement)
+                or stat.S_IMODE(staged[2]) != stat.S_IMODE(current[2])):
+            raise ValueError(f"invalid staged Linux generator output: {relative}")
+        os.close(temp_fd)
+        temp_fd = None
+        if before_publish is not None:
+            before_publish(src / relative)
+        _assert_directory_chain(src, relative, expected_chain)
+        current_bytes, current_after = _path_payload(parent_fd, name)
+        if (current_bytes != expected or current_after != current
+                or (expected_metadata is not None and current_after != expected_metadata)):
+            raise ValueError(f"Linux generator output changed before publish: {relative}")
+        _rename_at(parent_fd, temp_name, name, _RENAME_EXCHANGE)
+        exchanged = True
+        _fsync_parent(parent_fd)
+        old_bytes, old_metadata = _path_payload(parent_fd, temp_name)
+        if old_bytes != expected or old_metadata != current:
+            _rename_at(parent_fd, temp_name, name, _RENAME_EXCHANGE)
+            exchanged = False
+            _fsync_parent(parent_fd)
+            raise ValueError(f"Linux generator output changed during publish: {relative}")
+        new_bytes, new_metadata = _path_payload(parent_fd, name)
+        if (new_bytes != replacement or new_metadata[3] != 1
+                or new_metadata != staged):
+            raise ValueError(f"Linux generator output changed after publish: {relative}")
+        _assert_directory_chain(src, relative, expected_chain)
+        os.unlink(temp_name, dir_fd=parent_fd)
+        exchanged = False
+        _fsync_parent(parent_fd)
+    except BaseException:
+        if temp_fd is not None:
+            os.close(temp_fd)
+        if exchanged:
+            try:
+                _rename_at(parent_fd, temp_name, name, _RENAME_EXCHANGE)
+                _fsync_parent(parent_fd)
+                exchanged = False
+            except OSError:
+                pass
+        if not exchanged:
+            try:
+                os.unlink(temp_name, dir_fd=parent_fd)
+            except OSError:
+                pass
+        raise
+    finally:
+        os.close(parent_fd)
+        _close_all(ancestors)
+
+
+atomic_replace = _atomic_replace
+
+
+def _ensure_directory_fd(src: Path, relative: str) -> tuple[int, list[int]]:
+    parts = PurePosixPath(relative).parts
+    if not parts or parts[0] == ".." or "\\" in relative:
+        raise ValueError(f"unsafe Linux generator directory: {relative}")
+    fd = _open_dir_nofollow(src)
+    opened = [fd]
+    try:
+        for part in parts:
+            try:
+                child = _open_relative_dir(fd, part)
+            except FileNotFoundError:
+                os.mkdir(part, 0o755, dir_fd=fd)
+                child = _open_relative_dir(fd, part)
+            opened.append(child)
+            fd = child
+        return fd, opened[:-1]
+    except BaseException:
+        _close_all(opened)
+        raise
+
+
+def _write_fd(fd: int, data: bytes, mode: int) -> None:
+    os.fchmod(fd, mode)
+    offset = 0
+    while offset < len(data):
+        offset += os.write(fd, data[offset:])
+    os.fsync(fd)
+
+
+def _atomic_create(src: Path, relative: str, data: bytes, mode: int,
+                   *, before_publish=None) -> None:
+    """Create one missing file atomically beneath an anchored no-follow directory walk."""
+    parent_relative = relative.rsplit("/", 1)[0]
+    parent_fd, ancestors = _ensure_directory_fd(src, parent_relative)
+    name = relative.rsplit("/", 1)[1]
+    temp_name = f".chromix-{secrets.token_hex(12)}"
+    temp_fd = None
+    try:
+        expected_chain = _directory_chain(parent_fd, ancestors)
+        temp_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                          0o600, dir_fd=parent_fd)
+        _write_fd(temp_fd, data, mode)
+        staged = _metadata(temp_fd)
+        if staged[3] != 1 or staged[4] != len(data) or stat.S_IMODE(staged[2]) != mode:
+            raise ValueError(f"invalid staged Linux generator file: {relative}")
+        os.close(temp_fd)
+        temp_fd = None
+        if before_publish is not None:
+            before_publish(src / relative)
+        _assert_directory_chain(src, relative, expected_chain)
+        _rename_at(parent_fd, temp_name, name, _RENAME_NOREPLACE)
+        _fsync_parent(parent_fd)
+    except BaseException:
+        if temp_fd is not None:
+            os.close(temp_fd)
+        try:
+            os.unlink(temp_name, dir_fd=parent_fd)
+        except OSError:
+            pass
+        raise
+    finally:
+        os.close(parent_fd)
+        _close_all(ancestors)
+
+
+def safe_path(src: Path, relative: str) -> Path:
+    parts = PurePosixPath(relative)
+    if (not relative or parts.is_absolute() or ".." in parts.parts
+            or "\\" in relative or "\0" in relative or parts.as_posix() != relative):
+        raise ValueError(f"unsafe Linux generator path: {relative}")
+    path = src / relative
+    if any(parent.is_symlink() for parent in (path, *path.parents)):
+        raise ValueError(f"linked Linux generator path: {relative}")
+    return path
+
+
+def regular(src: Path, relative: str) -> Path:
+    path = safe_path(src, relative)
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not info.st_size:
+        raise ValueError(f"missing, empty or linked Linux generator input: {relative}")
+    return path
+
+
+def module_identity(src: Path) -> dict | None:
+    root = safe_path(src, ESBUILD_MODULE)
+    if not root.exists():
+        return None
+    if not root.is_dir():
+        raise ValueError("invalid esbuild module directory")
+    files = {}
+    def walk_error(error):
+        raise error
+    for directory, dirs, names in os.walk(root, followlinks=False, onerror=walk_error):
+        for name in dirs:
+            safe_path(src, (Path(directory) / name).relative_to(src).as_posix())
+        for name in names:
+            relative = (Path(directory) / name).relative_to(src).as_posix()
+            path = regular(src, relative)
+            files[path.relative_to(root).as_posix()] = sha256(read_verified(src, relative))
+    if files != MODULE_FILES:
+        raise ValueError("unknown esbuild module bytes/inventory")
+    return {"path": ESBUILD_MODULE, "files": files}
+
+
+def binary_identity(src: Path) -> dict | None:
+    path = safe_path(src, ESBUILD_BINARY)
+    if not path.exists():
+        return None
+    payload = read_verified(src, ESBUILD_BINARY)
+    digest = sha256(payload)
+    host = next((arch for arch, value in BINARY_HASHES.items() if value == digest), None)
+    if host is None:
+        raise ValueError("unknown esbuild native binary bytes")
+    if (payload[:6] != b"\x7fELF\x02\x01" or len(payload) < 20
+            or int.from_bytes(payload[18:20], "little") != {"x64": 62, "arm64": 183}[host]
+            or not os.access(path, os.X_OK)):
+        raise ValueError("esbuild native binary header/mode mismatch")
+    return {"path": ESBUILD_BINARY, "sha256": digest, "host_arch": host}
+
+
+def source_plan(src: Path) -> tuple[dict, list]:
+    if sha256(read_verified(src, LOCK)) != LOCK_SHA256:
+        raise ValueError("unknown Linux 154 DevTools package lock")
+    identities, changes = {}, []
+    for relative, (original_hash, repaired_hash, old, new) in SOURCE_REPAIRS.items():
+        name = DEVTOOLS + "/" + relative
+        regular(src, name)
+        payload, metadata = _read_verified_with_metadata(src, name)
+        digest = sha256(payload)
+        if digest not in (original_hash, repaired_hash):
+            raise ValueError(f"unknown Linux 154 esbuild source: {name}")
+        identities[name] = {"sha256": digest, "original_sha256": original_hash,
+                            "repaired_sha256": repaired_hash}
+        if digest != repaired_hash:
+            if payload.count(old) != 1 or sha256(payload.replace(old, new)) != repaired_hash:
+                raise ValueError(f"unexpected Linux 154 esbuild repair: {name}")
+            changes.append((name, payload, payload.replace(old, new), metadata))
+    return identities, changes
+
+
+def prepare_esbuild(src: Path, *, host_arch: str, repair=False, before_publish=None) -> dict:
+    """Inspect without executing; repair only after exact package and native-host checks."""
+    if host_arch not in BINARY_HASHES:
+        raise ValueError("unsupported Linux esbuild host")
+    sources, changes = source_plan(src)
+    module, binary = module_identity(src), binary_identity(src)
+    install_needed = module is None or binary is None or binary["host_arch"] != host_arch
+    result = {"version": ESBUILD_VERSION, "host_arch": host_arch, "sources": sources,
+              "lock_sha256": LOCK_SHA256, "module": module, "binary": binary,
+              "install_needed": install_needed, "repair_needed": install_needed or bool(changes)}
+    if not repair:
+        return result
+    if install_needed:
+        raise ValueError("pinned native esbuild/module must be installed before finish")
+    command = [str(src / ESBUILD_BINARY), "--version"]
+    completed = subprocess.run(command, cwd=src, text=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, check=False, timeout=30)
+    if completed.returncode or completed.stdout.strip() != ESBUILD_VERSION:
+        raise ValueError(f"pinned esbuild probe failed: {completed.stdout[:2000]}")
+    # No restored JS is executed by the module-resolution probe.
+    node = src / f"third_party/node/linux/node-linux-{host_arch}/bin/node"
+    script = ("const p=require('node:path');const r=require.resolve('esbuild');"
+              "if(r!==p.resolve('node_modules/esbuild/lib/main.js'))process.exit(1);"
+              "process.env.ESBUILD_BINARY_PATH=process.argv[1];"
+              "const e=require('esbuild');if(e.version!=='0.25.1')process.exit(2);"
+              "e.transformSync('const n: number = 1',{loader:'ts'});")
+    completed = subprocess.run([str(node), "-e", script, str(src / ESBUILD_BINARY)],
+                               cwd=src / DEVTOOLS, text=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, check=False, timeout=30)
+    if completed.returncode:
+        raise ValueError(f"pinned esbuild module probe failed: {completed.stdout[:2000]}")
+    if module_identity(src) != module or binary_identity(src) != binary:
+        raise ValueError("esbuild tools changed during preparation")
+    for name, before, after, metadata in changes:
+        if _read_verified_with_metadata(src, name) != (before, metadata):
+            raise ValueError("esbuild source changed during preparation")
+    for name, before, after, metadata in changes:
+        _atomic_replace(src, name, before, after, expected_metadata=metadata,
+                        before_publish=before_publish)
+        sources[name]["sha256"] = sha256(after)
+    result["repair_needed"] = False
+    return result
+
+
+def archive_files(archive: Path, key: str) -> dict[str, bytes]:
+    """Verify the compressed archive before parsing; never extract or run install scripts."""
+    if archive.is_symlink() or not archive.is_file() or archive.stat().st_size > 32 * 1024**2:
+        raise ValueError("invalid esbuild archive")
+    data = archive.read_bytes()
+    if sha256(data) != ARCHIVES[key][1]:
+        raise ValueError(f"esbuild archive SHA256 mismatch: {key}")
+    files, size = {}, 0
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as stream:
+        for entry in stream:
+            name = PurePosixPath(entry.name)
+            if (not entry.isfile() or len(name.parts) < 2 or name.parts[0] != "package"
+                    or ".." in name.parts or name.as_posix() != entry.name or "\\" in entry.name):
+                raise ValueError("unsafe esbuild archive member")
+            relative = name.relative_to("package").as_posix()
+            size += entry.size
+            if relative in files or size > 32 * 1024**2:
+                raise ValueError("duplicate/oversized esbuild archive member")
+            files[relative] = stream.extractfile(entry).read()
+    return files
+
+
+def install_esbuild(src: Path, *, host_arch: str, module_archive: Path, native_archive: Path,
+                    before_publish=None) -> dict:
+    """Install verified local artifacts only; caller must first verify the restore receipt."""
+    before = prepare_esbuild(src, host_arch=host_arch)
+    module = archive_files(module_archive, "module")
+    native = archive_files(native_archive, host_arch)
+    if {name: sha256(data) for name, data in module.items()} != MODULE_FILES:
+        raise ValueError("unexpected esbuild module archive contents")
+    if (set(native) != {"bin/esbuild", "package.json", "README.md"}
+            or sha256(native["bin/esbuild"]) != BINARY_HASHES[host_arch]):
+        raise ValueError("unexpected esbuild native archive contents")
+    destination = safe_path(src, ESBUILD_MODULE)
+    if before["module"] is None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".chromix-esbuild-", dir=destination.parent) as temp:
+            staged = Path(temp) / "package"
+            staged.mkdir()
+            for name, data in module.items():
+                path = staged / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                              0o755 if name == "bin/esbuild" else 0o644)
+                try:
+                    offset = 0
+                    while offset < len(data):
+                        offset += os.write(fd, data[offset:])
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            if safe_path(src, ESBUILD_MODULE).exists():
+                raise ValueError("esbuild module appeared during installation")
+            staging_parent_fd = _open_dir_nofollow(Path(temp))
+            module_parent_fd = _open_dir_nofollow(destination.parent)
+            try:
+                _rename_at(staging_parent_fd, staged.name, destination.name, _RENAME_NOREPLACE,
+                           destination_fd=module_parent_fd)
+                _fsync_parent(staging_parent_fd)
+                _fsync_parent(module_parent_fd)
+            finally:
+                os.close(staging_parent_fd)
+                os.close(module_parent_fd)
+    binary = safe_path(src, ESBUILD_BINARY)
+    if before["binary"] is None or before["binary"]["host_arch"] != host_arch:
+        if binary_identity(src) != before["binary"]:
+            raise ValueError("esbuild binary changed during installation")
+        parent = ESBUILD_BINARY.rsplit("/", 1)[0]
+        parent_fd, ancestors = _ensure_directory_fd(src, parent)
+        temp_name = f".chromix-{secrets.token_hex(12)}"
+        temp_fd = None
+        try:
+            temp_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                              0o700, dir_fd=parent_fd)
+            _write_fd(temp_fd, native["bin/esbuild"], 0o755)
+            os.close(temp_fd)
+            temp_fd = None
+            _rename_at(parent_fd, temp_name, "esbuild", _RENAME_NOREPLACE if before["binary"] is None else 0)
+            _fsync_parent(parent_fd)
+        except BaseException:
+            if temp_fd is not None:
+                os.close(temp_fd)
+            try:
+                os.unlink(temp_name, dir_fd=parent_fd)
+            except OSError:
+                pass
+            raise
+        finally:
+            os.close(parent_fd)
+            _close_all(ancestors)
+    return prepare_esbuild(src, host_arch=host_arch)
+
+
+def atomic_wrapper_replace(src: Path, expected: bytes, replacement: bytes, *, before_publish=None) -> None:
+    """Atomically publish the pinned TypeScript wrapper through the Linux safe writer."""
+    _atomic_replace(src, DEVTOOLS + "/third_party/typescript/typescript.py", expected, replacement,
+                    before_publish=before_publish)

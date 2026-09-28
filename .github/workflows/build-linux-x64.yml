@@ -1,4 +1,6 @@
 name: build-linux-x64
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && format('lx64 profile={0} jobs={1} mode={2} cache={3} run={4} tree={5} attempt={6} artifacts={7}', inputs.build_profile, inputs.compile_jobs, inputs.build_mode, format('{0}', inputs.use_upstream_cache), inputs.resume_run_id, inputs.resume_tree_stage, inputs.resume_attempt, inputs.resume_artifact_ids) || 'build-linux-x64' }}
 
 on:
   workflow_dispatch:

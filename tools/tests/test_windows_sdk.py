@@ -12,6 +12,8 @@ REPO = Path(__file__).resolve().parents[2]
 HELPER = REPO / 'build/windows/ensure-windows-sdk.ps1'
 SDK_VERSION = '10.0.28000.0'
 INSTALLERS = {
+    '154.0.8037.57': ('10.0.28000.0', '38ab8f6d-3676-4860-ae84-3361308b9d7f',
+                     'b534d37a1f3140c8be1298ed88855b8cbddc35d2626c4d0afd39f186a4b578e3'),
     '153.0.8010.36': ('10.0.28000.0', '38ab8f6d-3676-4860-ae84-3361308b9d7f',
                      'b534d37a1f3140c8be1298ed88855b8cbddc35d2626c4d0afd39f186a4b578e3'),
     '152.0.7977.82': ('10.0.26100.0', 'f4b30f2a-4fc3-430e-9b03-c842b5f5f9f1',
@@ -290,10 +292,12 @@ Write-Output "SDK_ROOT=$env:WINDOWSSDKDIR"
         wrapper.write_text('$Arch = $env:ARCH\n$Root = $env:DOWNLOAD\n'
                            '$Revisions = @{ ChromiumVersion = $env:CHROMIUM }\n'
                            + function + '\nInstall-WindowsSdk\n')
-        for arch, chromium in (('x64', '153.0.8010.36'), ('arm64', '152.0.7977.82')):
+        for arch, chromium in (('x64', '154.0.8037.57'), ('arm64', '154.0.8037.57'),
+                               ('x64', '153.0.8010.36'), ('arm64', '152.0.7977.82')):
             with self.subTest(arch=arch, chromium=chromium):
                 version, _, digest = INSTALLERS[chromium]
                 shutil.rmtree(self.template)
+                (self.sdk / f'Include/{version}/um/Windows.h').unlink(missing_ok=True)
                 sdk_fixture(self.template, arch, version)
                 result = self.run_ps('& $env:WRAPPER', WRAPPER=str(wrapper),
                                      ARCH=arch, CHROMIUM=chromium, INSTALLER_HASH=digest)
@@ -304,7 +308,7 @@ Write-Output "SDK_ROOT=$env:WINDOWSSDKDIR"
                 self.calls.unlink()
 
     def test_unknown_version_and_invalid_arch_fail_before_download(self):
-        for version in ('154.0.1.0', '151.0.1.0', '153', 'invalid'):
+        for version in ('155.0.1.0', '151.0.1.0', '153', 'invalid'):
             self.assert_failure(self.invoke(True, CHROMIUM=version), 'Chromium')
         self.assert_failure(self.invoke(True, ARCH='x86'), 'ValidateSet')
         self.assertEqual(self.events(), [])
@@ -358,6 +362,7 @@ foreach ($relative in ($env:REQUIRED_FILES | ConvertFrom-Json)) {
         old.write_text('existing user SDK')
         for chromium, (version, guid, digest) in INSTALLERS.items():
             shutil.rmtree(self.template)
+            (self.sdk / f'Include/{version}/um/Windows.h').unlink(missing_ok=True)
             sdk_fixture(self.template, version=version)
             exit_code = '3010' if chromium.startswith('152.') else '0'
             result = self.invoke(True, CHROMIUM=chromium, INSTALLER_HASH=digest, SETUP_EXIT=exit_code)

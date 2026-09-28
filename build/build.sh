@@ -126,11 +126,13 @@ printf 'target_cpu = "%s"\nv8_target_cpu = "%s"\n' "$ARCH" "$ARCH" > "$WORK/targ
 GN_INPUTS=("$WORK/tooling/ungoogled-chromium/flags.gn"
   "$WORK/tooling/ungoogled-chromium-portablelinux/flags.linux.gn"
   "$REPO/build/args.gn" "$WORK/target.gn")
+GN_OPTIONS=(--build-profile "$BUILD_PROFILE")
 if [ -f "$SRC/.chromix-upstream-restored.json" ]; then
   GN_INPUTS=("$OUT/args.gn" "${GN_INPUTS[@]}")
+  GN_OPTIONS+=(--preserve-pgo-from "$OUT/args.gn")
 fi
 printf '==> Build profile: %s\n' "$BUILD_PROFILE"
-python3 "$REPO/tools/merge_gn_args.py" --build-profile "$BUILD_PROFILE" "$OUT/args.gn" "${GN_INPUTS[@]}"
+python3 "$REPO/tools/merge_gn_args.py" "${GN_OPTIONS[@]}" "$OUT/args.gn" "${GN_INPUTS[@]}"
 # GN's standalone bootstrap still treats this libstdc++ warning as an error.
 CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-Wno-deprecated-declarations" \
   python3 "$REPO/tools/bootstrap_gn.py" --src "$SRC" --out "$OUT"

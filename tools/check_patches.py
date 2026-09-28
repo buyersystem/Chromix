@@ -32,7 +32,13 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tempfile
 from pathlib import Path
+
+try:
+    from . import patch_selection
+except ImportError:
+    import patch_selection
 
 REPO = Path(__file__).resolve().parent.parent
 PATCHES = REPO / "patches"
@@ -213,6 +219,26 @@ def run_checks(patches_dir: Path, verbose: bool = False) -> Report:
     return rep
 
 
+def check_selected_stacks(rep: Report, repo: Path, verbose: bool = False) -> None:
+    try:
+        patch_selection.validate_overrides(repo)
+        for platform in ('linux', 'windows', 'macos'):
+            identity, patches = patch_selection.select(repo, platform)
+            with tempfile.TemporaryDirectory(prefix='chromix-selected-lint-') as temporary:
+                directory = Path(temporary)
+                names = []
+                for name, raw in patches:
+                    filename = Path(name).name
+                    names.append(filename)
+                    (directory / filename).write_bytes(raw)
+                (directory / 'series').write_text('\n'.join(names) + '\n', encoding='utf-8')
+                result = run_checks(directory, verbose)
+                rep.check('selected-' + platform, not result.failures,
+                          str(len(patches)) + ' patches; ' + identity.get('selection', {}).get('version', 'legacy'))
+    except (OSError, ValueError) as exc:
+        rep.check('versioned-selection', False, str(exc))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Integrity linter for the Chromix patch set.")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -231,6 +257,8 @@ def main() -> int:
         where = patches_dir
     print(f"Chromix patch-set linter - {len(_patch_files(patches_dir))} patches in {where}/")
     rep = run_checks(patches_dir, args.verbose)
+    if patches_dir.resolve() == PATCHES.resolve():
+        check_selected_stacks(rep, REPO, args.verbose)
 
     print("-" * 60)
     if rep.failures:
