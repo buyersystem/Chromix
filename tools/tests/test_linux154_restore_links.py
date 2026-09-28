@@ -31,6 +31,14 @@ class Linux154RestoreLinksTest(unittest.TestCase):
                               external_symlink_paths=[relative + "/" + name])
         fixture.write(fixture.cache / "result.json", json.dumps(fixture.result))
 
+    def record_esbuild_chain(self):
+        fixture = self.fixture
+        relative = fixture.donor.relative_to(fixture.cache / "tree").as_posix()
+        paths = [relative + "/" + name for name in
+                 (restore.LINUX154_ESBUILD_LINK, restore.LINUX154_ESBUILD_ALIAS)]
+        fixture.result.update(skipped_external_symlinks=len(paths), external_symlink_paths=paths)
+        fixture.write(fixture.cache / "result.json", json.dumps(fixture.result))
+
     def test_exact_linux154_link_is_allowed_only_with_verified_identity(self):
         name = restore.LINUX154_ESBUILD_LINK
         self.assertTrue(restore.is_known_external_link(name, "linux", self.identity))
@@ -55,6 +63,10 @@ class Linux154RestoreLinksTest(unittest.TestCase):
         for suffix in ("/bin/esbuild", "-other", "/../other"):
             with self.subTest(suffix=suffix):
                 self.assertFalse(restore.is_known_external_link(name + suffix, "linux", self.identity))
+        for suffix in ("/bin/esbuild", "-other", "/../other"):
+            with self.subTest(alias_suffix=suffix):
+                self.assertFalse(restore.is_known_external_link(restore.LINUX154_ESBUILD_ALIAS + suffix,
+                                                                "linux", self.identity))
 
     def test_both_architectures_record_omission_without_recreating_external_link(self):
         fixture = self.fixture

@@ -2301,6 +2301,63 @@ class FetchUpstreamCacheTest(unittest.TestCase):
                                           (llvm + "/install_name_tool", b"llvm")):
                         self.assertEqual((tree / source / name).read_bytes(), content)
 
+    def test_linux_esbuild_bin_alias_chain_is_omitted_as_exact_external_identity(self):
+        tree = self.root / "linux-esbuild-alias"
+        tree.mkdir()
+        module = "build/src/third_party/devtools-frontend/src/node_modules/esbuild"
+        alias = "build/src/third_party/devtools-frontend/src/node_modules/.bin/esbuild"
+        entries = [
+            (alias.rsplit("/", 1)[0], "dir", b""),
+            (module, "sym", "/usr/lib/node_modules/esbuild/"),
+            (alias, "sym", "../esbuild/bin/esbuild"),
+        ]
+        for kind in ("tar", "zip"):
+            with self.subTest(kind=kind):
+                destination = tree / kind
+                destination.mkdir()
+                archive = tar_bytes(entries) if kind == "tar" else zip_bytes(entries)
+                result = (cache.extract_tar(io.BytesIO(archive), destination,
+                                            cache.SourceSelection(["build/src"], platform="linux"))
+                          if kind == "tar" else
+                          cache.extract_zip(io.BytesIO(archive), destination,
+                                            cache.SourceSelection(["build/src"], platform="linux")))
+                self.assertEqual(result["skipped_external_symlinks"], 2)
+                self.assertEqual(result["external_symlink_paths"], [alias, module])
+                self.assertFalse((destination / alias).exists())
+                self.assertFalse((destination / module).exists())
+
+        bad = [
+            ([(alias.rsplit("/", 1)[0], "dir", b""),
+              (module, "sym", "/usr/lib/node_modules/other/"),
+              (alias, "sym", "../esbuild/bin/esbuild")], "unsafe_esbuild_alias_module"),
+            ([(alias.rsplit("/", 1)[0], "dir", b""),
+              (module, "sym", "/usr/lib/node_modules/esbuild/"),
+              (alias, "sym", "../../outside")], "unsafe_esbuild_alias"),
+        ]
+        for index, (entries, reason) in enumerate(bad):
+            with self.subTest(reason=reason), self.assertRaisesRegex(cache.CacheMiss, reason):
+                tree = self.root / "linux-esbuild-alias-bad" / str(index)
+                tree.mkdir(parents=True)
+                cache.extract_tar(io.BytesIO(tar_bytes(entries)), tree,
+                                  cache.SourceSelection(["build/src"], platform="linux"))
+
+    def test_linux_esbuild_internal_alias_keeps_normal_link_rules(self):
+        module = "build/src/" + cache.LINUX_ESBUILD_MODULE
+        alias = "build/src/" + cache.LINUX_ESBUILD_ALIAS
+        for kind in ("tar", "zip"):
+            tree = self.root / ("internal-esbuild-" + kind)
+            tree.mkdir()
+            entries = [(module + "/bin/esbuild", "file", b"verified module"),
+                       (alias, "sym", cache.LINUX_ESBUILD_ALIAS_TARGET)]
+            if kind == "tar":
+                result = cache.extract_tar(io.BytesIO(tar_bytes(entries)), tree,
+                                           cache.SourceSelection(["build/src"], platform="linux"))
+            else:
+                result = cache.extract_zip(io.BytesIO(zip_bytes(entries)), tree,
+                                           cache.SourceSelection(["build/src"], platform="linux"))
+            self.assertEqual(result["skipped_external_symlinks"], 0)
+            self.assertEqual((tree / alias).read_bytes(), b"verified module")
+
     def test_absolute_external_links_are_omitted_and_unknown_internal_links_reject(self):
         roots = {
             "linux": ("build/src", "/repo/build/src"),

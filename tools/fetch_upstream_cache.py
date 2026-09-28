@@ -89,6 +89,18 @@ ORIGINAL_SOURCE_ROOTS = {
     "macos": "/Users/runner/work/ungoogled-chromium-macos/ungoogled-chromium-macos/build/src",
     "windows": "C:/ungoogled-chromium-windows/build/src",
 }
+LINUX_ESBUILD_MODULE = "third_party/devtools-frontend/src/node_modules/esbuild"
+LINUX_ESBUILD_ALIAS = "third_party/devtools-frontend/src/node_modules/.bin/esbuild"
+LINUX_ESBUILD_ALIAS_TARGET = "../esbuild/bin/esbuild"
+LINUX_ESBUILD_EXTERNAL_TARGET = "/usr/lib/node_modules/esbuild/"
+
+
+def linux_esbuild_alias_paths(selection):
+    if (not isinstance(selection, SourceSelection) or selection.platform != "linux"
+            or selection.trees != ("build/src",)):
+        return None
+    prefix = "build/src/"
+    return prefix + LINUX_ESBUILD_MODULE, prefix + LINUX_ESBUILD_ALIAS
 
 
 class CacheMiss(Exception):
@@ -795,6 +807,7 @@ class Extractor:
         self.skipped = 0
         self.external_symlinks = []
         self.remapped_symlinks = {}
+        self.omitted_esbuild_aliases = set()
         self.current_member = None
         self.created_parents = set()
 
@@ -918,6 +931,24 @@ class Extractor:
     def validate_links(self):
         symlinks = {name: target for name, kind, target, _, _ in self.links if kind == "sym"}
         hardlinks = {}
+        alias_paths = linux_esbuild_alias_paths(self.selection)
+        linux_esbuild_alias = (alias_paths and alias_paths[1] in symlinks
+                               and symlinks.get(alias_paths[0], "").startswith("/"))
+        if linux_esbuild_alias:
+            module_path, alias_path = alias_paths
+            require(symlinks[alias_path] == LINUX_ESBUILD_ALIAS_TARGET,
+                    "unsafe_esbuild_alias")
+            require(symlinks.get(module_path) == LINUX_ESBUILD_EXTERNAL_TARGET,
+                    "unsafe_esbuild_alias_module")
+            alias_parent = alias_path.rsplit("/", 1)[0]
+            require(alias_parent in self.names or alias_parent in self.parents,
+                    "missing_esbuild_alias_directory")
+            # npm's .bin alias follows the omitted external esbuild module.  Keep
+            # this exact two-link identity out of the generic chain resolver.
+            self.external_symlinks.append(alias_path)
+            self.skipped += 1
+            self.omitted_esbuild_aliases.add(alias_path)
+            del symlinks[alias_path]
         resolved_symlinks = {}
         for name, kind, target, _, _ in self.links:
             self.current_member = name
@@ -998,6 +1029,8 @@ class Extractor:
         for name, kind, target, mode, mtime_ns in self.links:
             self.current_member = name
             self.report()
+            if name in self.omitted_esbuild_aliases:
+                continue
             target = self.remapped_symlinks.get(name, target)
             if kind == "sym" and target.startswith("/"):
                 self.skipped += 1
