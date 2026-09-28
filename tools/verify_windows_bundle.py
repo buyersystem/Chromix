@@ -142,37 +142,44 @@ def extract_archive(archive, manifest, dest, arch):
         members = container.infolist()
         if not members or len(members) > 10000 or sum(item.file_size for item in members) > MAX_EXPANDED:
             raise VerificationError('archive member count or expanded size exceeds limit')
-        seen = {}
+        seen, spellings, validated = {}, {}, []
         reserved = re.compile(r'^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)', re.I)
         for item in members:
-            # ZipInfo normalizes backslashes on Windows and truncates at NUL.
-            # Validate the original name, not a platform-repaired alias.
-            raw = item.orig_filename.rstrip('/')
+            # Only ZipInfo's Windows separator normalization is an allowed alias.
+            canonical = item.orig_filename.replace('\\', '/')
+            is_dir = canonical.endswith('/')
+            raw = canonical[:-1] if is_dir else canonical
             path = PurePosixPath(raw)
-            if (item.filename != item.orig_filename or not raw or '\0' in raw
-                    or '\\' in raw or path.is_absolute() or raw != path.as_posix()
-                    or path.parts[0] != 'chromix' or any(
+            if (item.filename not in (item.orig_filename, canonical) or not raw
+                    or '\0' in item.orig_filename or path.is_absolute() or raw != path.as_posix()
+                    or path.parts[:1] != ('chromix',) or any(
                         part in ('.', '..') or part[-1:] in (' ', '.') or reserved.match(part)
                         or re.search(r'[\x00-\x1f\x7f:<>"|?*]', part) for part in path.parts)):
                 raise VerificationError(f'unsafe Windows archive path: {item.orig_filename!r}')
-            mode = item.external_attr >> 16
-            if (stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR)
-                    or (stat.S_IFMT(mode) == stat.S_IFDIR and not item.is_dir())
-                    or (item.is_dir() and item.file_size != 0)
+            mode = stat.S_IFMT(item.external_attr >> 16)
+            if (mode not in (0, stat.S_IFREG, stat.S_IFDIR)
+                    or (mode and (mode == stat.S_IFDIR) != is_dir)
+                    or (is_dir and item.file_size != 0)
                     or item.flag_bits & 1):
                 raise VerificationError(f'unsupported archive member: {item.filename}')
             key = raw.casefold()
             if key in seen:
                 raise VerificationError(f'duplicate Windows archive path: {item.filename}')
-            seen[key] = item.is_dir()
+            seen[key] = is_dir
+            # Implicit parent directories must have one spelling on every host.
+            for component in (path, *path.parents):
+                name = component.as_posix()
+                if spellings.setdefault(name.casefold(), name) != name:
+                    raise VerificationError(f'duplicate Windows archive path: {item.filename}')
+            validated.append((item, path, is_dir))
         for name in seen:
             for parent in PurePosixPath(name).parents:
                 if parent.as_posix() in seen and not seen[parent.as_posix()]:
                     raise VerificationError('archive file shadows a parent directory')
         dest.mkdir(parents=True)
-        for item in members:
-            target = dest / PurePosixPath(item.filename)
-            if item.is_dir():
+        for item, path, is_dir in validated:
+            target = dest / path
+            if is_dir:
                 with container.open(item) as source:
                     if source.read(1):
                         raise VerificationError('archive directory contains data')

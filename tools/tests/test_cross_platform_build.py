@@ -145,6 +145,28 @@ class CrossPlatformBuildRegressionTest(unittest.TestCase):
                 self.assertIn("CHROMIUM_VERSION", paths)
                 self.assertIn("tools/platform_pins.py", paths)
 
+    def test_linux_release_profile_reaches_every_cached_stage_on_both_architectures(self):
+        import yaml
+
+        for arch in ("x64", "arm64"):
+            with self.subTest(arch=arch):
+                caller = yaml.safe_load((WORKFLOWS / f"build-linux-{arch}.yml").read_text())
+                inputs = caller[True]["workflow_dispatch"]["inputs"]
+                self.assertIn("release", inputs["build_profile"]["options"])
+                self.assertTrue(inputs["use_upstream_cache"]["default"])
+                build = caller["jobs"]["build"]
+                self.assertEqual(build["uses"], "./.github/workflows/build-posix-github.yml")
+                self.assertEqual(build["with"]["arch"], arch)
+                self.assertEqual(build["with"]["build_profile"], "${{ inputs.build_profile || 'fast' }}")
+        workflow = yaml.safe_load((WORKFLOWS / "build-posix-github.yml").read_text())
+        for index in range(1, 9):
+            with self.subTest(stage=index):
+                stage = next(step for step in workflow["jobs"][f"posix-{index}"]["steps"]
+                             if step.get("id") == "stage")
+                self.assertEqual(stage["env"]["CHROMIX_BUILD_PROFILE"], "${{ inputs.build_profile }}")
+                self.assertEqual(stage["env"]["CHROMIX_USE_UPSTREAM_CACHE"],
+                                 "${{ inputs.use_upstream_cache && '1' || '0' }}")
+
     def test_linux_arm64_cross_build_requires_same_run_native_verification(self):
         import yaml
 

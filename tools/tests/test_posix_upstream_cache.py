@@ -56,11 +56,13 @@ class PosixUpstreamCacheTest(unittest.TestCase):
 
     def run_restored_builder(self, platform, arch, *, fail_tools=False, host_arch=None,
                              restored=True, system=None, missing_gn=False, incompatible_gn=False,
-                             incomplete_tools=False, build_profile=None, fail_source=False):
+                             incomplete_tools=False, build_profile=None, fail_source=False,
+                             donor_pgo=2):
         with tempfile.TemporaryDirectory(prefix="restored build ") as directory:
             root = Path(directory)
             repo, work, binaries = root / "repo", root / "work", root / "bin"
-            src, out = work / "src", work / "src/out/Default"
+            src = work / "src"
+            out = src / ("out/Default" if restored else "out/Chromix")
             out.mkdir(parents=True)
             binaries.mkdir()
             log = root / "calls"
@@ -136,7 +138,10 @@ with open(os.environ['CALL_LOG'], 'a') as output:
                 path = work / "tooling" / name / flag
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('symbol_level = 1\n')
-            (out / "args.gn").write_text('symbol_level = 2\nchrome_pgo_phase = 2\nupstream_extra = true\n')
+            donor_args = ('symbol_level = 2\n' +
+                          (f'chrome_pgo_phase = {donor_pgo}\n' if donor_pgo is not None else '') +
+                          'upstream_extra = true\n')
+            (out / "args.gn").write_text(donor_args)
             for name in (".ninja_deps", ".ninja_log", "build.ninja", "retained.o"):
                 (out / name).write_text(name)
             gn_script = '#!/bin/sh\n[ "$1" != --version ] || exit 0\nprintf "gn\\n" >> "$CALL_LOG"\n'
@@ -166,7 +171,8 @@ path.chmod(0o755)
             for name in ("node", "go", "gperf", "clang-format"):
                 script(binaries / name, "exit 0\n")
             selected_ninja = root / "selected tools/ninja"
-            script(binaries / "ninja", 'printf "unselected-ninja\\n" >> "$CALL_LOG"\nexit 97\n')
+            script(binaries / "ninja", 'printf "unselected-ninja\\n" >> "$CALL_LOG"\nexit 97\n'
+                   if restored else 'printf "ninja\\n" >> "$CALL_LOG"\n')
             script(selected_ninja, 'test "$NINJA" = "$0" || exit 98\n'
                    'printf "ninja\\n" >> "$CALL_LOG"\n')
             host_arch = host_arch or arch
@@ -185,7 +191,9 @@ path.chmod(0o755)
             rejected = platform == "linux" and (
                 system != "Linux" or (host_arch, arch) not in (("x64", "x64"), ("arm64", "arm64"), ("x64", "arm64"))
                 or (host_arch != arch and not restored))
-            expected_rc = 2 if rejected else 19 if fail_tools else 1 if incomplete_tools else 23 if fail_source else 0
+            invalid_pgo = platform == "linux" and restored and donor_pgo not in (0, 1, 2)
+            expected_rc = (2 if rejected else 19 if fail_tools else 1 if incomplete_tools else
+                           23 if fail_source else 2 if invalid_pgo else 0)
             for _ in range(1 if expected_rc else 2):
                 result = subprocess.run([str(BASH32 if BASH32.exists() else shutil.which("bash")),
                                          str(repo / builder), str(work), arch],
@@ -203,12 +211,19 @@ path.chmod(0o755)
             elif fail_source:
                 self.assertEqual(log.read_text().splitlines(), ["prepare", "ninja-guard", "tools", "source-check"])
                 self.assertFalse((work / "fingerprint-diagnostics/source-final.json").exists())
-                self.assertEqual((out / "args.gn").read_text(),
-                                 'symbol_level = 2\nchrome_pgo_phase = 2\nupstream_extra = true\n')
+                self.assertEqual((out / "args.gn").read_text(), donor_args)
                 if missing_gn:
                     self.assertFalse((out / "gn").exists())
+            elif invalid_pgo:
+                self.assertEqual(log.read_text().splitlines(), ["prepare", "ninja-guard", "tools", "source-check"])
+                self.assertIn("required chrome_pgo_phase assignment is missing" if donor_pgo is None else
+                              "chrome_pgo_phase must be a literal 0, 1 or 2", result.stderr)
+                self.assertEqual((out / "args.gn").read_text(), donor_args)
+                self.assertFalse((out / "gn").exists())
             else:
-                iteration = ["prepare", "ninja-guard", "tools", "source-check", "gn", "ninja", "evidence-before", "ninja", "evidence-after"]
+                iteration = (["prepare", "ninja-guard", "tools", "source-check", "gn", "ninja",
+                              "evidence-before", "ninja", "evidence-after"] if restored else
+                             ["prepare", "source-check", "gn", "ninja"])
                 if platform == "linux" and host_arch == arch:
                     iteration.append("chrome-version")
                 expected_calls = iteration * 2
@@ -230,9 +245,14 @@ path.chmod(0o755)
                     self.assertIn("Chromium fixture", result.stdout)
                     self.assertNotIn("runtime validation deferred", result.stdout)
                 args = (out / "args.gn").read_text()
-                self.assertIn("upstream_extra = true", args)
+                if restored:
+                    self.assertIn("upstream_extra = true", args)
+                else:
+                    self.assertNotIn("upstream_extra", args)
                 self.assertIn("symbol_level = 0", args)
-                self.assertIn("chrome_pgo_phase = 0", args)
+                phase = donor_pgo if platform == "linux" and restored else 0
+                self.assertIn(f"chrome_pgo_phase = {phase}\n", args)
+                self.assertEqual(args.count("chrome_pgo_phase"), 1)
                 self.assertIn(f'target_cpu = "{arch}"', args)
                 self.assertIn(f'v8_target_cpu = "{arch}"', args)
                 self.assertNotIn("symbol_level = 2", args)
@@ -241,7 +261,7 @@ path.chmod(0o755)
                 self.assertIn("Build profile: " + (build_profile or "release"), result.stdout)
             for name in (".ninja_deps", ".ninja_log", "build.ninja", "retained.o"):
                 self.assertEqual((out / name).read_text(), name)
-            self.assertFalse((src / "out/Chromix").exists())
+            self.assertFalse((src / ("out/Chromix" if restored else "out/Default")).exists())
 
     def test_four_restored_builders_prepare_tools_on_every_resume_and_keep_args(self):
         for platform in ("linux", "macos"):
@@ -260,6 +280,28 @@ path.chmod(0o755)
                                      ("macos", "x64", "x64"), ("macos", "arm64", "arm64")):
             with self.subTest(platform=platform, arch=arch):
                 self.run_restored_builder(platform, arch, host_arch=host, build_profile="fast")
+
+    def test_linux_release_preserves_exact_donor_pgo_on_native_and_cross_resumes(self):
+        for arch, host in (("x64", "x64"), ("arm64", "x64"), ("arm64", "arm64")):
+            for phase in (0, 1, 2):
+                with self.subTest(arch=arch, host=host, phase=phase):
+                    self.run_restored_builder("linux", arch, host_arch=host,
+                                              build_profile="release", donor_pgo=phase)
+
+    def test_linux_restored_missing_or_invalid_pgo_blocks_gn_without_guessing(self):
+        for arch, host in (("x64", "x64"), ("arm64", "x64")):
+            for phase in (None, '"2"', 3):
+                with self.subTest(arch=arch, phase=phase):
+                    self.run_restored_builder("linux", arch, host_arch=host,
+                                              build_profile="release", donor_pgo=phase, missing_gn=True)
+
+    def test_linux_cold_profiles_keep_overlay_pgo_and_ignore_existing_args(self):
+        for arch in ("x64", "arm64"):
+            for profile in ("fast", "release"):
+                for phase in (None, 2):
+                    with self.subTest(arch=arch, profile=profile, phase=phase):
+                        self.run_restored_builder("linux", arch, restored=False,
+                                                  build_profile=profile, donor_pgo=phase)
 
     def test_restored_linux_x64_to_arm64_preserves_host_gn_and_defers_runtime(self):
         self.run_restored_builder("linux", "arm64", host_arch="x64")

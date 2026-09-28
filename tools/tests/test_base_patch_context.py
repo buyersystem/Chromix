@@ -137,6 +137,9 @@ def test_cold_entry_rejects_fuzzy_context(tmp_path):
     (repo / "build").mkdir(parents=True)
     (repo / "patches").mkdir()
     shutil.copy2(REPO / "build/apply-patches.sh", repo / "build/apply-patches.sh")
+    (repo / "tools").mkdir()
+    for name in ("patch_selection.py", "platform_pins.py"):
+        shutil.copy2(REPO / "tools" / name, repo / "tools" / name)
     (repo / "patches/series").write_text("patches/context.patch\n")
     patch = repo / "patches/context.patch"
     patch.write_text('''--- a/value.txt

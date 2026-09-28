@@ -70,28 +70,22 @@ function Ensure-Checkout {
 }
 
 function Get-PatchSetKey {
-  $hasher = [Security.Cryptography.SHA256]::Create()
+  $key = @(& $Python (Join-Path $Repo "tools\patch_selection.py") --repo $Repo --platform windows --key windows)
+  if ($LASTEXITCODE -ne 0 -or $key.Count -ne 1 -or $key[0] -cnotmatch '^[0-9a-f]{64}$') {
+    throw "could not establish selected patch-set identity"
+  }
+  return $key[0]
+}
+
+function Assert-CurrentPatchStack {
+  $output = Join-Path ([IO.Path]::GetTempPath()) ("chromix-warm-patches-" + [Guid]::NewGuid().ToString("N") + ".json")
   try {
-    $series = Join-Path $Repo "patches\series"
-    $bytes = [Collections.Generic.List[byte]]::new()
-    foreach ($line in Get-Content $series) {
-      $rel = ($line -split "#", 2)[0].Trim()
-      if (-not $rel) { continue }
-      $path = Join-Path $Repo $rel
-      if (-not (Test-Path $path)) { throw "patch listed in series is missing: $rel" }
-      $bytes.AddRange([IO.File]::ReadAllBytes($path))
-    }
-    $payloadRoot = Join-Path $Repo "build\windows\lite-tarball-files"
-    if (Test-Path $payloadRoot) {
-      foreach ($path in Get-ChildItem $payloadRoot -Recurse -File | Sort-Object FullName) {
-        $relative = $path.FullName.Substring($payloadRoot.Length).TrimStart('\')
-        $bytes.AddRange([Text.Encoding]::UTF8.GetBytes($relative.Replace('\', '/')))
-        $bytes.AddRange([IO.File]::ReadAllBytes($path.FullName))
-      }
-    }
-    return ([BitConverter]::ToString($hasher.ComputeHash($bytes.ToArray())) -replace "-", "").ToLowerInvariant()
+    Invoke-Checked $Python @(
+      (Join-Path $Repo "tools\verify_patch_stack.py"), "--src", $Src, "--repo", $Repo,
+      "--core", $Ungoogled, "--platform-tooling", $Windows, "--platform", "windows", "--output", $output
+    )
   } finally {
-    $hasher.Dispose()
+    Remove-Item -LiteralPath $output -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -161,9 +155,9 @@ function Invoke-ChromixPatches(
     [bool]$ResumePatchIsClean = $false,
     [string]$ResumePatchHash = "") {
   $resuming = [bool]$ResumePatch
-  foreach ($line in Get-Content (Join-Path $Repo "patches\series")) {
-    $rel = ($line -split "#", 2)[0].Trim()
-    if (-not $rel) { continue }
+  $selected = @(& $Python (Join-Path $Repo "tools\patch_selection.py") --repo $Repo --platform windows --src $Src --paths)
+  if ($LASTEXITCODE -ne 0 -or $selected.Count -eq 0) { throw "could not select source patch stack" }
+  foreach ($rel in $selected) {
     if ($resuming -and $rel -ne $ResumePatch) {
       Write-Host "    skipping completed $rel"
       continue
@@ -231,7 +225,8 @@ function Invoke-ChromixPatches(
       Pop-Location
     }
   }
-  if ($resuming) { throw "resume patch is not present in patches\series: $ResumePatch" }
+  if ($resuming) { throw "resume patch is not present in selected series: $ResumePatch" }
+  if ((Get-PatchSetKey) -ne $patchSetKey) { throw "patch selection changed during application" }
   Remove-Item (Join-Path $Src ".chromix-patch-in-progress") -Force -ErrorAction SilentlyContinue
   Get-ChildItem $Src -Filter "*.rej" -Recurse -File -ErrorAction SilentlyContinue |
     Remove-Item -Force
@@ -365,7 +360,7 @@ if ((Test-Path (Join-Path $Src ".chromix-patch-in-progress")) -and
 if ($RestoredUpstream) {
   Invoke-Checked $Python @(
     (Join-Path $Repo "tools\restore_upstream_cache.py"), "--phase", "verify",
-    "--platform", "windows", "--arch", "x64", "--workdir", $Root
+    "--platform", "windows", "--arch", $Arch, "--workdir", $Root
   )
 }
 if ((Test-Path $readyMarker) -and -not (Test-Marker ".chromix-source-ready" $versionKey)) {
@@ -381,6 +376,7 @@ if (Test-Path $readyMarker) {
   Assert-PreparedLayers
   Assert-Arm64RustToolchain
   if (-not $RestoredUpstream) {
+    Assert-CurrentPatchStack
     Write-Host "==> source layers already prepared and verified: $versionKey"
     return
   }
@@ -392,6 +388,10 @@ $resumeChromixPatchIsClean = $false
 if (Test-Path (Join-Path $Src ".chromix-layer-in-progress")) {
   $interruptedLayer = (Get-Content (Join-Path $Src ".chromix-layer-in-progress") -Raw).Trim()
   if ($interruptedLayer -eq "chromix") {
+    if ($Revisions.ChromiumVersion -eq "154.0.8037.57" -and
+        -not (Test-Marker ".chromix-patch-selection" $patchSetKey)) {
+      throw "interrupted Chromium 154 stack has missing or mismatched selection identity; restore clean source"
+    }
     Write-Host "==> retrying interrupted Chromix patch application in place"
     Get-ChildItem $Src -Filter "*.rej" -Recurse -File -ErrorAction SilentlyContinue |
       Remove-Item -Force
@@ -457,9 +457,10 @@ if ($actualWindowsVersion -ne $Revisions.UngoogledWindowsVersion) {
 if ($RestoredUpstream) {
   Invoke-Checked $Python @(
     (Join-Path $Repo "tools\prepare_restored_build.py"), "--phase", "inspect",
-    "--platform", "windows", "--arch", "x64", "--workdir", $Root
+    "--platform", "windows", "--arch", $Arch, "--workdir", $Root
   )
   Assert-RestoredToolchain
+  Assert-Arm64RustToolchain
   $RestoredPatchExe = Resolve-HostPatch
   Write-Host "==> verified upstream core/Windows overlay/prune/domain layers; appending Chromix patches"
   $applyArgs = @(
@@ -475,6 +476,7 @@ if ($RestoredUpstream) {
     Set-Marker ".chromix-ungoogled-windows" $Revisions.UngoogledWindowsCommit
     Set-Marker ".chromix-binaries-pruned" $Revisions.UngoogledCommit
     Set-Marker ".chromix-patches" $patchSetKey
+    Set-Marker ".chromix-patch-selection" $patchSetKey
     Set-Marker ".chromix-domain-substituted" $Revisions.UngoogledCommit
     Set-Marker ".chromix-toolchain-ready" $toolchainKey
     Set-Marker ".chromix-source-ready" $versionKey
@@ -565,10 +567,13 @@ if (-not (Test-Marker ".chromix-binaries-pruned" $Revisions.UngoogledCommit)) {
 if (-not (Test-Marker ".chromix-patches" $patchSetKey)) {
   Write-Host "==> applying Chromix patches"
   Set-Marker ".chromix-layer-in-progress" "chromix"
+  Set-Marker ".chromix-patch-selection" $patchSetKey
   Invoke-ChromixPatches $resumeChromixPatch $resumeChromixPatchIsClean $resumeChromixPatchHash
   Set-Marker ".chromix-patches" $patchSetKey
   Remove-Item (Join-Path $Src ".chromix-layer-in-progress") -Force
 }
+
+Assert-CurrentPatchStack
 
 # Domain substitution is deferred until after build-time downloads. Applying it
 # here rewrites toolchain URLs used by Chromium and the Windows overlay.

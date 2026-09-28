@@ -4,8 +4,16 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="${1:?usage: apply-patches.sh /path/to/chromium/src}"
-SERIES="$REPO/patches/series"
-
+PLATFORM="${2:-${CHROMIX_PATCH_PLATFORM:-}}"
+if [ -z "$PLATFORM" ]; then
+  case "$(uname -s)" in
+    Linux) PLATFORM=linux ;;
+    Darwin) PLATFORM=macos ;;
+    MINGW*|MSYS*|CYGWIN*) PLATFORM=windows ;;
+    *) echo "explicit patch platform required" >&2; exit 2 ;;
+  esac
+fi
+SELECTED="$(python3 "$REPO/tools/patch_selection.py" --repo "$REPO" --platform "$PLATFORM" --src "$SRC" --paths)"
 cd "$SRC" || { echo "no such src tree: $SRC" >&2; exit 1; }
 ok=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -15,9 +23,9 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ -f "$patch" ] || { echo "patch listed in series is missing: $rel" >&2; exit 1; }
   printf '  [apply] %s\n' "$(basename "$rel")"
   patch_bin="${PATCH_BIN:-$(command -v gpatch || command -v patch)}"
-  "$patch_bin" -p1 --fuzz=0 --batch --forward -i "$patch"
+  "$patch_bin" -p1 --fuzz=0 --batch --forward --get=0 --no-backup-if-mismatch --reject-file=- -i "$patch"
   ok=$((ok + 1))
-done < "$SERIES"
+done <<< "$SELECTED"
 
 printf '%s\n' "----------------------------------------------"
 printf 'applied: %s\n' "$ok"

@@ -18,7 +18,7 @@ import subprocess
 import sys
 
 try:
-    from .import_upstream_cache import CLANG, RUST, Miss, digest_file
+    from .import_upstream_cache import CLANG, RUST, Miss, digest_file, validate_rust_libraries
     from .macos_runtime import bindgen_environment, runtime_environment
     from .macos_sdk_identity import sdk_content_identity, validated_sdk_content
     from .platform_pins import load_pins
@@ -27,7 +27,7 @@ try:
     from .upstream_object_cache import ninja_deps, ninja_log, write_json
     from .upstream_script_identity import ENDPOINTS
 except ImportError:
-    from import_upstream_cache import CLANG, RUST, Miss, digest_file
+    from import_upstream_cache import CLANG, RUST, Miss, digest_file, validate_rust_libraries
     from macos_runtime import bindgen_environment, runtime_environment
     from macos_sdk_identity import sdk_content_identity, validated_sdk_content
     from platform_pins import load_pins
@@ -169,11 +169,12 @@ def tool_paths(platform: str, arch: str, *, host_arch: str | None = None) -> dic
 def inspect_native_tools(src: Path, platform: str, arch: str) -> dict:
     system, machine = host_identity()
     if (platform, arch) not in (("linux", "x64"), ("linux", "arm64"), ("macos", "x64"),
-                                ("macos", "arm64"), ("windows", "x64")):
+                                ("macos", "arm64"), ("windows", "x64"), ("windows", "arm64")):
         raise ValueError("unsupported restored build target")
-    if ((system, machine) != (platform, arch)
+    native_arch = "x64" if platform == "windows" else arch
+    if ((system, machine) != (platform, native_arch)
             and (platform, arch, system, machine) != ("linux", "arm64", "linux", "x64")):
-        raise ValueError(f"a native {platform} {arch} runner is required (Linux ARM64 also supports Linux x64 hosts)")
+        raise ValueError(f"a native {platform} {native_arch} runner is required (Linux ARM64 also supports Linux x64 hosts)")
     probe_env = runtime_environment(src, machine) if platform == "macos" else None
     tools = {}
     for name, relative in tool_paths(platform, arch, host_arch=machine).items():
@@ -529,12 +530,23 @@ def generator_fingerprint(src: Path, platform: str, arch: str, *, host_arch: str
     return result
 
 
-def prepare_linux_typescript(src: Path, *, host_arch: str, repair=False, repo: Path = ROOT) -> dict:
-    """Replace only the pinned portablelinux DevTools wrapper; never use host tsc."""
+def prepare_linux_typescript(src: Path, *, host_arch: str, repair=False, repo: Path = ROOT,
+                             before_publish=None) -> dict:
+    """Prepare pinned portablelinux DevTools generators; never use host tsc/esbuild."""
+    try:
+        from . import linux_restored_generators as linux154
+    except ImportError:
+        import linux_restored_generators as linux154
     pins = load_pins(repo, "linux")
-    if tuple(pins[key] for key in ("ChromiumVersion", "UngoogledCommit", "UngoogledLinuxCommit")) != (
-            "153.0.8010.36", "dd8fb9b5c837982faf41ba58cd30a5664e77c329",
-            "a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd") or host_arch not in TYPESCRIPT_REPAIRED:
+    identity = tuple(pins[key] for key in ("ChromiumVersion", "UngoogledCommit", "UngoogledLinuxCommit"))
+    if identity == linux154.PINS:
+        portable, repaired = linux154.TYPESCRIPT_PORTABLE, linux154.TYPESCRIPT_REPAIRED
+    elif identity == ("153.0.8010.36", "dd8fb9b5c837982faf41ba58cd30a5664e77c329",
+                      "a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd"):
+        portable, repaired = TYPESCRIPT_PORTABLE, TYPESCRIPT_REPAIRED
+    else:
+        raise ValueError("unverified Linux TypeScript wrapper pins/host")
+    if host_arch not in repaired:
         raise ValueError("unverified Linux TypeScript wrapper pins/host")
 
     def regular(relative):
@@ -545,12 +557,12 @@ def prepare_linux_typescript(src: Path, *, host_arch: str, repair=False, repo: P
         return path
 
     wrapper = regular(TYPESCRIPT_WRAPPER)
-    original = wrapper.read_bytes()
+    original = linux154.read_verified(src, TYPESCRIPT_WRAPPER)
     before = hashlib.sha256(original).hexdigest()
-    if before not in (TYPESCRIPT_PORTABLE, *TYPESCRIPT_REPAIRED.values()):
+    if before not in (portable, *repaired.values()):
         raise ValueError("unknown restored Linux TypeScript wrapper")
     package = regular(TYPESCRIPT_PACKAGE + "/package.json")
-    if hashlib.sha256(package.read_bytes()).hexdigest() != (
+    if hashlib.sha256(linux154.read_verified(src, TYPESCRIPT_PACKAGE + "/package.json")).hexdigest() != (
             "3004f96b830f722041ea418dc29642d934fc64dcc207992e22a1dc37c7b270ae"):
         raise ValueError("unexpected pinned TypeScript package metadata")
     for name in ("tsc.js", "_tsc.js", *TYPESCRIPT_LIBRARIES):
@@ -564,13 +576,21 @@ def prepare_linux_typescript(src: Path, *, host_arch: str, repair=False, repo: P
             _safe_file(src, (Path(directory) / name).relative_to(src).as_posix())
         for name in sorted(files):
             path = regular((Path(directory) / name).relative_to(src).as_posix())
-            digest.update(json.dumps([path.relative_to(package.parent).as_posix(), digest_file(path)]).encode())
+            digest.update(json.dumps([path.relative_to(package.parent).as_posix(),
+                                      hashlib.sha256(linux154.read_verified(src, path.relative_to(src).as_posix())).hexdigest()]).encode())
 
-    desired = TYPESCRIPT_REPAIRED[host_arch]
+    if identity == linux154.PINS and digest.hexdigest() != linux154.TYPESCRIPT_TREE:
+        raise ValueError("unknown restored Linux 154 TypeScript package bytes/inventory")
+    desired = repaired[host_arch]
     result = {"path": TYPESCRIPT_WRAPPER, "sha256": before,
               "package_sha256": digest.hexdigest(), "version": "6.0.2",
               "node": tool_paths("linux", host_arch)["node"].as_posix(),
               "repair_needed": before != desired}
+    if identity == linux154.PINS:
+        result["esbuild"] = linux154.prepare_esbuild(src, host_arch=host_arch, before_publish=before_publish)
+        result["repair_needed"] |= result["esbuild"]["repair_needed"]
+        if repair and result["esbuild"]["install_needed"]:
+            raise ValueError("pinned native esbuild/module must be installed before finish")
     if not repair:
         return result
     node = src / result["node"]
@@ -581,6 +601,9 @@ def prepare_linux_typescript(src: Path, *, host_arch: str, repair=False, repo: P
                                check=False, timeout=30)
     if completed.returncode or completed.stdout.strip() != "Version 6.0.2":
         raise ValueError(f"pinned TypeScript probe failed: {completed.stdout[:2000]}")
+    if identity == linux154.PINS:
+        result["esbuild"] = linux154.prepare_esbuild(src, host_arch=host_arch, repair=True,
+                                                      before_publish=before_publish)
     if before != desired:
         lines = original.splitlines(keepends=True)
         start = lines.index(b"def GetBinaryPath():\n")
@@ -605,9 +628,9 @@ def GetNodePath():
         restored = b"".join(lines[:start]) + getter + b"".join(tail)
         if hashlib.sha256(restored).hexdigest() != desired:
             raise ValueError("unexpected repaired TypeScript wrapper")
-        if regular(TYPESCRIPT_WRAPPER).read_bytes() != original:
+        if linux154.read_verified(src, TYPESCRIPT_WRAPPER) != original:
             raise ValueError("TypeScript wrapper changed during preparation")
-        wrapper.write_bytes(restored)
+        linux154.atomic_wrapper_replace(src, original, restored, before_publish=before_publish)
     result.update(sha256=desired, repair_needed=False)
     return result
 
@@ -936,6 +959,9 @@ def _prepare(workdir: Path, platform: str, arch: str, *, phase: str, repo: Path,
     data["operation"] = "inspect_native_tools"
     inspection = validate_native_tools(src, platform, arch)
     data.update(inspection)
+    if (platform, arch) == ("windows", "arm64"):
+        data["operation"] = "validate_rust_libraries"
+        data["rust_libraries"] = validate_rust_libraries(src, platform, arch)
     if platform == "windows":
         data["operation"] = "repair_windows_midl"
         data["windows_midl"] = repair_windows_midl(src, platform, arch, receipt["identity"])
@@ -946,7 +972,9 @@ def _prepare(workdir: Path, platform: str, arch: str, *, phase: str, repo: Path,
         pending.get("tools", {}).get(name, {}).get("file_identity") != entry.get("file_identity")
         for name, entry in inspection["tools"].items() if name not in ("node", "gn")))
     needs_invalidation = (incompatible or changed_since_inspect
-                          or bool(pending and pending.get("needs_invalidation")))
+                          or bool(pending and pending.get("needs_invalidation"))
+                          or bool(pending and (platform, arch) == ("windows", "arm64")
+                                  and pending.get("rust_libraries") != data["rust_libraries"]))
     data["operation"] = "generator_fingerprint"
     generators = generator_fingerprint(src, platform, arch, host_arch=inspection["host"]["arch"])
     if platform == "linux":

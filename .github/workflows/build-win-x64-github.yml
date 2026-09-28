@@ -5,6 +5,8 @@
 # 7z volumes uploaded as artifacts; the next stage restores them and resumes
 # ninja incrementally until it returns 0.
 name: build-win-x64-github
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && format('wx64 profile={0} jobs={1} cache={2} upstream={3} run={4} stage={5} tree={6} attempt={7} source={8} artifacts={9}', inputs.build_profile, inputs.compile_jobs, format('{0}', inputs.use_upstream_cache), inputs.upstream_run_id, inputs.resume_run_id, inputs.resume_stage, inputs.resume_tree_stage, inputs.resume_attempt, inputs.resume_source_sha, inputs.resume_artifact_ids) || 'build-win-x64-github' }}
 
 on:
   push:

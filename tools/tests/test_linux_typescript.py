@@ -18,6 +18,50 @@ PORTABLE = FIXTURE["wrapper"].replace('def GetBinaryPath():\n',
                                        'def GetBinaryPath():\n    return "/usr/bin/tsc"\n').encode()
 
 
+LINUX153_PINS = ("153.0.8010.36", "dd8fb9b5c837982faf41ba58cd30a5664e77c329",
+                 "a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd")
+
+
+def install_linux_repo_fixture(repo, pins=LINUX153_PINS):
+    version, core, linux = pins
+    values = {"ChromiumVersion": version, "UngoogledVersion": version + "-1", "UngoogledCommit": core,
+              "LinuxChromiumVersion": version, "LinuxUngoogledVersion": version + "-1",
+              "LinuxUngoogledCommit": core, "MacOSChromiumVersion": version,
+              "MacOSUngoogledVersion": version + "-1", "MacOSUngoogledCommit": "b" * 40,
+              "WindowsChromiumVersion": version, "WindowsUngoogledVersion": version + "-1",
+              "WindowsUngoogledCommit": "c" * 40, "UngoogledLinuxVersion": version + "-1",
+              "UngoogledLinuxCommit": linux, "UngoogledMacOSVersion": version + "-1",
+              "UngoogledMacOSCommit": "b" * 40, "UngoogledWindowsVersion": version + "-1",
+              "UngoogledWindowsCommit": "c" * 40}
+    sources = {}
+    for index, (platform, head, repository, roots) in enumerate((
+            ("linux", linux, "portablelinux", ["build/src"]),
+            ("macos", "b" * 40, "macos", ["src"]),
+            ("windows", "c" * 40, "windows", ["src", "build/src"])), 1):
+        sources[platform] = {
+            "chromium_version": version, "ungoogled_commit": {"linux": core, "macos": "b" * 40,
+                "windows": "c" * 40}[platform],
+            "repository": "ungoogled-software/ungoogled-chromium-" + repository,
+            "repository_id": index, "head_sha": head, "head_branch": version + "-1",
+            "event": "push", "workflow_path": ".github/workflows/" + (
+                "build-x64.yml" if platform == "windows" else "build.yml"),
+            "run_id": index, "source_roots": roots,
+            "artifacts": {arch: {"id": index * 10 + number, "name": "fixture-" + arch,
+                "size_in_bytes": 1, "digest": "sha256:" + str(index) * 64,
+                "expires_at": "2099-01-01T00:00:00Z",
+                "inner_archive": "fixture.zip" if platform == "windows" else "fixture.tar.zst"}
+                for number, arch in enumerate(("x64",) if platform == "windows" else ("x64", "arm64"), 1)}}
+    (repo / "build").mkdir(parents=True, exist_ok=True)
+    for name in ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_MACOS_VERSION",
+                 "CHROMIUM_WINDOWS_VERSION"):
+        (repo / name).write_text(version + "\n")
+    (repo / "build/ungoogled-revisions.psd1").write_text(
+        "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in values.items()) + "}\n")
+    (repo / "build/upstream-cache.json").write_text(json.dumps({
+        "schema_version": 1, "chromium_version": version, "ungoogled_commit": core, "sources": sources}))
+    return repo
+
+
 def install_typescript_fixture(src):
     files = {prepare.TYPESCRIPT_WRAPPER: PORTABLE,
              prepare.TYPESCRIPT_PACKAGE + "/package.json": FIXTURE["package"],
@@ -39,6 +83,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.work = Path(temporary.name)
         self.src = self.work / "src"
+        self.repo = install_linux_repo_fixture(self.work / "repo")
         install_typescript_fixture(self.src)
         self.wrapper = self.src / prepare.TYPESCRIPT_WRAPPER
         self.package = self.src / prepare.TYPESCRIPT_PACKAGE
@@ -48,7 +93,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
                 mock.patch.object(prepare.os, "access", return_value=True), \
                 mock.patch.object(prepare.subprocess, "run", return_value=subprocess.CompletedProcess(
                     [], 0, "Version 6.0.2\n")) as run:
-            result = prepare.prepare_linux_typescript(self.src, host_arch=host, repair=True, **kwargs)
+            result = prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch=host, repair=True, **kwargs)
         return result, run
 
     def load_wrapper(self):
@@ -63,7 +108,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(PORTABLE).hexdigest(), prepare.TYPESCRIPT_PORTABLE)
         before = self.wrapper.stat()
         with mock.patch.object(prepare.subprocess, "run") as run:
-            result = prepare.prepare_linux_typescript(self.src, host_arch="x64")
+            result = prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch="x64")
         run.assert_not_called()
         self.assertTrue(result["repair_needed"])
         self.assertEqual(result["version"], "6.0.2")
@@ -96,18 +141,35 @@ class LinuxTypeScriptTest(unittest.TestCase):
                 self.wrapper.write_bytes(content)
                 with mock.patch.object(prepare.subprocess, "run") as run, \
                         self.assertRaisesRegex(ValueError, "unknown restored"):
-                    prepare.prepare_linux_typescript(self.src, host_arch="x64", repair=True)
+                    prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch="x64", repair=True)
                 run.assert_not_called()
                 self.assertEqual(self.wrapper.read_bytes(), content)
 
     def test_wrong_pins_fail_closed(self):
-        pins = prepare.load_pins(prepare.ROOT, "linux")
-        for key in ("ChromiumVersion", "UngoogledCommit", "UngoogledLinuxCommit"):
-            with self.subTest(key=key), mock.patch.object(prepare, "load_pins", return_value=dict(pins, **{key: "unknown"})), \
-                    mock.patch.object(prepare.subprocess, "run") as run, self.assertRaisesRegex(ValueError, "pins/host"):
-                prepare.prepare_linux_typescript(self.src, host_arch="x64", repair=True)
+        for pins in (("153.0.8010.37", *LINUX153_PINS[1:]),
+                     (LINUX153_PINS[0], "d" * 40, LINUX153_PINS[2]),
+                     (*LINUX153_PINS[:2], "e" * 40)):
+            install_linux_repo_fixture(self.repo, pins)
+            with self.subTest(pins=pins), mock.patch.object(prepare.subprocess, "run") as run, \
+                    self.assertRaisesRegex(ValueError, "pins/host"):
+                prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch="x64", repair=True)
             run.assert_not_called()
         self.assertEqual(self.wrapper.read_bytes(), PORTABLE)
+
+    def test_linux154_pins_reject_legacy_and_repaired153_wrappers(self):
+        from tools import linux_restored_generators as linux154
+        current = install_linux_repo_fixture(self.work / "repo154", linux154.PINS)
+        wrappers = [PORTABLE]
+        for host in ("x64", "arm64"):
+            self.repair(host)
+            wrappers.append(self.wrapper.read_bytes())
+        for payload in wrappers:
+            self.wrapper.write_bytes(payload)
+            with mock.patch.object(prepare.subprocess, "run") as run, \
+                    self.assertRaisesRegex(ValueError, "unknown restored"):
+                prepare.prepare_linux_typescript(self.src, repo=current, host_arch="x64", repair=True)
+            run.assert_not_called()
+            self.assertEqual(self.wrapper.read_bytes(), payload)
 
     def test_missing_empty_package_inputs_and_wrong_version_fail_before_repair(self):
         paths = [self.wrapper, *(self.package / name for name in (
@@ -118,7 +180,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
                 with self.subTest(path=path, empty=empty):
                     path.write_bytes(b"") if empty else path.unlink()
                     with mock.patch.object(prepare.subprocess, "run") as run, self.assertRaises((ValueError, OSError)):
-                        prepare.prepare_linux_typescript(self.src, host_arch="x64", repair=True)
+                        prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch="x64", repair=True)
                     run.assert_not_called()
                     path.write_bytes(original)
                     self.assertEqual(self.wrapper.read_bytes(), PORTABLE)
@@ -151,7 +213,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
                     try:
                         with mock.patch.object(prepare.subprocess, "run") as run, \
                                 self.assertRaises((ValueError, OSError)) as error:
-                            prepare.prepare_linux_typescript(self.src, host_arch="x64", repair=True)
+                            prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch="x64", repair=True)
                         self.assertIn(name, str(error.exception))
                         run.assert_not_called()
                         self.assertEqual(self.wrapper.read_bytes(), PORTABLE)
@@ -171,7 +233,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
                     path.unlink()
                     os.link(target, path) if hard else path.symlink_to(target)
                     with self.assertRaises(ValueError):
-                        prepare.prepare_linux_typescript(self.src, host_arch="x64", repair=True)
+                        prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch="x64", repair=True)
                     self.assertEqual(target.read_bytes(), original)
                     path.unlink()
                     path.write_bytes(original)
@@ -185,7 +247,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
     def test_wrong_host_node_and_failed_probes_do_not_publish_wrapper(self):
         with mock.patch.object(prepare, "binary_architectures", return_value={"arm64"}), \
                 mock.patch.object(prepare.subprocess, "run") as run, self.assertRaisesRegex(ValueError, "native host"):
-            prepare.prepare_linux_typescript(self.src, host_arch="x64", repair=True)
+            prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch="x64", repair=True)
         run.assert_not_called()
         for result in (subprocess.CompletedProcess([], 1, "missing module"),
                        subprocess.CompletedProcess([], 0, "Version 7.0.2"),
@@ -195,7 +257,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
                     mock.patch.object(prepare.subprocess, "run", side_effect=(
                         result if isinstance(result, Exception) else lambda *args, **kwargs: result)), \
                     self.assertRaises((ValueError, OSError, subprocess.SubprocessError)):
-                prepare.prepare_linux_typescript(self.src, host_arch="x64", repair=True)
+                prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch="x64", repair=True)
             self.assertEqual(self.wrapper.read_bytes(), PORTABLE)
 
     def test_raw_and_checked_calls_preserve_argv_streams_exit_and_cwd(self):
@@ -229,7 +291,7 @@ class LinuxTypeScriptTest(unittest.TestCase):
 if (args[0] === '--version') { console.log('Version 6.0.2'); }
 else { console.log(JSON.stringify({args, cwd: process.cwd()})); console.error('diagnostic'); process.exit(2); }
 ''')
-        prepare.prepare_linux_typescript(self.src, host_arch=host, repair=True)
+        prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch=host, repair=True)
         module = self.load_wrapper()
         with mock.patch.dict(os.environ, {"PATH": ""}):
             code, stdout, stderr = module.RunTypeScriptRaw(["--project", "space dir/配置.json"])
@@ -246,7 +308,7 @@ else { console.log(JSON.stringify({args, cwd: process.cwd()})); console.error('d
         node = self.src / prepare.tool_paths("linux", host)["node"]
         node.parent.mkdir(parents=True)
         node.symlink_to(Path(os.environ["CHROMIX_TEST_NODE"]).resolve())
-        prepare.prepare_linux_typescript(self.src, host_arch=host, repair=True)
+        prepare.prepare_linux_typescript(self.src, repo=self.repo, host_arch=host, repair=True)
         module = self.load_wrapper()
         source = self.work / "with spaces.ts"
         source.write_text("export const value: number = 42;\n")
@@ -269,7 +331,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
         self.fixture = PrepareRestoredBuildTest()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
-        self.fixture.fixture("linux", "arm64", host_arch="x64")
+        self.fixture.fixture("linux", "arm64", host_arch="x64", linux_pins=LINUX153_PINS)
 
     def test_restore_inspect_repair_resume_and_compiler_drift_invalidate_only_generators(self):
         fixture = self.fixture
@@ -277,24 +339,24 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
         protected = {path: path.read_bytes() for path in (
             fixture.src / ".chromix-upstream-restored.json", *(fixture.out / name for name in prepare.METADATA))}
         with fixture.native_context("linux", "x64"):
-            inspection = prepare.prepare(fixture.work, "linux", "arm64", phase="inspect")
+            inspection = fixture.prepare(fixture.work, "linux", "arm64", phase="inspect")
             self.assertTrue(inspection["generator_fingerprint"]["typescript"]["repair_needed"])
             self.assertEqual(wrapper.read_bytes(), PORTABLE)
-            first = prepare.prepare(fixture.work, "linux", "arm64")
+            first = fixture.prepare(fixture.work, "linux", "arm64")
             self.assertTrue(first["ready_for_gn"])
             independent = fixture.object("independent.o")
             dependent = fixture.object("generated.o")
             generated = fixture.write(fixture.out / "gen/ts-output.h", "generated")
             fixture.deps({"obj/independent.o": ["../../include/a.h"], "obj/generated.o": ["gen/ts-output.h"]})
             fixture.write(fixture.out / ".ninja_log", "# ninja log v5\n0\t1\t1\tgen/ts-output.h\tabc\n")
-            resumed = prepare.prepare(fixture.work, "linux", "arm64")
+            resumed = fixture.prepare(fixture.work, "linux", "arm64")
             self.assertEqual(resumed["counters"]["generator_rechecks"], 0)
             self.assertTrue(generated.exists())
             for changed in ("lib/_tsc.js", "lib/lib.es5.d.ts"):
                 with self.subTest(changed=changed):
                     path = fixture.src / prepare.TYPESCRIPT_PACKAGE / changed
                     path.write_bytes(path.read_bytes() + b"// changed compiler input\n")
-                    result = prepare.prepare(fixture.work, "linux", "arm64")
+                    result = fixture.prepare(fixture.work, "linux", "arm64")
                     self.assertEqual(result["counters"]["generator_rechecks"], 1)
                     self.assertEqual(result["counters"]["toolchain_invalidated_outputs"], 0)
                     self.assertTrue(independent.exists())
@@ -303,7 +365,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
                     fixture.write(generated, "generated")
                     fixture.write(dependent, "object")
             wrapper.write_bytes(PORTABLE)
-            repaired_again = prepare.prepare(fixture.work, "linux", "arm64")
+            repaired_again = fixture.prepare(fixture.work, "linux", "arm64")
             self.assertEqual(repaired_again["counters"]["generator_rechecks"], 1)
             self.assertEqual(hashlib.sha256(wrapper.read_bytes()).hexdigest(), prepare.TYPESCRIPT_REPAIRED["x64"])
         for path, payload in protected.items():
@@ -313,7 +375,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
     def test_legacy_stage_marker_without_typescript_fingerprint_rechecks_generators(self):
         fixture = self.fixture
         with fixture.native_context("linux", "x64"):
-            prepare.prepare(fixture.work, "linux", "arm64")
+            fixture.prepare(fixture.work, "linux", "arm64")
             marker = fixture.src / prepare.MARKER
             old = json.loads(marker.read_text())
             del old["generator_fingerprint"]["typescript"]
@@ -322,7 +384,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
             fixture.write(fixture.out / ".ninja_log", "# ninja log v5\n0\t1\t1\tgen/legacy.js\tabc\n")
             independent = fixture.object("keep.o")
             fixture.deps({"obj/keep.o": ["../../include/a.h"]})
-            result = prepare.prepare(fixture.work, "linux", "arm64")
+            result = fixture.prepare(fixture.work, "linux", "arm64")
         self.assertEqual(result["counters"]["generator_rechecks"], 1)
         self.assertEqual(result["counters"]["toolchain_invalidated_outputs"], 0)
         self.assertFalse(generated.exists())
@@ -336,7 +398,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
         receipt.write_text(json.dumps(data))
         with fixture.native_context("linux", "x64"), mock.patch.object(prepare.subprocess, "run") as run, \
                 self.assertRaises(prepare.Miss):
-            prepare.prepare(fixture.work, "linux", "arm64")
+            fixture.prepare(fixture.work, "linux", "arm64")
         run.assert_not_called()
         self.assertEqual((fixture.src / prepare.TYPESCRIPT_WRAPPER).read_bytes(), PORTABLE)
         report = json.loads((fixture.work / "upstream-cache-preparation.json").read_text())
@@ -346,7 +408,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
     def test_later_stage_probe_failure_does_not_publish_ready_marker(self):
         fixture = self.fixture
         with fixture.native_context("linux", "x64"):
-            prepare.prepare(fixture.work, "linux", "arm64")
+            fixture.prepare(fixture.work, "linux", "arm64")
             marker = (fixture.src / prepare.MARKER).read_bytes()
             obj = fixture.object("keep.o")
             run = prepare.subprocess.run
@@ -356,7 +418,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
                 return run(command, **kwargs)
             with mock.patch.object(prepare.subprocess, "run", side_effect=fail_tsc), \
                     self.assertRaisesRegex(ValueError, "TypeScript probe failed"):
-                prepare.prepare(fixture.work, "linux", "arm64")
+                fixture.prepare(fixture.work, "linux", "arm64")
         report = json.loads((fixture.work / "upstream-cache-preparation.json").read_text())
         self.assertFalse(report["ready_for_gn"])
         self.assertEqual(report["operation"], "prepare_linux_typescript")
@@ -370,7 +432,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
         with fixture.native_context("linux", "x64"):
             for first in (True, False):
                 if not first:
-                    self.assertTrue(prepare.prepare(fixture.work, "linux", "arm64")["ready_for_gn"])
+                    self.assertTrue(fixture.prepare(fixture.work, "linux", "arm64")["ready_for_gn"])
                 for name in ("lib.decorators.d.ts", "lib.es2023.d.ts"):
                     with self.subTest(first=first, name=name):
                         obj = fixture.object("keep.o")
@@ -386,7 +448,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
                         try:
                             with mock.patch.object(prepare.subprocess, "run", wraps=prepare.subprocess.run) as run, \
                                     self.assertRaises(FileNotFoundError) as error:
-                                prepare.prepare(fixture.work, "linux", "arm64")
+                                fixture.prepare(fixture.work, "linux", "arm64")
                             self.assertFalse(any(str(call.args[0][1]).endswith("/lib/tsc.js")
                                                  for call in run.call_args_list))
                             self.assertIn(name, str(error.exception))
@@ -429,7 +491,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
                 self.assertEqual(real_run(command, env=env, capture_output=True, text=True, timeout=30).returncode, 0)
                 for first in (True, False):
                     if not first:
-                        self.assertTrue(prepare.prepare(fixture.work, "linux", "arm64")["ready_for_gn"])
+                        self.assertTrue(fixture.prepare(fixture.work, "linux", "arm64")["ready_for_gn"])
                     for name in ("lib.decorators.d.ts", "lib.es2023.d.ts"):
                         with self.subTest(first=first, name=name):
                             path = package / "lib" / name
@@ -442,7 +504,7 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
                                                    env=env, capture_output=True, text=True, timeout=30)
                                 self.assertEqual((version.returncode, version.stdout.strip()), (0, "Version 6.0.2"))
                                 with self.assertRaises(FileNotFoundError) as error:
-                                    prepare.prepare(fixture.work, "linux", "arm64")
+                                    fixture.prepare(fixture.work, "linux", "arm64")
                                 self.assertIn(name, str(error.exception))
                                 report = json.loads((fixture.work / "upstream-cache-preparation.json").read_text())
                                 self.assertFalse(report["ready_for_gn"])
@@ -456,15 +518,15 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
                             finally:
                                 path.write_bytes(content)
                 # Exact endpoint changes made by the pinned ungoogled domain rules remain valid inputs.
-                before = prepare.prepare(fixture.work, "linux", "arm64")
+                before = fixture.prepare(fixture.work, "linux", "arm64")
                 library = package / "lib/lib.dom.d.ts"
                 canonical = library.read_bytes().replace(b"m0z111a.qjz9zk", b"mozilla.org")
                 substituted = canonical.replace(b"mozilla.org", b"m0z111a.qjz9zk")
                 self.assertNotEqual(canonical, substituted)
                 library.write_bytes(canonical)
-                normal = prepare.prepare(fixture.work, "linux", "arm64")
+                normal = fixture.prepare(fixture.work, "linux", "arm64")
                 library.write_bytes(substituted)
-                transformed = prepare.prepare(fixture.work, "linux", "arm64")
+                transformed = fixture.prepare(fixture.work, "linux", "arm64")
                 self.assertTrue(before["ready_for_gn"] and normal["ready_for_gn"] and transformed["ready_for_gn"])
                 self.assertNotEqual(normal["generator_fingerprint"]["typescript"]["package_sha256"],
                                     transformed["generator_fingerprint"]["typescript"]["package_sha256"])
@@ -474,13 +536,13 @@ class LinuxTypeScriptRestoredChainTest(unittest.TestCase):
     def test_later_stage_tampering_fails_before_invalidation_and_records_failure(self):
         fixture = self.fixture
         with fixture.native_context("linux", "x64"):
-            prepare.prepare(fixture.work, "linux", "arm64")
+            fixture.prepare(fixture.work, "linux", "arm64")
             marker = (fixture.src / prepare.MARKER).read_bytes()
             obj = fixture.object("keep.o")
             wrapper = fixture.src / prepare.TYPESCRIPT_WRAPPER
             wrapper.write_bytes(wrapper.read_bytes() + b"# unknown stage wrapper\n")
             with self.assertRaisesRegex(ValueError, "unknown restored"):
-                prepare.prepare(fixture.work, "linux", "arm64")
+                fixture.prepare(fixture.work, "linux", "arm64")
         report = json.loads((fixture.work / "upstream-cache-preparation.json").read_text())
         self.assertFalse(report["ready_for_gn"])
         self.assertEqual(report["operation"], "inspect_linux_typescript")

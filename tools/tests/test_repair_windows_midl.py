@@ -978,9 +978,23 @@ class WindowsMidlPrepareTest(unittest.TestCase):
     def fixture(self, platform="windows", arch="x64"):
         receipt = self.support.fixture(platform, arch)
         if platform == "windows":
-            identity, _, manifest = restore.identities(prepare.ROOT, platform, arch)
-            receipt.update(identity=identity, manifest=manifest)
+            from tools.tests.test_fetch_upstream_cache import pinned_windows153_source
+
+            repo = self.support.fixture_repo
+            path = repo / "build/upstream-cache.json"
+            source_manifest = json.loads(path.read_text())
+            source_manifest["sources"]["windows"] = pinned_windows153_source(repo)
+            self.support.write(path, json.dumps(source_manifest))
+            self.support.write(self.src / "chrome/VERSION", "MAJOR=153\nMINOR=0\nBUILD=8010\nPATCH=47\n")
+            identity, _, manifest = restore.identities(repo, platform, arch)
+            receipt.update(identity=identity, manifest=manifest,
+                           original_args=restore.source_args(self.src, identity))
             self.support.write(self.src / restore.MARKER, json.dumps(receipt))
+            original_prepare = prepare.prepare
+            patcher = mock.patch.object(prepare, "prepare", side_effect=lambda *args, **kwargs:
+                                        original_prepare(*args, repo=repo, **kwargs))
+            patcher.start()
+            self.addCleanup(patcher.stop)
         return receipt
 
     def install(self, payload=ORIGINAL):

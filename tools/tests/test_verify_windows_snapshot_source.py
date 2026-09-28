@@ -66,9 +66,18 @@ class Fixture:
                      "build/ungoogled-revisions.psd1", "build/upstream-cache.json", "build/args.windows.gn"):
             path = ROOT / name
             if path.exists():
-                data = path.read_text().replace("31e6f2dd3bb2f113800d25ae359f024684addb51", core_sha)
-                data = data.replace("657b9731b68aae35d4ee02428684ab8bdceb9181", platform_sha)
-                put(self.previous, name, data)
+                put(self.previous, name, path.read_text())
+        from tools.tests.test_fetch_upstream_cache import pinned_windows153_source
+
+        manifest_path = self.previous / "build/upstream-cache.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["sources"]["windows"] = pinned_windows153_source(self.previous)
+        put(self.previous, "build/upstream-cache.json", json.dumps(manifest))
+        for name in ("build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
+            path = self.previous / name
+            data = path.read_text().replace("31e6f2dd3bb2f113800d25ae359f024684addb51", core_sha)
+            data = data.replace("657b9731b68aae35d4ee02428684ab8bdceb9181", platform_sha)
+            put(self.previous, name, data)
         put(self.previous, "build/windows/prepare-ungoogled.ps1", "throw 'donor code executed'\n")
         put(self.previous, "tools/prepare_restored_build.py", "raise RuntimeError('donor code executed')\n")
         put(self.previous, "assets/fixture.dat", b"asset\0")
@@ -316,7 +325,8 @@ def test_current_base_has_216_patches_and_no_midl_overlap():
     for name in verify.identity._series(ROOT):
         _, entries = verify.arp.transform_patch((ROOT / name).read_bytes(), set(), [])
         assert verify.MIDL_SOURCE not in {entry[0] for entry in entries}
-    assert verify.load_pins(ROOT, "windows")["ChromiumVersion"] == verify.VERSION
+    assert verify.VERSION == "153.0.8010.47"
+    assert verify.load_pins(ROOT, "windows")["ChromiumVersion"] == "154.0.8037.57"
 
 
 @pytest.mark.parametrize("mutation", ["shallow", "target-sha", "missing-run", "wrong-job", "grandchild", "same-sha"])
