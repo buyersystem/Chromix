@@ -53,6 +53,8 @@ BINARY_HASHES = {
 }
 GN_OLD = b'_esbuild = "/usr/bin/esbuild"'
 GN_NEW = b'_esbuild = devtools_location_prepend + "third_party/esbuild/chromix-linux/esbuild"'
+TSC_OLD = b'  tsc_binary = "/usr/bin/tsc"'
+TSC_NEW = b'  tsc_binary = devtools_location_prepend + "node_modules/typescript/bin/tsc"'
 # DevTools 66df492aaa0129d090937e933dd44c5389ab24d2 plus portablelinux patches.
 SOURCE_REPAIRS = {
     "scripts/build/esbuild.js": (
@@ -66,6 +68,10 @@ SOURCE_REPAIRS = {
     "scripts/build/typescript/typescript.gni": (
         "de82419b6538ed10cb49e362c8025bc21b8301d72d15110237cc4ea5f58dd575",
         "e9b2dc92202ce8e9f6deca5d2c166b10644c8f9bda4a252648228a1f785b3dc2", GN_OLD, GN_NEW),
+    "scripts/build/typescript/typescript_vars.gni": (
+        "1f37a0ec115a482cad5eb3d21d3addf605cded05e933f00b6627e7b607fef0d5",
+        "fcb41c43639bc6df1ee44d2ccc55d7ba6f38ff03da33b91072c59d26c0135472",
+        TSC_OLD, TSC_NEW),
     "scripts/build/typescript/ts_library.py": (
         "c16be050b46de839827ca8cf3ec03752ca11ca549a7e3ebf06fe94ceb314103c",
         "64cd3e00db5b66e89f9a4aa37e96f1625fc27b39c1002bd3e84bfb9a2bc3df1e",

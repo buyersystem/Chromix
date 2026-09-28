@@ -16,6 +16,7 @@ from tools import linux_restored_generators as linux154
 from tools import prepare_restored_build as prepare
 from tools.tests.test_linux_typescript import FIXTURE, PORTABLE, install_typescript_fixture
 
+LINUX154_SOURCE_REPAIRS = linux154.SOURCE_REPAIRS.copy()
 PIN_KEYS = ("ChromiumVersion", "UngoogledCommit", "UngoogledLinuxCommit")
 PINS153 = ("153.0.8010.36", "dd8fb9b5c837982faf41ba58cd30a5664e77c329",
            "a5ffa5e4a9fb722b97a5cf7966e29450a150c3dd")
@@ -152,6 +153,23 @@ class Linux154GeneratorsTest(unittest.TestCase):
         self.assertEqual(self.wrapper.read_bytes(), PORTABLE154)
         self.assertEqual(self.wrapper.stat().st_mtime_ns, before)
         self.assertEqual(donor.read_bytes(), b"unverified donor binary")
+
+    def test_typescript_gn_repair_uses_retained_local_compiler_input(self):
+        relative = "scripts/build/typescript/typescript_vars.gni"
+        original_hash, repaired_hash, old, new = LINUX154_SOURCE_REPAIRS[relative]
+        source = self.src / linux154.DEVTOOLS / relative
+        self.assertEqual(original_hash, "1f37a0ec115a482cad5eb3d21d3addf605cded05e933f00b6627e7b607fef0d5")
+        self.assertEqual(repaired_hash, "fcb41c43639bc6df1ee44d2ccc55d7ba6f38ff03da33b91072c59d26c0135472")
+        self.assertEqual(source.read_bytes().count(linux154.SOURCE_REPAIRS[relative][2]), 1)
+        self.install()
+        fixture_repaired_hash = linux154.SOURCE_REPAIRS[relative][1]
+        self.repair()
+        self.assertEqual(linux154.sha256(source.read_bytes()), fixture_repaired_hash)
+        self.assertEqual(source.read_bytes().count(new), 1)
+        compiler = self.package / "bin/tsc"
+        self.assertTrue(compiler.is_file())
+        self.assertTrue(os.access(compiler, os.X_OK))
+        self.assertEqual(new, b'  tsc_binary = devtools_location_prepend + "node_modules/typescript/bin/tsc"')
 
     def test_native_host_switch_idempotence_and_module_probe(self):
         for host in ("x64", "arm64", "x64"):
