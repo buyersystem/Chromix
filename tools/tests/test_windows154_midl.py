@@ -49,9 +49,9 @@ ARM_IDENTITY = {
     "head_branch": "154.0.8037.97-1.1", "event": "push",
     "workflow_path": ".github/workflows/build-arm.yml",
     "run_id": 37100793757,
-    "artifact_id": 11362477331, "artifact_name": "build-artifact-arm",
-    "artifact_digest": "sha256:e1736ce07dc1cddcf4280f4d0f92362ec0b2d3494eeb8c3e36841ead52690437",
-    "artifact_size_in_bytes": 15587196317,
+    "artifact_id": 11374949381, "artifact_name": "build-artifact-arm",
+    "artifact_digest": "sha256:cc18df9a9169f62520fd21f52b27105a49a20a07004688c35f1a4c0a4cd1c66f",
+    "artifact_size_in_bytes": 15738033821,
 }
 
 IDENTITY = {
