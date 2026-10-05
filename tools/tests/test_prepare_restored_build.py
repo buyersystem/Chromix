@@ -10,11 +10,13 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stdout
+from functools import partial
 from unittest import mock
 
 from tools import prepare_restored_build as prepare
 from tools import restore_upstream_cache as restore
 from tools.tests.test_restore_upstream_cache import windows_source
+from tools.tests.test_linux_typescript import LINUX153_PINS, install_linux_repo_fixture
 
 
 class PrepareRestoredBuildTest(unittest.TestCase):
@@ -51,8 +53,13 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         self.write(path, header)
         path.chmod(0o755)
 
-    def fixture(self, platform="macos", arch="arm64", donor_arch=None, *, host_arch=None):
+    def fixture(self, platform="macos", arch="arm64", donor_arch=None, *, host_arch=None,
+                linux_pins=None):
         repo = prepare.ROOT
+        if platform == "linux" and linux_pins is not None:
+            temporary = tempfile.TemporaryDirectory(prefix="historical Linux fixture pins ")
+            self.addCleanup(temporary.cleanup)
+            repo = install_linux_repo_fixture(Path(temporary.name), linux_pins)
         if platform == "windows":
             temporary = tempfile.TemporaryDirectory()
             self.addCleanup(temporary.cleanup)
@@ -102,6 +109,13 @@ class PrepareRestoredBuildTest(unittest.TestCase):
             from tools.tests.test_linux_typescript import install_typescript_fixture
             install_typescript_fixture(self.src)
         return receipt
+
+    def linux_fixture(self, *args, **kwargs):
+        return self.fixture("linux", *args, linux_pins=LINUX153_PINS, **kwargs)
+
+    def prepare(self, *args, **kwargs):
+        kwargs.setdefault("repo", getattr(self, "fixture_repo", prepare.ROOT))
+        return prepare.prepare(*args, **kwargs)
 
     def deps(self, records):
         paths = list(dict.fromkeys(name for output, inputs in records.items() for name in (output, *inputs)))
@@ -389,7 +403,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.work = root / f"{arch}-on-{host_arch}"
                 self.src = self.work / "src"
                 self.out = self.src / "out/Default"
-                receipt = self.fixture("linux", arch, host_arch=host_arch)
+                receipt = self.linux_fixture(arch, host_arch=host_arch)
                 self.write(self.src / "include/a.h", "header")
                 obj = self.object("internal.o")
                 self.deps({"obj/internal.o": ["../../include/a.h"]})
@@ -400,7 +414,8 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.src / restore.MARKER, *(self.out / name for name in prepare.METADATA))}
                 before = obj.stat().st_mtime_ns
                 output = io.StringIO()
-                with self.native_context("linux", host_arch), redirect_stdout(output):
+                with self.native_context("linux", host_arch), redirect_stdout(output), \
+                        mock.patch.object(prepare, "prepare", partial(prepare.prepare, repo=self.fixture_repo)):
                     code = prepare.main(["--phase", "inspect", "--platform", "linux", "--arch", arch,
                                          "--workdir", str(self.work)])
                     self.assertEqual(code, 0)
@@ -410,11 +425,11 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.assertTrue(inspection["native_tools"])
                     self.assertFalse(inspection["host_mismatch"])
                     self.assertFalse(inspection["needs_invalidation"])
-                    again = prepare.prepare(self.work, "linux", arch, phase="inspect")
+                    again = self.prepare(self.work, "linux", arch, phase="inspect")
                     self.assertFalse(again["needs_invalidation"])
                     self.assertFalse(again["generators_changed"])
-                    result = prepare.prepare(self.work, "linux", arch)
-                    resumed = prepare.prepare(self.work, "linux", arch)
+                    result = self.prepare(self.work, "linux", arch)
+                    resumed = self.prepare(self.work, "linux", arch)
                 for report in (inspection, result, resumed):
                     self.assertEqual((report["platform"], report["arch"]), ("linux", arch))
                     self.assertEqual(report["host"], {"platform": "linux", "arch": host_arch})
@@ -436,22 +451,22 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.assertFalse((self.src / prepare.INSPECTION).exists())
 
     def test_linux_cross_never_executes_target_architecture_tools(self):
-        self.fixture("linux", "arm64", donor_arch="arm64", host_arch="x64")
+        self.linux_fixture("arm64", donor_arch="arm64", host_arch="x64")
         obj = self.object("internal.o")
         self.deps({"obj/internal.o": ["../../include/a.h"]})
         with self.native_context("linux", "x64"), mock.patch.object(prepare.subprocess, "run") as run:
-            inspection = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+            inspection = self.prepare(self.work, "linux", "arm64", phase="inspect")
             self.assertTrue(inspection["needs_invalidation"])
             self.assertTrue(inspection["host_mismatch"])
             self.assertFalse(inspection["native_tools"])
             with self.assertRaisesRegex(ValueError, "cannot execute on the native host"):
-                prepare.prepare(self.work, "linux", "arm64")
+                self.prepare(self.work, "linux", "arm64")
             run.assert_not_called()
             self.assertTrue(obj.exists())
         for relative in prepare.tool_paths("linux", "arm64", host_arch="x64").values():
             self.binary(self.src / relative, "linux", "x64")
         with self.native_context("linux", "x64"):
-            result = prepare.prepare(self.work, "linux", "arm64")
+            result = self.prepare(self.work, "linux", "arm64")
         self.assertFalse(obj.exists())
         self.assertEqual(result["counters"]["tool_swap_invalidations"], 1)
 
@@ -462,22 +477,22 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.work = root / host_arch
                 self.src = self.work / "src"
                 self.out = self.src / "out/Default"
-                self.fixture("linux", "arm64", host_arch=host_arch)
+                self.linux_fixture("arm64", host_arch=host_arch)
                 self.write(self.src / "include/a.h", "header")
                 self.deps({"obj/internal.o": ["../../include/a.h"]})
                 obj = self.object("internal.o")
                 with self.native_context("linux", host_arch):
-                    prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+                    self.prepare(self.work, "linux", "arm64", phase="inspect")
                     compiler = self.src / prepare.CLANG / "bin/clang"
                     self.write(compiler, compiler.read_bytes() + b"changed compiler")
-                    inspection = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+                    inspection = self.prepare(self.work, "linux", "arm64", phase="inspect")
                     self.assertTrue(inspection["needs_invalidation"])
-                    result = prepare.prepare(self.work, "linux", "arm64")
+                    result = self.prepare(self.work, "linux", "arm64")
                     self.assertFalse(obj.exists())
                     self.assertEqual(result["counters"]["tool_swap_invalidations"], 1)
                     obj = self.object("internal.o")
                     self.write(self.src / prepare.CLANG / "lib/libclang.so", "changed runtime")
-                    result = prepare.prepare(self.work, "linux", "arm64")
+                    result = self.prepare(self.work, "linux", "arm64")
                 self.assertFalse(obj.exists())
                 self.assertEqual(result["counters"]["tool_swap_invalidations"], 1)
 
@@ -630,7 +645,8 @@ class PrepareRestoredBuildTest(unittest.TestCase):
 
     def test_windows_x64_host_prepares_arm64_without_rewriting_source_or_internal_objects(self):
         receipt = self.fixture("windows", "arm64", host_arch="x64")
-        self.assertEqual(receipt["identity"]["chromium_version"], "153.0.8010.47")
+        self.assertEqual(receipt["identity"]["chromium_version"],
+                         prepare.load_pins(self.fixture_repo, "windows")["ChromiumVersion"])
         self.assertEqual(receipt["identity"]["run_id"], 103)
         self.assertEqual(receipt["identity"]["workflow_path"], ".github/workflows/build-arm.yml")
         obj = self.object("target.obj")
@@ -737,7 +753,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         self.assertTrue(result["native_tools"])
 
     def test_host_tool_failure_is_not_claimed_compatible(self):
-        self.fixture("linux", "arm64")
+        self.linux_fixture("arm64")
         with mock.patch.object(prepare, "host_identity", return_value=("linux", "arm64")), \
                 mock.patch.object(prepare.subprocess, "run", return_value=mock.Mock(returncode=1, stdout="GLIBC_2.38 not found")):
             result = prepare.validate_native_tools(self.src, "linux", "arm64")
@@ -747,7 +763,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
     def test_unverified_source_fails_before_any_probe(self):
         with mock.patch.object(prepare.subprocess, "run") as run:
             with self.assertRaises((ValueError, OSError)):
-                prepare.prepare(self.work, "linux", "x64", phase="inspect")
+                self.prepare(self.work, "linux", "x64", phase="inspect")
         run.assert_not_called()
 
     def test_resume_keeps_products_and_objects_until_environment_changes(self):
@@ -823,7 +839,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         self.assertEqual(result["counters"]["tool_swap_invalidations"], 1)
 
     def test_missing_node_link_does_not_discard_unrelated_compiled_objects(self):
-        self.fixture("linux", "x64")
+        self.linux_fixture("x64")
         obj = self.object("internal.o")
         node = self.src / prepare.tool_paths("linux", "x64")["node"]
         node.unlink()
@@ -831,21 +847,21 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         self.write(self.out / ".ninja_log", "# ninja log v5\n0\t1\t1\tgen/node-output.h\tabc\n")
         self.deps({"obj/internal.o": ["../../include/a.h"]})
         with self.native_context("linux", "x64"):
-            inspection = prepare.prepare(self.work, "linux", "x64", phase="inspect")
+            inspection = self.prepare(self.work, "linux", "x64", phase="inspect")
             self.assertFalse(inspection["needs_invalidation"])
             self.binary(node, "linux", "x64")
-            result = prepare.prepare(self.work, "linux", "x64")
+            result = self.prepare(self.work, "linux", "x64")
         self.assertTrue(obj.exists())
         self.assertFalse(generated.exists())
         self.assertEqual(result["counters"]["toolchain_invalidated_outputs"], 0)
         self.assertEqual(result["generated_outputs"]["removed_outputs"], 1)
 
     def test_generator_content_change_rebuilds_generated_inputs_and_readers(self):
-        self.fixture("linux", "x64")
+        self.linux_fixture("x64")
         go = self.src / prepare.generator_paths("linux", "x64")["go"]
         self.write(go, "go version one")
         with self.native_context("linux", "x64"):
-            prepare.prepare(self.work, "linux", "x64")
+            self.prepare(self.work, "linux", "x64")
             independent = self.object("independent.o")
             dependent = self.object("generated.o")
             generated = self.write(self.out / "gen/go-output.h", "generated")
@@ -854,7 +870,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
             self.write(self.out / ".ninja_log", "# ninja log v5\n0\t1\t1\tgen/go-output.h\tabc\n")
             self.write(go, "go version two")
             os.utime(go, ns=(1, 1))
-            result = prepare.prepare(self.work, "linux", "x64")
+            result = self.prepare(self.work, "linux", "x64")
         self.assertTrue(independent.exists())
         self.assertFalse(generated.exists())
         self.assertFalse(dependent.exists())
@@ -903,14 +919,14 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.assertFalse((work / "src" / other_go).exists())
 
     def test_linux_cross_fingerprints_host_generators_not_target_generators(self):
-        self.fixture("linux", "arm64", host_arch="x64")
+        self.linux_fixture("arm64", host_arch="x64")
         host_go = self.src / prepare.generator_paths("linux", "arm64", host_arch="x64")["go"]
         target_go = self.src / prepare.generator_paths("linux", "arm64")["go"]
         self.write(host_go, "host go one")
         self.write(target_go, "target go one")
         self.write(self.src / prepare.tool_paths("linux", "arm64")["node"], "target node")
         with self.native_context("linux", "x64"):
-            prepare.prepare(self.work, "linux", "arm64")
+            self.prepare(self.work, "linux", "arm64")
             independent = self.object("independent.o")
             dependent = self.object("generated.o")
             generated = self.write(self.out / "gen/go-output.h", "generated")
@@ -918,12 +934,12 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                        "obj/generated.o": ["gen/go-output.h"]})
             self.write(self.out / ".ninja_log", "# ninja log v5\n0\t1\t1\tgen/go-output.h\tabc\n")
             self.write(target_go, "target go two")
-            result = prepare.prepare(self.work, "linux", "arm64")
+            result = self.prepare(self.work, "linux", "arm64")
             self.assertEqual(result["counters"]["generator_rechecks"], 0)
             self.assertTrue(generated.exists())
             self.assertTrue(dependent.exists())
             self.write(host_go, "host go two")
-            result = prepare.prepare(self.work, "linux", "arm64")
+            result = self.prepare(self.work, "linux", "arm64")
         self.assertTrue(independent.exists())
         self.assertFalse(dependent.exists())
         self.assertFalse(generated.exists())
@@ -991,7 +1007,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.work = root / f"{cpu}-{state}"
                     self.src = self.work / "src"
                     self.out = self.src / "out/Default"
-                    self.fixture("linux", "arm64", host_arch="x64")
+                    self.linux_fixture("arm64", host_arch="x64")
                     self.sysroot("arm64" if cpu == "amd64" else "amd64")
                     if state != "missing":
                         stamp = self.sysroot(cpu)
@@ -1002,16 +1018,16 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.deps({"obj/sysroot.o": []})
                     metadata = {name: (self.out / name).read_bytes() for name in prepare.METADATA}
                     with self.native_context("linux", "x64"):
-                        before = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+                        before = self.prepare(self.work, "linux", "arm64", phase="inspect")
                         self.assertFalse(before["sysroots_changed"])
                         self.assertEqual(len(before["sysroot_identity"]), 2)
                         stamp = self.sysroot(cpu, "two")
                         for _ in range(2):
-                            pending = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+                            pending = self.prepare(self.work, "linux", "arm64", phase="inspect")
                             self.assertTrue(pending["sysroots_changed"])
                             self.assertFalse(pending["needs_invalidation"])
                             self.assertTrue(obj.exists())
-                        result = prepare.prepare(self.work, "linux", "arm64")
+                        result = self.prepare(self.work, "linux", "arm64")
                     self.assertFalse(obj.exists())
                     self.assertFalse(archive.exists())
                     self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
@@ -1028,11 +1044,11 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.work = root / cpu
                 self.src = self.work / "src"
                 self.out = self.src / "out/Default"
-                self.fixture("linux", "arm64", host_arch="x64")
+                self.linux_fixture("arm64", host_arch="x64")
                 stamps = {name: self.sysroot(name) for name in ("amd64", "arm64")}
                 self.deps({"obj/sysroot.o": []})
                 with self.native_context("linux", "x64"):
-                    first = prepare.prepare(self.work, "linux", "arm64")
+                    first = self.prepare(self.work, "linux", "arm64")
                     obj = self.object("sysroot.o")
                     stamp = stamps[cpu]
                     header = stamp.parent / "usr/include/fixture.h"
@@ -1041,7 +1057,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     for path, info in times.items():
                         os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
                         self.assertEqual(path.stat().st_size, info.st_size)
-                    result = prepare.prepare(self.work, "linux", "arm64")
+                    result = self.prepare(self.work, "linux", "arm64")
                     self.assertNotEqual(first["sysroot_identity"], result["sysroot_identity"])
                     self.assertFalse(obj.exists())
                     self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
@@ -1049,54 +1065,54 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.binary(self.out / "gn", "linux", "x64")
                     self.object("sysroot.o")
                     before = obj.stat().st_mtime_ns
-                    prepare.prepare(self.work, "linux", "arm64", phase="inspect")
-                    resumed = prepare.prepare(self.work, "linux", "arm64")
+                    self.prepare(self.work, "linux", "arm64", phase="inspect")
+                    resumed = self.prepare(self.work, "linux", "arm64")
                 self.assertEqual(resumed["counters"]["sysroot_invalidations"], 0)
                 self.assertEqual(resumed["counters"]["toolchain_invalidated_outputs"], 0)
                 self.assertEqual(obj.stat().st_mtime_ns, before)
 
     def test_linux_sysroot_change_stays_pending_after_reversion_and_failed_finish(self):
-        self.fixture("linux", "arm64", host_arch="x64")
+        self.linux_fixture("arm64", host_arch="x64")
         stamp = self.sysroot("amd64")
         self.sysroot("arm64")
         obj = self.object("sysroot.o")
         self.deps({"obj/sysroot.o": []})
         with self.native_context("linux", "x64"):
-            first = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+            first = self.prepare(self.work, "linux", "arm64", phase="inspect")
             info = stamp.stat()
             self.write(stamp, "replacement")
-            prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+            self.prepare(self.work, "linux", "arm64", phase="inspect")
             self.sysroot("amd64")
             os.utime(stamp, ns=(info.st_atime_ns, info.st_mtime_ns))
-            restored = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+            restored = self.prepare(self.work, "linux", "arm64", phase="inspect")
             self.assertEqual(first["sysroot_identity"], restored["sysroot_identity"])
             self.assertTrue(restored["sysroots_changed"])
             with mock.patch.object(prepare, "environment_identity", side_effect=ValueError("unavailable")):
                 with self.assertRaisesRegex(ValueError, "unavailable"):
-                    prepare.prepare(self.work, "linux", "arm64")
+                    self.prepare(self.work, "linux", "arm64")
             self.assertTrue(obj.exists())
-            result = prepare.prepare(self.work, "linux", "arm64")
+            result = self.prepare(self.work, "linux", "arm64")
         self.assertFalse(obj.exists())
         self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
 
     def test_linux_sysroot_failed_direct_finish_persists_change_before_reversion(self):
-        self.fixture("linux", "arm64", host_arch="x64")
+        self.linux_fixture("arm64", host_arch="x64")
         stamp = self.sysroot("amd64")
         self.sysroot("arm64")
         with self.native_context("linux", "x64"):
-            prepare.prepare(self.work, "linux", "arm64")
+            self.prepare(self.work, "linux", "arm64")
             obj = self.object("internal.o")
             self.deps({"obj/internal.o": []})
             info = stamp.stat()
             self.write(stamp, "replacement")
             with mock.patch.object(prepare, "environment_identity", side_effect=ValueError("unavailable")):
                 with self.assertRaisesRegex(ValueError, "unavailable"):
-                    prepare.prepare(self.work, "linux", "arm64")
+                    self.prepare(self.work, "linux", "arm64")
             pending = json.loads((self.src / prepare.INSPECTION).read_text())
             self.assertTrue(pending["sysroots_changed"])
             self.sysroot("amd64")
             os.utime(stamp, ns=(info.st_atime_ns, info.st_mtime_ns))
-            result = prepare.prepare(self.work, "linux", "arm64")
+            result = self.prepare(self.work, "linux", "arm64")
         self.assertFalse(obj.exists())
         self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
 
@@ -1107,14 +1123,14 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.work = root / cpu
                 self.src = self.work / "src"
                 self.out = self.src / "out/Default"
-                self.fixture("linux", "arm64", host_arch="x64")
+                self.linux_fixture("arm64", host_arch="x64")
                 self.sysroot("arm64" if cpu == "amd64" else "amd64")
                 obj = self.object("internal.o")
                 self.deps({"obj/internal.o": []})
                 with self.native_context("linux", "x64"):
-                    prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+                    self.prepare(self.work, "linux", "arm64", phase="inspect")
                     self.sysroot(cpu)
-                    result = prepare.prepare(self.work, "linux", "arm64")
+                    result = self.prepare(self.work, "linux", "arm64")
                 self.assertFalse(obj.exists())
                 self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
 
@@ -1125,7 +1141,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.work = root / f"{arch}-{host}"
                 self.src = self.work / "src"
                 self.out = self.src / "out/Default"
-                self.fixture("linux", arch, host_arch=host)
+                self.linux_fixture(arch, host_arch=host)
                 for cpu in ("amd64", "arm64"):
                     self.sysroot(cpu)
                 obj = self.object("internal.o")
@@ -1137,14 +1153,14 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.binary(host_bin / name, "linux", host)
                 with self.native_context("linux", host), \
                         mock.patch.object(prepare.shutil, "which", side_effect=lambda name: str(host_bin / name)):
-                    prepare.prepare(self.work, "linux", arch, phase="inspect")
+                    self.prepare(self.work, "linux", arch, phase="inspect")
                     prepare.prepare_tooling_links(self.work, "linux", arch, host_arch=host)
-                    prepare.prepare(self.work, "linux", arch, phase="inspect")
+                    self.prepare(self.work, "linux", arch, phase="inspect")
                     prepare.prepare_tooling_links(self.work, "linux", arch, host_arch=host)
-                    first = prepare.prepare(self.work, "linux", arch)
-                    prepare.prepare(self.work, "linux", arch, phase="inspect")
+                    first = self.prepare(self.work, "linux", arch)
+                    self.prepare(self.work, "linux", arch, phase="inspect")
                     prepare.prepare_tooling_links(self.work, "linux", arch, host_arch=host)
-                    resumed = prepare.prepare(self.work, "linux", arch)
+                    resumed = self.prepare(self.work, "linux", arch)
                 for report in (first, resumed):
                     self.assertEqual(len(report["sysroot_identity"]), 1 if arch == host else 2)
                     self.assertEqual(report["counters"]["sysroot_invalidations"], 0)
@@ -1159,13 +1175,13 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.work = root / f"{arch}-{host}" / "donor"
                 self.src = self.work / "src"
                 self.out = self.src / "out/Default"
-                self.fixture("linux", arch, host_arch=host)
+                self.linux_fixture(arch, host_arch=host)
                 stamps = [self.sysroot(cpu) for cpu in ("amd64", "arm64")]
                 for stamp in stamps:
                     self.write(stamp.parent / ".fixture_is_first_class_gcs", "first class")
                 with self.native_context("linux", host), \
                         mock.patch.object(prepare, "environment_identity", side_effect=environment_identity):
-                    previous = prepare.prepare(self.work, "linux", arch)
+                    previous = self.prepare(self.work, "linux", arch)
                     retained = [self.object(name) for name in ("host.o", "target.o", "archive.rlib")]
                     self.object("external.o")
                     self.object("missing.o")
@@ -1182,9 +1198,9 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.out = self.src / "out/Default"
                     current = prepare.linux_sysroot_identity(self.src, arch, host_arch=host)
                     self.assertFalse(prepare._sysroots_changed(previous, current))
-                    pending = prepare.prepare(self.work, "linux", arch, phase="inspect")
+                    pending = self.prepare(self.work, "linux", arch, phase="inspect")
                     self.assertFalse(pending["sysroots_changed"])
-                    result = prepare.prepare(self.work, "linux", arch)
+                    result = self.prepare(self.work, "linux", arch)
                 self.assertEqual(result["counters"]["sysroot_invalidations"], 0)
                 self.assertEqual(result["counters"]["toolchain_invalidated_outputs"], 0)
                 self.assertEqual(result["counters"]["environment_rechecks"], 1)
@@ -1326,13 +1342,13 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.work = root / f"{cpu}-{change}" / "donor"
                     self.src = self.work / "src"
                     self.out = self.src / "out/Default"
-                    self.fixture("linux", "arm64", host_arch="x64")
+                    self.linux_fixture("arm64", host_arch="x64")
                     stamps = {name: self.sysroot(name) for name in ("amd64", "arm64")}
                     marker = stamps[cpu].parent / ".fixture_is_first_class_gcs"
                     if change == "first-class-changed":
                         self.write(marker, "one")
                     with self.native_context("linux", "x64"):
-                        prepare.prepare(self.work, "linux", "arm64")
+                        self.prepare(self.work, "linux", "arm64")
                         self.object("internal.o")
                         self.object("archive.rlib")
                         self.deps({"obj/internal.o": []})
@@ -1351,7 +1367,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                             os.utime(changed, ns=(info.st_atime_ns, info.st_mtime_ns))
                             self.assertEqual(changed.stat().st_size, info.st_size)
                         os.utime(stamp.parent, ns=(root_info.st_atime_ns, root_info.st_mtime_ns))
-                        result = prepare.prepare(self.work, "linux", "arm64")
+                        result = self.prepare(self.work, "linux", "arm64")
                     self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
                     self.assertFalse((self.out / "obj/internal.o").exists())
                     self.assertFalse((self.out / "obj/archive.rlib").exists())
@@ -1365,13 +1381,13 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.work = root / f"{cpu}-{state}"
                     self.src = self.work / "src"
                     self.out = self.src / "out/Default"
-                    self.fixture("linux", "arm64", host_arch="x64")
+                    self.linux_fixture("arm64", host_arch="x64")
                     stamps = {name: self.sysroot(name) for name in ("amd64", "arm64")}
                     if state == "missing":
                         stamps[cpu].unlink()
                     with self.native_context("linux", "x64"), \
                             mock.patch.object(prepare, "environment_identity", side_effect=environment_identity):
-                        previous = prepare.prepare(self.work, "linux", "arm64")
+                        previous = self.prepare(self.work, "linux", "arm64")
                         previous.pop("sysroot_identity")
                         previous.pop("sysroots_changed")
                         if state == "unknown":
@@ -1381,20 +1397,20 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                         self.deps({"obj/internal.o": []})
                         if state in ("changed", "missing"):
                             self.sysroot(cpu, "updated stamp")
-                        pending = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+                        pending = self.prepare(self.work, "linux", "arm64", phase="inspect")
                         self.assertEqual(pending["sysroots_changed"], state != "unchanged")
-                        result = prepare.prepare(self.work, "linux", "arm64")
+                        result = self.prepare(self.work, "linux", "arm64")
                     self.assertEqual(result["counters"]["sysroot_invalidations"], int(state != "unchanged"))
                     self.assertEqual((self.out / "obj/internal.o").exists(), state == "unchanged")
 
     def test_linux_legacy_pending_uses_reliable_old_environment_without_invalidation(self):
-        self.fixture("linux", "arm64", host_arch="x64")
+        self.linux_fixture("arm64", host_arch="x64")
         self.sysroot("amd64")
         self.sysroot("arm64")
         environment_identity = prepare.environment_identity
         with self.native_context("linux", "x64"), \
                 mock.patch.object(prepare, "environment_identity", side_effect=environment_identity):
-            previous = prepare.prepare(self.work, "linux", "arm64")
+            previous = self.prepare(self.work, "linux", "arm64")
             previous.pop("sysroot_identity")
             previous.pop("sysroots_changed")
             self.write(self.src / prepare.MARKER, json.dumps(previous))
@@ -1403,22 +1419,22 @@ class PrepareRestoredBuildTest(unittest.TestCase):
             self.write(self.src / prepare.INSPECTION, json.dumps(pending))
             obj = self.object("internal.o")
             self.deps({"obj/internal.o": []})
-            result = prepare.prepare(self.work, "linux", "arm64")
+            result = self.prepare(self.work, "linux", "arm64")
         self.assertTrue(obj.exists())
         self.assertEqual(result["counters"]["sysroot_invalidations"], 0)
 
     def test_linux_legacy_pending_without_baseline_invalidates_conservatively(self):
-        self.fixture("linux", "arm64", host_arch="x64")
+        self.linux_fixture("arm64", host_arch="x64")
         self.sysroot("amd64")
         self.sysroot("arm64")
         obj = self.object("internal.o")
         self.deps({"obj/internal.o": []})
         with self.native_context("linux", "x64"):
-            pending = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+            pending = self.prepare(self.work, "linux", "arm64", phase="inspect")
             pending.pop("sysroot_identity")
             pending.pop("sysroots_changed")
             self.write(self.src / prepare.INSPECTION, json.dumps(pending))
-            result = prepare.prepare(self.work, "linux", "arm64")
+            result = self.prepare(self.work, "linux", "arm64")
         self.assertFalse(obj.exists())
         self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
 
@@ -1453,18 +1469,18 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 prepare.linux_sysroot_identity(self.src, arch, host_arch=host)
 
     def test_sysroot_path_failure_preserves_objects_and_reports_not_ready(self):
-        self.fixture("linux", "arm64", host_arch="x64")
+        self.linux_fixture("arm64", host_arch="x64")
         stamp = self.sysroot("amd64")
         self.sysroot("arm64")
         with self.native_context("linux", "x64"):
-            prepare.prepare(self.work, "linux", "arm64")
+            self.prepare(self.work, "linux", "arm64")
             marker = (self.src / prepare.MARKER).read_bytes()
             obj = self.object("internal.o")
             stamp.unlink()
             target = self.write(self.work / "external-stamp", "keep")
             stamp.symlink_to(target)
             with self.assertRaisesRegex(ValueError, "unsafe"):
-                prepare.prepare(self.work, "linux", "arm64")
+                self.prepare(self.work, "linux", "arm64")
         report = json.loads((self.work / "upstream-cache-preparation.json").read_text())
         self.assertFalse(report["ready_for_gn"])
         self.assertEqual(report["operation"], "linux_sysroot_identity")
@@ -1501,7 +1517,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
             prepare.linux_sysroot_identity(self.src, "x64", host_arch="x64")
 
     def test_sysroot_invalidation_does_not_follow_output_links_or_delete_sdk(self):
-        self.fixture("linux", "arm64", host_arch="x64")
+        self.linux_fixture("arm64", host_arch="x64")
         stamp = self.sysroot("amd64")
         self.sysroot("arm64")
         sdk = self.write(self.out / "sdk/lib.a", "SDK")
@@ -1510,9 +1526,9 @@ class PrepareRestoredBuildTest(unittest.TestCase):
         obj = self.object("internal.o")
         self.deps({"obj/internal.o": [], "obj/link.o": [], "sdk/lib.a": []})
         with self.native_context("linux", "x64"):
-            prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+            self.prepare(self.work, "linux", "arm64", phase="inspect")
             self.write(stamp, "replacement")
-            result = prepare.prepare(self.work, "linux", "arm64")
+            result = self.prepare(self.work, "linux", "arm64")
         self.assertEqual(result["counters"]["sysroot_invalidations"], 1)
         self.assertFalse(obj.exists())
         self.assertEqual(sdk.read_text(), "SDK")
@@ -1598,13 +1614,13 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.assertFalse(prepare.environments_compatible(value, value))
 
     def test_invalid_stored_environment_still_rechecks_sdk_dependencies(self):
-        self.fixture("linux", "x64")
+        self.linux_fixture("x64")
         header = self.write(self.work / "SDK/include/header.h", "sdk header")
         self.deps({"obj/sdk.o": [str(header)]})
         environment_identity = prepare.environment_identity
         with self.native_context("linux", "x64"), mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch.object(prepare, "environment_identity", side_effect=environment_identity):
-            prepare.prepare(self.work, "linux", "x64")
+            self.prepare(self.work, "linux", "x64")
             for kind in ("missing", "null", "empty", "scheduling-only", "malformed-scheduling"):
                 with self.subTest(kind=kind):
                     marker = json.loads((self.src / prepare.MARKER).read_text())
@@ -1620,9 +1636,9 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                         marker["environment"]["environment"]["GITHUB_JOB"] = None
                     self.write(self.src / prepare.MARKER, json.dumps(marker))
                     obj = self.object("sdk.o")
-                    prepare.prepare(self.work, "linux", "x64", phase="inspect")
+                    self.prepare(self.work, "linux", "x64", phase="inspect")
                     with mock.patch.dict(os.environ, {"GITHUB_JOB": "after"}):
-                        result = prepare.prepare(self.work, "linux", "x64")
+                        result = self.prepare(self.work, "linux", "x64")
                     self.assertFalse(obj.exists())
                     self.assertEqual(result["counters"]["environment_rechecks"], 1)
                     self.assertEqual(header.read_text(), "sdk header")
@@ -1637,7 +1653,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.work = root / f"{legacy}-{key}"
                     self.src = self.work / "src"
                     self.out = self.src / "out/Default"
-                    self.fixture("linux", "arm64", host_arch="x64")
+                    self.linux_fixture("arm64", host_arch="x64")
                     self.write(self.src / "include/a.h", "header")
                     for cpu in ("amd64", "arm64"):
                         self.sysroot(cpu)
@@ -1655,7 +1671,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                         "SDKROOT": str(sdk), "ImageOS": "ubuntu24", "ImageVersion": "v1"}
                     with self.native_context("linux", "x64"), mock.patch.dict(os.environ, env, clear=True), \
                             mock.patch.object(prepare, "environment_identity", side_effect=environment_identity):
-                        previous = prepare.prepare(self.work, "linux", "arm64")
+                        previous = self.prepare(self.work, "linux", "arm64")
                         self.assertEqual(previous["counters"]["first_finish"], 1)
                         self.assertEqual(previous["dependencies"]["removed_outputs"], 2)
                         self.assertFalse(generated.exists())
@@ -1674,7 +1690,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                         marker = (self.src / prepare.MARKER).read_bytes()
                         with mock.patch.dict(os.environ, {key: "after"}):
                             for _ in range(2):
-                                inspection = prepare.prepare(self.work, "linux", "arm64", phase="inspect")
+                                inspection = self.prepare(self.work, "linux", "arm64", phase="inspect")
                                 self.assertFalse(inspection["needs_invalidation"])
                                 self.assertFalse(inspection["generators_changed"])
                                 self.assertFalse(inspection["sysroots_changed"])
@@ -1682,7 +1698,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                                 for path, state in preserved.items():
                                     self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), state)
                             for _ in range(2):
-                                result = prepare.prepare(self.work, "linux", "arm64")
+                                result = self.prepare(self.work, "linux", "arm64")
                                 for counter in ("first_finish", "environment_rechecks", "generator_rechecks",
                                                 "tool_swap_invalidations", "sysroot_invalidations",
                                                 "toolchain_invalidated_outputs"):
@@ -1706,7 +1722,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.work = root / change
                 self.src = self.work / "src"
                 self.out = self.src / "out/Default"
-                self.fixture("linux", "x64")
+                self.linux_fixture("x64")
                 self.write(self.src / "include/a.h", "header")
                 stamp = self.sysroot("amd64")
                 sdk = self.work / "SDK"
@@ -1716,7 +1732,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 env = {"SDKROOT": str(sdk), "ImageOS": "ubuntu24", "ImageVersion": "v1", "GITHUB_JOB": "before"}
                 with self.native_context("linux", "x64"), mock.patch.dict(os.environ, env, clear=True), \
                         mock.patch.object(prepare, "environment_identity", side_effect=environment_identity):
-                    prepare.prepare(self.work, "linux", "x64")
+                    self.prepare(self.work, "linux", "x64")
                     internal = self.object("internal.o")
                     external = self.object("sdk.o")
                     reader = self.object("generated.o")
@@ -1726,7 +1742,7 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                     self.write(self.out / ".ninja_log", "# ninja log v5\n0\t1\t1\tgen/header.h\tabc\n")
                     preserved = {path: (path.read_bytes(), path.stat().st_mtime_ns)
                                  for path in (internal, reader, generated)}
-                    prepare.prepare(self.work, "linux", "x64", phase="inspect")
+                    self.prepare(self.work, "linux", "x64", phase="inspect")
                     changed_env = {"GITHUB_JOB": "after"}
                     if change == "image":
                         changed_env["ImageVersion"] = "v2"
@@ -1747,8 +1763,8 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                         self.assertEqual(path.stat().st_size, info.st_size)
                         self.assertEqual(path.stat().st_mtime_ns, info.st_mtime_ns)
                     with mock.patch.dict(os.environ, changed_env):
-                        prepare.prepare(self.work, "linux", "x64", phase="inspect")
-                        result = prepare.prepare(self.work, "linux", "x64")
+                        self.prepare(self.work, "linux", "x64", phase="inspect")
+                        result = self.prepare(self.work, "linux", "x64")
                 self.assertFalse(external.exists())
                 for path, state in preserved.items():
                     removed = (path == generated and change == "generator"
@@ -1775,32 +1791,32 @@ class PrepareRestoredBuildTest(unittest.TestCase):
                 self.work = root / kind
                 self.src = self.work / "src"
                 self.out = self.src / "out/Default"
-                self.fixture("linux", "x64")
+                self.linux_fixture("x64")
                 stamp = self.sysroot("amd64")
                 generator = self.write(self.src / prepare.generator_paths("linux", "x64")["go"], "go one")
                 with self.native_context("linux", "x64"), mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "before"}, clear=True), \
                         mock.patch.object(prepare, "environment_identity", side_effect=environment_identity):
-                    prepare.prepare(self.work, "linux", "x64")
+                    self.prepare(self.work, "linux", "x64")
                     obj = self.object("generated.o")
                     generated = self.write(self.out / "gen/header.h", "generated header")
                     self.deps({"obj/generated.o": ["gen/header.h"]})
                     self.write(self.out / ".ninja_log", "# ninja log v5\n0\t1\t1\tgen/header.h\tabc\n")
-                    prepare.prepare(self.work, "linux", "x64", phase="inspect")
+                    self.prepare(self.work, "linux", "x64", phase="inspect")
                     path = {"tool": self.src / prepare.CLANG / "bin/clang",
                             "generator": generator, "sysroot": stamp}[kind]
                     content, info = path.read_bytes(), path.stat()
                     self.write(path, content + b" changed")
-                    pending = prepare.prepare(self.work, "linux", "x64", phase="inspect")
+                    pending = self.prepare(self.work, "linux", "x64", phase="inspect")
                     self.assertTrue(pending[pending_key])
                     self.write(path, content)
                     os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
                     with mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "after"}):
                         for _ in range(2):
-                            pending = prepare.prepare(self.work, "linux", "x64", phase="inspect")
+                            pending = self.prepare(self.work, "linux", "x64", phase="inspect")
                             self.assertTrue(pending[pending_key])
                             self.assertTrue(obj.exists())
                             self.assertTrue(generated.exists())
-                        result = prepare.prepare(self.work, "linux", "x64")
+                        result = self.prepare(self.work, "linux", "x64")
                 self.assertFalse(obj.exists())
                 self.assertEqual(generated.exists(), kind != "generator")
                 self.assertEqual(result["counters"][counter], 1)

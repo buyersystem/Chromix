@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""Select authenticated Chromium 154 overrides without changing the legacy stack."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+try:
+    from .platform_pins import PLATFORMS, load_pins, load_shared_pins
+except ImportError:
+    from platform_pins import PLATFORMS, load_pins, load_shared_pins
+
+VERSION = "154.0.8037.57"
+CORE = "800d0bb5078472e4442c1fd73373172754a60939"
+PLATFORM_COMMITS = {
+    "windows": "fc387c7527f875ca73c82ed4907fccaa86808c9a",
+    "linux": "56b2567742c0423e8e70fd5da286f0762605d26c",
+}
+LEGACY_VERSIONS = {"152.0.7977.82", "153.0.8010.36", "153.0.8010.47"}
+OVERRIDE_ROOT = "patches/chromium154"
+# Original and replacement hashes bind each override to its reviewed predecessor.
+OVERRIDES = {
+    "0049-third_party-blink-renderer-modules-plugins-dom_plugin_array-cc.patch": (
+        "4a454a46e7541c1526607206f492ee4b6f7f9db55ea5ba7e9f5899d213b915f3",
+        "3799f3cf3e8c143da3675789b3431e6ba6151d58be9c2d348b95b3ffcb4969f0"),
+    "0060-third_party-blink-renderer-modules-media_capabilities-media_capabilities-cc.patch": (
+        "e050effa3a2cc8e84809bf5184b6c18417718cb3f9f09a1aa63dadaaf14514bb",
+        "f03940003568f0568c5b81b9fe94f4fce02209b55e6b7492bd7d8589927c5f28"),
+    "0061-third_party-blink-renderer-modules-media_capabilities-media_capabilities-h.patch": (
+        "59fe7e3903d37f1ac92bf5deeb7e22af87938494d02f8e6b89f6671340e5bf9c",
+        "a939e7968448ee4179589a1653d921b38a6968026d8c150519a5575cf117ada9"),
+    "0111-global-privacy-control.patch": (
+        "98af6f9657ebe1c92f2bbd170fa038d97389b6126a2962db50bf16129ab13b79",
+        "0a7ef68eef8a51ebfbfb84ffd7775e56a43b8694feb7052b562ce3397e936040"),
+    "0167-pdf-backend-capability.patch": (
+        "7d2ca45084a5a9b206a6d5e1a7a1e13d53999f1e9786ded9ff5ff657fa09379a",
+        "fa05702f631f2bcdfe5783b0d0c8163a755ade728cc81d8e438f0e52575d476d"),
+    "0177-audio-graph-isolation.patch": (
+        "8afa9f8ee0b8b9f5895183279e99eaf661735fd78052c93143e8da1557918bfc",
+        "0a79069deaeda83a20945f393a156c66de1b73ee54ae261f6c8661132bffd068"),
+}
+
+
+class SelectionError(ValueError):
+    """Patch selection cannot establish a complete, matching stack."""
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def read(repo: Path, name: str) -> bytes:
+    if (not name or any(c in name for c in "\\:\x00")
+            or any(ord(c) < 32 or ord(c) == 127 for c in name)
+            or any(part in ("", ".", "..") for part in name.split("/"))):
+        raise SelectionError("unsafe patch input path: " + name)
+    path = repo
+    for part in name.split("/"):
+        path = path / part
+        if path.is_symlink():
+            raise SelectionError("symlink patch input: " + name)
+    if not path.is_file():
+        raise SelectionError("missing patch input: " + name)
+    return path.read_bytes()
+
+
+def source_version(src: Path) -> str:
+    fields = {}
+    for line in read(src, "chrome/VERSION").decode("ascii").splitlines():
+        if not re.fullmatch(r"(?:MAJOR|MINOR|BUILD|PATCH)=[0-9]+", line):
+            raise SelectionError("malformed source chrome/VERSION")
+        key, value = line.split("=")
+        if key in fields:
+            raise SelectionError("duplicate source version field")
+        fields[key] = value
+    if set(fields) != {"MAJOR", "MINOR", "BUILD", "PATCH"}:
+        raise SelectionError("incomplete source version")
+    return ".".join(fields[key] for key in ("MAJOR", "MINOR", "BUILD", "PATCH"))
+
+
+def validate_overrides(repo: Path) -> None:
+    directory = repo / OVERRIDE_ROOT
+    if directory.is_symlink() or not directory.is_dir():
+        raise SelectionError("missing or linked Chromium 154 override directory")
+    if {path.name for path in directory.iterdir()} != set(OVERRIDES):
+        raise SelectionError("partial or unexpected Chromium 154 override inventory")
+    for name, (original, replacement) in OVERRIDES.items():
+        if digest(read(repo, "patches/" + name)) != original:
+            raise SelectionError("mismatched override predecessor: " + name)
+        if digest(read(repo, OVERRIDE_ROOT + "/" + name)) != replacement:
+            raise SelectionError("changed Chromium 154 override: " + name)
+
+
+def select(repo: Path, platform: str | None = None, *, src: Path | None = None,
+           core: Path | None = None) -> tuple[dict, list[tuple[str, bytes]]]:
+    """Return raw selected-byte identity and ordered (physical path, bytes)."""
+    repo = Path(repo)
+    if platform is not None and platform not in PLATFORMS:
+        raise SelectionError("unsupported patch platform: " + platform)
+    series = read(repo, "patches/series")
+    names = [line.split("#", 1)[0].strip() for line in series.decode("utf-8").splitlines()]
+    names = [name for name in names if name]
+    if not names or len(names) != len(set(names)):
+        raise SelectionError("empty or duplicate patch series")
+    if any(not re.fullmatch(r"patches/[^/]+\.patch", name) for name in names):
+        raise SelectionError("unsafe series: must name root patch files only")
+    pinfile = repo / "build/ungoogled-revisions.psd1"
+    pins = None
+    if pinfile.exists() or pinfile.is_symlink():
+        read(repo, "build/ungoogled-revisions.psd1")
+        read(repo, "CHROMIUM_VERSION")
+        if platform:
+            filename = "CHROMIUM_" + PLATFORMS[platform].upper() + "_VERSION"
+            if (repo / filename).exists() or (repo / filename).is_symlink():
+                read(repo, filename)
+        try:
+            pins = load_pins(repo, platform) if platform else load_shared_pins(repo)
+        except (OSError, ValueError) as exc:
+            raise SelectionError(str(exc)) from exc
+    elif any((repo / name).exists() or (repo / name).is_symlink() for name in
+             ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_WINDOWS_VERSION",
+              "CHROMIUM_MACOS_VERSION", OVERRIDE_ROOT)):
+        raise SelectionError("patch version selection requires complete repository pins")
+    version = pins["ChromiumVersion"] if pins else None
+    if src is not None and version is not None:
+        source_version_path = Path(src) / "chrome/VERSION"
+        if version == VERSION or source_version_path.is_symlink():
+            observed = source_version(Path(src))
+            if observed != version:
+                raise SelectionError("source version does not match selected repository pins")
+    if core is not None and version is not None:
+        core_version_path = Path(core) / "chromium_version.txt"
+        if version == VERSION or core_version_path.is_symlink():
+            observed = read(Path(core), "chromium_version.txt").decode("ascii").strip()
+            if observed != version:
+                raise SelectionError("core version does not match selected repository pins")
+    selected = names
+    selection = None
+    if version == VERSION:
+        if platform not in PLATFORM_COMMITS:
+            raise SelectionError("Chromium 154 overrides require Windows or Linux")
+        prefix = "Ungoogled" + PLATFORMS[platform]
+        if (pins["UngoogledCommit"] != CORE or pins["UngoogledVersion"] != VERSION + "-1"
+                or pins[prefix + "Commit"] != PLATFORM_COMMITS[platform]
+                or pins[prefix + "Version"] != VERSION + ("-1.1" if platform == "windows" else "-1")):
+            raise SelectionError("Chromium 154 core/platform pins do not match reviewed overrides")
+        validate_overrides(repo)
+        if len(names) != 216 or not {"patches/" + name for name in OVERRIDES}.issubset(names):
+            raise SelectionError("Chromium 154 requires the complete 216-patch base series")
+        selected = [OVERRIDE_ROOT + "/" + Path(name).name if Path(name).name in OVERRIDES else name
+                    for name in names]
+        selection = {"schema_version": 1, "version": VERSION, "platform": platform,
+                     "core_commit": CORE, "platform_commit": PLATFORM_COMMITS[platform],
+                     "base_series_sha256": digest(series)}
+    elif version is not None and version not in LEGACY_VERSIONS:
+        raise SelectionError("unsupported Chromium patch version: " + version)
+    effective_series = series
+    if selection:
+        mapping = dict(zip(names, selected, strict=True))
+        effective_series = "".join(
+            line.replace(name, mapping[name], 1) if (name := line.split("#", 1)[0].strip()) else line
+            for line in series.decode("utf-8").splitlines(keepends=True)).encode("utf-8")
+    patches = [(name, read(repo, name)) for name in selected]
+    identity = {"series_sha256": digest(effective_series),
+                "patches": [{"path": name, "sha256": digest(raw)} for name, raw in patches]}
+    if selection:
+        identity["selection"] = selection
+    return identity, patches
+
+
+def preparation_key(repo: Path, platform: str, style: str) -> str:
+    """Retain historical key encodings; hash selected bytes for Chromium 154."""
+    identity, patches = select(repo, platform)
+    hasher = hashlib.sha256()
+    if style == "posix":
+        for name in ("build/prepare-ungoogled.sh", "build/apply-patches.sh", "patches/series"):
+            hasher.update(name.encode())
+            hasher.update(read(repo, name))
+    elif style != "windows":
+        raise SelectionError("unsupported preparation key style")
+    if "selection" in identity:
+        hasher.update(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode())
+    for name, raw in patches:
+        if style == "posix":
+            hasher.update(name.encode())
+        hasher.update(raw)
+    payload = "build/windows/lite-tarball-files"
+    root = repo / payload
+    if root.is_symlink():
+        raise SelectionError("symlink lite payload")
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise SelectionError("symlink lite payload")
+        if path.is_file():
+            name = path.relative_to(repo).as_posix()
+            hasher.update((name if style == "posix" else path.relative_to(root).as_posix()).encode())
+            hasher.update(read(repo, name))
+    return hasher.hexdigest()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--platform", choices=tuple(PLATFORMS), required=True)
+    parser.add_argument("--src", type=Path)
+    output = parser.add_mutually_exclusive_group(required=True)
+    output.add_argument("--paths", action="store_true")
+    output.add_argument("--json", action="store_true")
+    output.add_argument("--key", choices=("windows", "posix"))
+    args = parser.parse_args(argv)
+    try:
+        identity, patches = select(args.repo, args.platform, src=args.src)
+        if args.key:
+            print(preparation_key(args.repo, args.platform, args.key))
+        elif args.paths:
+            print("\n".join(name for name, _ in patches))
+        else:
+            print(json.dumps(identity, sort_keys=True))
+    except (OSError, ValueError) as exc:
+        print("patch selection: " + str(exc), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -63,7 +63,7 @@ $mergeArgs += @(
   (Join-Path $Repo "build\args.windows.gn")
 )
 if ($Arch -eq "arm64") { $mergeArgs += (Join-Path $Repo "build\args.windows.arm64.gn") }
-if ($Arch -eq "arm64" -and (Test-Path (Join-Path $Src ".chromix-upstream-restored.json"))) {
+if (Test-Path (Join-Path $Src ".chromix-upstream-restored.json")) {
   $mergeArgs += @("--preserve-pgo-from", $mergedArgs)
 }
 python @mergeArgs

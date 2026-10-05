@@ -11,34 +11,35 @@ from unittest import mock
 from tools import fetch_upstream_cache as cache
 from tools.tests import test_fetch_upstream_cache as fixtures
 
-NOW = datetime(2026, 9, 19, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 27, 8, 17, 32, tzinfo=timezone.utc)
+# A prior checkpoint fixture; this test never selects a live donor.
 ARM64 = {
-    "id": 10573131525,
+    "id": 10922899704,
     "name": "build-artifact-arm",
-    "size_in_bytes": 15573193782,
-    "digest": "sha256:615fa740edcfae1b849285b266b76600d8b6295026385766bc9b39a987aab445",
-    "expires_at": "2026-09-22T23:50:02Z",
+    "size_in_bytes": 15465670797,
+    "digest": "sha256:683e3ae6d148f22cc843f779b36ad920664bd8b2ff1f52acfecdd64d186fcf6b",
+    "expires_at": "2026-10-01T04:19:43Z",
     "inner_archive": "artifacts.zip",
-    "run_id": 35059013950,
+    "run_id": 36093095856,
     "workflow_path": ".github/workflows/build-arm.yml",
-    "run_attempt": 5,
-    "producer_job_id": 105717613798,
-    "producer_job_name": "build / build-11",
+    "run_attempt": 1,
+    "producer_job_id": 108504640745,
+    "producer_job_name": "build / build-10",
 }
 
 
 def checkpoint_metadata(pin):
     run, artifact = fixtures.metadata(pin)
-    run.update(status="in_progress", conclusion=None, run_attempt=5,
-               run_started_at="2026-09-18T13:48:31Z")
-    artifact.update(created_at="2026-09-18T23:52:59Z")
+    run.update(status="in_progress", conclusion=None, run_attempt=1,
+               run_started_at="2026-09-25T04:06:43Z")
+    artifact.update(created_at="2026-09-27T04:25:56Z")
     producer = {
-        "id": 105717613798, "name": "build / build-11", "run_id": 35059013950,
-        "run_attempt": 5, "head_sha": pin["head_sha"], "head_branch": pin["head_branch"],
+        "id": ARM64["producer_job_id"], "name": ARM64["producer_job_name"], "run_id": ARM64["run_id"],
+        "run_attempt": 1, "head_sha": pin["head_sha"], "head_branch": pin["head_branch"],
         "workflow_name": "build-arm", "status": "completed", "conclusion": "success",
-        "started_at": "2026-09-18T18:37:15Z", "completed_at": "2026-09-18T23:53:07Z",
+        "started_at": "2026-09-26T23:01:03Z", "completed_at": "2026-09-27T04:26:22Z",
         "steps": [{"name": "Run Stage", "number": 4, "status": "completed", "conclusion": "success",
-                   "started_at": "2026-09-18T18:41:54Z", "completed_at": "2026-09-18T23:52:59Z"}],
+                   "started_at": "2026-09-26T23:05:29Z", "completed_at": "2026-09-27T04:26:00Z"}],
     }
     return run, artifact, producer
 
@@ -53,7 +54,23 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
                      "CHROMIUM_WINDOWS_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json"):
             if (cache.ROOT / name).is_file():
                 shutil.copyfile(cache.ROOT / name, self.root / name)
+        pins = cache.load_shared_pins(self.root)
+        pins.update(WindowsChromiumVersion="154.0.8037.57", WindowsUngoogledVersion="154.0.8037.57-1",
+                    WindowsUngoogledCommit="e" * 40, UngoogledWindowsVersion="154.0.8037.57-1.1",
+                    UngoogledWindowsCommit="fc387c7527f875ca73c82ed4907fccaa86808c9a")
+        (self.root / "build/ungoogled-revisions.psd1").write_text(
+            "@{\n" + "".join(f'  {key} = "{value}"\n' for key, value in pins.items()) + "}\n")
+        (self.root / "CHROMIUM_WINDOWS_VERSION").write_text("154.0.8037.57\n")
         self.manifest = json.loads((self.root / "build/upstream-cache.json").read_text())
+        source = fixtures.synthetic_windows_source(self.root)
+        source["run_id"] = 36093095228
+        source["artifacts"]["x64"].update(
+            id=10915484727, name="build-artifact", size_in_bytes=15716545319,
+            digest="sha256:7a6ba27fa2d056759d1e635f486e68cbfed36ef2d73ee201527e1ddb52d0d4a4",
+            expires_at="2026-09-30T21:34:19Z")
+        source["artifacts"]["arm64"] = copy.deepcopy(ARM64)
+        self.manifest["sources"]["windows"] = source
+        self.save(self.manifest)
         self.destination = self.root / "cache"
         self.pin, self.identity = cache.load_manifest("windows", "arm64", root=self.root)
         clock = mock.patch.object(cache, "datetime", wraps=datetime)
@@ -78,10 +95,10 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
         for key in cache.ARTIFACT_OVERRIDES | cache.CHECKPOINT_FIELDS:
             self.assertEqual(self.pin[key], ARM64[key])
             self.assertEqual(self.identity[key], ARM64[key])
-        self.assertEqual(self.pin["chromium_version"], "153.0.8010.47")
-        self.assertEqual(self.pin["ungoogled_commit"], "31e6f2dd3bb2f113800d25ae359f024684addb51")
-        self.assertEqual(self.pin["head_sha"], "657b9731b68aae35d4ee02428684ab8bdceb9181")
-        self.assertEqual(self.pin["head_branch"], "153.0.8010.47-1.1")
+        self.assertEqual(self.pin["chromium_version"], "154.0.8037.57")
+        self.assertEqual(self.pin["ungoogled_commit"], "e" * 40)
+        self.assertEqual(self.pin["head_sha"], "fc387c7527f875ca73c82ed4907fccaa86808c9a")
+        self.assertEqual(self.pin["head_branch"], "154.0.8037.57-1.1")
         self.assertEqual(self.identity["target"], "windows-arm64")
         self.assertEqual(self.identity["artifact_id"], ARM64["id"])
         self.assertEqual(self.identity["artifact_digest"], ARM64["digest"])
@@ -93,7 +110,7 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
         self.assertEqual(x64_pin, legacy_pin)
         self.assertEqual({k: v for k, v in x64_identity.items() if k != "sha256"},
                          {k: v for k, v in legacy_identity.items() if k != "sha256"})
-        self.assertEqual(x64_pin["run_id"], 35059013905)
+        self.assertEqual(x64_pin["run_id"], 36093095228)
         self.assertEqual(x64_pin["workflow_path"], ".github/workflows/build-x64.yml")
         self.assertFalse(cache.CHECKPOINT_FIELDS.intersection(x64_pin))
 
@@ -104,7 +121,7 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
                     pin, identity = cache.load_manifest(platform, arch, root=self.root)
                     self.assertEqual(identity["artifact_digest"], pin["artifact"]["digest"])
         cache.load_manifest("windows", "arm64", ARM64["run_id"], root=self.root)
-        for arch, run_id in (("arm64", 35059013905), ("x64", ARM64["run_id"]), ("arm64", 1)):
+        for arch, run_id in (("arm64", 36093095228), ("x64", ARM64["run_id"]), ("arm64", 1)):
             with self.subTest(arch=arch, run_id=run_id):
                 client = mock.Mock()
                 result = cache.fetch("windows", arch, self.destination, run_id, self.root, client)
@@ -115,14 +132,14 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
     def test_arm64_artifact_shape_and_override_types_are_strict(self):
         variants = [{k: v for k, v in ARM64.items() if k != missing} for missing in ARM64]
         variants += [dict(ARM64, **{key: value}) for key, value in (
-            ("run_id", 35059013905), ("run_id", 0), ("run_id", True), ("run_id", "35059013950"),
+            ("run_id", 36093095228), ("run_id", 0), ("run_id", True), ("run_id", "36093095856"),
             ("run_id", None), ("workflow_path", ".github/workflows/build-x64.yml"),
             ("workflow_path", ".github/workflows/reusable-build.yml"), ("workflow_path", None),
             ("name", "build-artifact"), ("name", "build-artifact-x86"),
             ("run_attempt", True), ("run_attempt", "5"), ("run_attempt", 0), ("run_attempt", None),
-            ("producer_job_id", True), ("producer_job_id", "105717613798"), ("producer_job_id", -1),
+            ("producer_job_id", True), ("producer_job_id", "108504640745"), ("producer_job_id", -1),
             ("producer_job_name", ""), ("producer_job_name", None), ("producer_job_name", "build / build-0"),
-            ("producer_job_name", "build / build-11\n"), ("producer_job_name", "build-x64 / build-11"),
+            ("producer_job_name", "build / build-13\n"), ("producer_job_name", "build-x64 / build-11"),
             ("producer", {}), ("arch", "x64"), ("head_sha", "0" * 40),
             ("allow_in_progress", True), ("checkpoint", True), ("unexpected", 1),
         )]
@@ -180,7 +197,7 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
                 self.validate(run, artifact, producer)
 
     def test_wrong_run_attempt_arch_workflow_and_provenance_are_rejected(self):
-        for key, value in (("id", 35059013905), ("path", ".github/workflows/build-x64.yml"),
+        for key, value in (("id", 36093095228), ("path", ".github/workflows/build-x64.yml"),
                            ("path", ".github/workflows/reusable-build.yml"), ("event", "pull_request"),
                            ("head_sha", "0" * 40), ("head_branch", "main"),
                            ("run_attempt", 4), ("run_attempt", 6), ("run_attempt", "5"),
@@ -196,7 +213,7 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
                 with self.subTest(field=field, key=key), self.assertRaisesRegex(
                         cache.CacheMiss, "untrusted_repository"):
                     self.validate(run, artifact, producer)
-        for key, value in (("id", 10523508661), ("name", "build-artifact"), ("size_in_bytes", 1),
+        for key, value in (("id", 10915484727), ("name", "build-artifact"), ("size_in_bytes", 1),
                            ("digest", fixtures.digest(b"replaced"))):
             run, artifact, producer = checkpoint_metadata(self.pin)
             artifact[key] = value
@@ -209,7 +226,7 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
                 self.validate(run, artifact, producer)
 
     def test_wrong_or_unsuccessful_producer_is_rejected_even_after_run_success(self):
-        patches = [("id", 105717613799), ("name", "build / build-12"), ("run_id", 35059013905),
+        patches = [("id", 108504640746), ("name", "build / build-12"), ("run_id", 36093095228),
                    ("run_attempt", 4), ("run_attempt", 6), ("run_attempt", "5"), ("run_attempt", True),
                    ("head_sha", "0" * 40), ("head_branch", "main"), ("workflow_name", "build-x64"),
                    ("status", "in_progress"), ("status", "queued"), ("conclusion", "failure"),
@@ -238,23 +255,23 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
 
     def test_creation_window_and_timestamp_shapes_are_verified(self):
         patches = [
-            ("run", "run_started_at", "2026-09-18T18:37:16Z"),
-            ("producer", "started_at", "2026-09-18T18:41:55Z"),
-            ("producer", "completed_at", "2026-09-18T23:52:58Z"),
-            ("producer", "completed_at", "2026-09-19T00:00:01Z"),
-            ("artifact", "created_at", "2026-09-18T18:37:14Z"),
-            ("artifact", "created_at", "2026-09-18T18:41:53Z"),
-            ("artifact", "created_at", "2026-09-18T23:53:08Z"),
-            ("artifact", "created_at", "2026-09-18T23:53:00Z"),
-            ("stage", "started_at", "2026-09-18T18:37:14Z"),
-            ("stage", "started_at", "2026-09-18T23:53:00Z"),
-            ("stage", "completed_at", "2026-09-18T23:52:58Z"),
-            ("stage", "completed_at", "2026-09-18T23:53:08Z"),
+            ("run", "run_started_at", "2026-09-26T23:01:04Z"),
+            ("producer", "started_at", "2026-09-26T23:05:30Z"),
+            ("producer", "completed_at", "2026-09-27T04:25:55Z"),
+            ("producer", "completed_at", "2026-09-27T08:17:33Z"),
+            ("artifact", "created_at", "2026-09-26T23:01:02Z"),
+            ("artifact", "created_at", "2026-09-26T23:05:28Z"),
+            ("artifact", "created_at", "2026-09-27T04:26:23Z"),
+            ("artifact", "created_at", "2026-09-27T04:26:01Z"),
+            ("stage", "started_at", "2026-09-26T23:01:02Z"),
+            ("stage", "started_at", "2026-09-27T04:26:01Z"),
+            ("stage", "completed_at", "2026-09-27T04:25:55Z"),
+            ("stage", "completed_at", "2026-09-27T04:26:23Z"),
         ]
         for target, field in (("run", "run_started_at"), ("producer", "started_at"),
                               ("producer", "completed_at"), ("artifact", "created_at"),
                               ("stage", "started_at"), ("stage", "completed_at")):
-            patches += [(target, field, value) for value in (None, "bad", 1, "2026-09-18T23:52:59")]
+            patches += [(target, field, value) for value in (None, "bad", 1, "2026-09-27T04:25:56")]
         for target, key, value in patches:
             run, artifact, producer = checkpoint_metadata(self.pin)
             {"run": run, "artifact": artifact, "producer": producer,
@@ -303,9 +320,9 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
         self.assertEqual(result["status"], "hit", result)
         base = "/repos/ungoogled-software/ungoogled-chromium-windows/actions"
         self.assertEqual(client.json.call_args_list, [
-            mock.call(base + "/runs/35059013950/attempts/5"),
-            mock.call(base + "/artifacts/10573131525"),
-            mock.call(base + "/jobs/105717613798"),
+            mock.call(base + "/runs/36093095856/attempts/1"),
+            mock.call(base + "/artifacts/10922899704"),
+            mock.call(base + "/jobs/108504640745"),
         ])
         self.assertEqual(result["download_bytes"], len(outer))
         self.assertEqual(result["manifest"]["run_id"], ARM64["run_id"])
@@ -318,8 +335,8 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
             (0, "path", ".github/workflows/build-x64.yml", "untrusted_run"),
             (0, "run_attempt", 6, "untrusted_run_attempt"),
             (1, "name", "build-artifact", "artifact_mismatch"),
-            (1, "created_at", "2026-09-18T23:53:08Z", "artifact_creation_window"),
-            (2, "id", 105717613799, "untrusted_producer"),
+            (1, "created_at", "2026-09-27T04:26:23Z", "artifact_creation_window"),
+            (2, "id", 108504640746, "untrusted_producer"),
             (2, "conclusion", "failure", "untrusted_producer"),
         ):
             responses = checkpoint_metadata(self.pin)

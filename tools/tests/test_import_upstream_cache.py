@@ -366,7 +366,8 @@ class ImportUpstreamCacheTest(unittest.TestCase):
 
     def test_windows_arm64_identity_and_bindgen_use_selected_pin_and_x64_executables(self):
         self.prepare("windows", "arm64")
-        self.assertEqual(self.identity["chromium_version"], "153.0.8010.47")
+        self.assertEqual(self.identity["chromium_version"],
+                         importer.load_pins(self.repo, "windows")["ChromiumVersion"])
         self.assertEqual(self.identity["run_id"], 103)
         self.assertEqual(self.identity["workflow_path"], ".github/workflows/build-arm.yml")
         self.assertEqual(self.identity["artifact_id"], 104)

@@ -93,6 +93,8 @@ name: build-win-arm64-github
         required: false
         default: ''
         type: string
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('warm profile={0} jobs={1} cache={2} upstream={3}', inputs.build_profile,
+  inputs.compile_jobs, format('{0}', inputs.use_upstream_cache), inputs.upstream_run_id) || 'build-win-arm64-github' }}
 permissions:
   contents: read
   actions: read
@@ -295,6 +297,8 @@ jobs:
 
           C:\c\chromix\upstream-reuse\result.json
 
+          C:\c\chromix\upstream-cache-preparation.json
+
           '
         if-no-files-found: ignore
         retention-days: 3
@@ -408,6 +412,8 @@ jobs:
         path: 'C:\c\chromix\upstream-reuse\baseline.json
 
           C:\c\chromix\upstream-reuse\result.json
+
+          C:\c\chromix\upstream-cache-preparation.json
 
           '
         if-no-files-found: ignore
@@ -523,6 +529,8 @@ jobs:
 
           C:\c\chromix\upstream-reuse\result.json
 
+          C:\c\chromix\upstream-cache-preparation.json
+
           '
         if-no-files-found: ignore
         retention-days: 3
@@ -636,6 +644,8 @@ jobs:
         path: 'C:\c\chromix\upstream-reuse\baseline.json
 
           C:\c\chromix\upstream-reuse\result.json
+
+          C:\c\chromix\upstream-cache-preparation.json
 
           '
         if-no-files-found: ignore
@@ -751,6 +761,8 @@ jobs:
 
           C:\c\chromix\upstream-reuse\result.json
 
+          C:\c\chromix\upstream-cache-preparation.json
+
           '
         if-no-files-found: ignore
         retention-days: 3
@@ -864,6 +876,8 @@ jobs:
         path: 'C:\c\chromix\upstream-reuse\baseline.json
 
           C:\c\chromix\upstream-reuse\result.json
+
+          C:\c\chromix\upstream-cache-preparation.json
 
           '
         if-no-files-found: ignore
@@ -979,6 +993,8 @@ jobs:
 
           C:\c\chromix\upstream-reuse\result.json
 
+          C:\c\chromix\upstream-cache-preparation.json
+
           '
         if-no-files-found: ignore
         retention-days: 3
@@ -1092,6 +1108,8 @@ jobs:
         path: 'C:\c\chromix\upstream-reuse\baseline.json
 
           C:\c\chromix\upstream-reuse\result.json
+
+          C:\c\chromix\upstream-cache-preparation.json
 
           '
         if-no-files-found: ignore
@@ -1207,6 +1225,8 @@ jobs:
 
           C:\c\chromix\upstream-reuse\result.json
 
+          C:\c\chromix\upstream-cache-preparation.json
+
           '
         if-no-files-found: ignore
         retention-days: 3
@@ -1321,6 +1341,8 @@ jobs:
 
           C:\c\chromix\upstream-reuse\result.json
 
+          C:\c\chromix\upstream-cache-preparation.json
+
           '
         if-no-files-found: ignore
         retention-days: 3
@@ -1434,6 +1456,8 @@ jobs:
         path: 'C:\c\chromix\upstream-reuse\baseline.json
 
           C:\c\chromix\upstream-reuse\result.json
+
+          C:\c\chromix\upstream-cache-preparation.json
 
           '
         if-no-files-found: ignore

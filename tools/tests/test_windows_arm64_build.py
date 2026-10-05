@@ -72,7 +72,7 @@ class Arm64BuildSourceTest(unittest.TestCase):
                         self.assertIn('is_debug = false', args)
 
     @unittest.skipUnless(PWSH, "PowerShell is unavailable")
-    def test_both_entrypoint_merges_preserve_pgo_only_for_restored_arm64(self):
+    def test_both_entrypoint_merges_preserve_pgo_for_both_restored_targets(self):
         with tempfile.TemporaryDirectory(prefix='windows PGO merge ') as temp:
             root = Path(temp)
             core, windows, out = (root / name for name in ('core', 'windows', 'out'))
@@ -111,7 +111,7 @@ function python {
                                     TEST_RESTORED=str(int(restored)), TEST_PROFILE=profile, TEST_PYTHON=sys.executable)
                                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                                 text = (out / 'args.gn').read_text()
-                                expected = '2 # donor' if arch == 'arm64' and restored else '0'
+                                expected = '2 # donor' if restored else '0'
                                 self.assertIn('chrome_pgo_phase = ' + expected, text)
                                 self.assertEqual(text.count('chrome_pgo_phase'), 1)
                                 self.assertIn(f'target_cpu = "{arch}"', text)

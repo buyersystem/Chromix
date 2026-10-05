@@ -26,25 +26,7 @@ CHROMIUM_VERSION="$(revision ChromiumVersion)"
 CORE_COMMIT="$(revision UngoogledCommit)"
 PLATFORM_COMMIT="$(revision "${PLATFORM_KEY}Commit")"
 PLATFORM_VERSION="$(revision "${PLATFORM_KEY}Version")"
-PATCH_HASH="$(python3 - "$REPO" <<'PY'
-import hashlib
-import sys
-from pathlib import Path
-repo = Path(sys.argv[1])
-hash = hashlib.sha256()
-paths = [repo / 'build/prepare-ungoogled.sh', repo / 'build/apply-patches.sh', repo / 'patches/series']
-for line in (repo / 'patches/series').read_text().splitlines():
-    name = line.split('#', 1)[0].strip()
-    if name:
-        paths.append(repo / name)
-paths.extend(sorted((repo / 'build/windows/lite-tarball-files').rglob('*')))
-for path in paths:
-    if path.is_file():
-        hash.update(str(path.relative_to(repo)).encode())
-        hash.update(path.read_bytes())
-print(hash.hexdigest())
-PY
-)"
+PATCH_HASH="$(python3 "$REPO/tools/patch_selection.py" --repo "$REPO" --platform "$PLATFORM" --key posix)"
 KEY="$PLATFORM|$ARCH|$CHROMIUM_VERSION|$CORE_COMMIT|$PLATFORM_COMMIT|$PATCH_HASH"
 RESTORED=0
 if [ -f "$SRC/.chromix-upstream-restored.json" ]; then
@@ -64,6 +46,13 @@ if [ -f "$READY" ] && [ "$(cat "$READY")" = "$KEY" ]; then
     python3 "$REPO/tools/apply_restored_patches.py" --src "$SRC" --repo "$REPO" \
       --core "$CORE_REPO" --platform-tooling "$PLATFORM_REPO" \
       --platform "$PLATFORM" --patch-bin "$PATCH_BIN" --check
+  fi
+  if [ "$RESTORED" -eq 1 ] || [ "$CHROMIUM_VERSION" = "154.0.8037.57" ]; then
+    SOURCE_CHECK="$(mktemp "${TMPDIR:-/tmp}/chromix-warm-patches-XXXXXX.json")"
+    rm "$SOURCE_CHECK"
+    python3 "$REPO/tools/verify_patch_stack.py" --src "$SRC" --repo "$REPO" \
+      --core "$CORE_REPO" --platform-tooling "$PLATFORM_REPO" --platform "$PLATFORM" --output "$SOURCE_CHECK"
+    rm "$SOURCE_CHECK"
   fi
   echo "==> pinned ungoogled source already prepared: $KEY"
   exit 0
@@ -111,6 +100,7 @@ if [ "$RESTORED" -eq 1 ]; then
   printf '%s\n' "$PLATFORM_COMMIT" > "$SRC/.chromix-ungoogled-platform"
   printf '%s\n' "$CHROMIUM_VERSION" > "$SRC/.chromix-chromium-version"
   printf '%s\n' "$CORE_COMMIT" > "$SRC/.chromix-domain-substituted"
+  test "$(python3 "$REPO/tools/patch_selection.py" --repo "$REPO" --platform "$PLATFORM" --key posix)" = "$PATCH_HASH"
   printf '%s\n' "$KEY" > "$READY"
   echo "==> restored upstream source with Chromix patches: $KEY"
   exit 0
@@ -171,7 +161,7 @@ python3 "$CORE_REPO/utils/patches.py" apply "$SRC" "$PLATFORM_PATCHES"
 python3 "$CORE_REPO/utils/prune_binaries.py" "$SRC" "$CORE_REPO/pruning.list"
 # The lite archive omits a Torque source used by Chromium's build graph.
 cp -R "$REPO/build/windows/lite-tarball-files/." "$SRC/"
-"$REPO/build/apply-patches.sh" "$SRC"
+CHROMIX_PATCH_PLATFORM="$PLATFORM" "$REPO/build/apply-patches.sh" "$SRC"
 
 if [ "$PLATFORM" = macos ]; then
   rm -rf "$PLATFORM_REPO/ungoogled-chromium"
@@ -187,5 +177,6 @@ fi
 printf '%s\n' "$CORE_COMMIT" > "$SRC/.chromix-ungoogled-core"
 printf '%s\n' "$PLATFORM_COMMIT" > "$SRC/.chromix-ungoogled-platform"
 printf '%s\n' "$CHROMIUM_VERSION" > "$SRC/.chromix-chromium-version"
+test "$(python3 "$REPO/tools/patch_selection.py" --repo "$REPO" --platform "$PLATFORM" --key posix)" = "$PATCH_HASH"
 printf '%s\n' "$KEY" > "$READY"
 echo "==> prepared ungoogled source: $KEY"

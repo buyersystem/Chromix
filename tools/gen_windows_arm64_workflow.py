@@ -13,6 +13,25 @@ TEMPLATE = REPO / '.github/workflows/build-win-x64-github.yml'
 OUTPUT = REPO / '.github/workflows/build-win-arm64-github.yml'
 
 
+def dispatch_run_name(prefix, fields, fallback):
+    labels = ' '.join(f'{label}={{{index}}}' for index, (label, _) in enumerate(fields))
+    arguments = ', '.join(
+        "format('{0}', inputs.%s)" % input_name if input_name == 'use_upstream_cache'
+        else f'inputs.{input_name}'
+        for _, input_name in fields
+    )
+    return ("${{ github.event_name == 'workflow_dispatch' && "
+            f"format('{prefix} {labels}', {arguments}) || '{fallback}' }}}}")
+
+
+ARM64_RUN_NAME = dispatch_run_name(
+    'warm',
+    (('profile', 'build_profile'), ('jobs', 'compile_jobs'),
+     ('cache', 'use_upstream_cache'), ('upstream', 'upstream_run_id')),
+    'build-win-arm64-github',
+)
+
+
 def replace_target(value):
     if isinstance(value, str):
         return value.replace('win-x64', 'win-arm64').replace('tree-s', 'win-arm64-tree-s')
@@ -28,6 +47,7 @@ def workflow():
     result = replace_target(deepcopy(source))
     events = result.pop(True) if True in result else result.pop('on')
     result = {'name': result.pop('name'), 'on': events, **result}
+    result['run-name'] = ARM64_RUN_NAME
     for event in ('workflow_call', 'workflow_dispatch'):
         events[event]['inputs'] = {name: value for name, value in events[event]['inputs'].items()
                                    if name in ('build_profile', 'compile_jobs', 'use_upstream_cache', 'upstream_run_id')}

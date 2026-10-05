@@ -98,7 +98,8 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
 
         jobs = yaml.safe_load(self.workflow)["jobs"]
         evidence_paths = {r"C:\c\chromix\upstream-reuse\baseline.json",
-                          r"C:\c\chromix\upstream-reuse\result.json"}
+                          r"C:\c\chromix\upstream-reuse\result.json",
+                          r"C:\c\chromix\upstream-cache-preparation.json"}
         for number in range(1, 13):
             with self.subTest(stage=number):
                 steps = jobs[f"build-{number}"]["steps"]
@@ -121,7 +122,8 @@ class WindowsUpstreamCacheRegressionTest(unittest.TestCase):
     def test_snapshot_outputs_fail_closed_but_keep_small_diagnostics(self):
         import yaml
 
-        self.assertIn("Write-OutVar snapshot_safe true\nAssert-CiScripts", self.stage)
+        self.assertIn('Write-OutVar snapshot_safe $(if ($env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or '
+                      '$env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA) { "false" } else { "true" })\nAssert-CiScripts', self.stage)
         tracked_start = self.stage.index("function Invoke-Tracked {")
         tracked_end = self.stage.index("function Get-FreeGB", tracked_start)
         tracked = self.stage[tracked_start:tracked_end]
@@ -1194,7 +1196,7 @@ function Invoke-FixtureNinja {
         self.assertEqual(args.count('is_debug ='), 1)
         self.assertIn('is_debug = false', args)
         self.assertIn(f'target_cpu = "{self.arch}"', args)
-        self.assertIn('chrome_pgo_phase = ' + ('2 # donor Windows override' if self.arch == 'arm64' else '0'), args)
+        self.assertIn('chrome_pgo_phase = 2 # donor Windows override', args)
         self.assertEqual(args.count('chrome_pgo_phase'), 1)
         self.assertFalse((self.src / "out/Chromix").exists())
         self.put(self.out / "obj/retained.obj", "new object")
@@ -1211,6 +1213,15 @@ function Invoke-FixtureNinja {
         self.assertEqual((self.out / "args.gn").read_text(), args)
         self.assertEqual(baseline.read_bytes(), baseline_bytes)
         self.assertEqual(baseline.stat().st_mtime_ns, baseline_time)
+        self.calls.unlink()
+        self.env["MOCK_STAGE"] = "8"
+        resumed_stage8 = self.run_prep()
+        self.assertEqual(resumed_stage8.returncode, 0, resumed_stage8.stdout + resumed_stage8.stderr)
+        self.assertEqual(self.phases(), ["verify", "verify", "inspect", "ninja-guard", "finish", "gn-gen", "ninja-plan",
+                                         "evidence-before", "ninja", "evidence-after", "package", "verify-bundle"])
+        self.assertEqual(times, {name: (self.out / name).stat().st_mtime_ns for name in times})
+        self.assertEqual((self.out / "args.gn").read_text(), args)
+        self.assertEqual((baseline.read_bytes(), baseline.stat().st_mtime_ns), (baseline_bytes, baseline_time))
 
     def test_ninja_failure_and_timeout_record_exit_before_throw_or_handoff(self):
         for rc in (9, 124):

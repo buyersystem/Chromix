@@ -28,6 +28,7 @@ $WorkDir = "$Root\chromix"
 $Src = "$WorkDir\src"
 $OutDir = "$Src\out\Chromix"
 $RestoredUpstream = $false
+$RecoveryDiagnostics = $null
 # CI opt-in requires a full restore, including validation and artifact resumes.
 $RequireUpstreamCache = $UseUpstreamCache -or $UpstreamRunId -or ($env:CHROMIX_USE_UPSTREAM_CACHE -eq "1")
 $PartsDir = "C:\parts"
@@ -564,14 +565,21 @@ function Free-Disk {
 function Initialize-VisualStudio {
   $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
   if (-not (Test-Path $vswhere)) { throw "vswhere.exe is not available: $vswhere" }
-  $installation = (& $vswhere -latest -products * `
+  $installations = @(& $vswhere -latest -products * `
     -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-    -property installationPath).Trim()
+    -property installationPath)
+  $discoveryExit = $LASTEXITCODE
+  if ($discoveryExit -ne 0) { throw "Visual Studio discovery failed (vswhere exit $discoveryExit)" }
+  $installation = $installations | Select-Object -First 1
   if (-not $installation) { throw "Visual Studio 2022 C++ tools are not installed" }
+  $installation = $installation.Trim()
   if ($Arch -eq "arm64") {
-    $installation = (& $vswhere -latest -products * -version '[17.0,18.0)' `
+    $installations = @(& $vswhere -latest -products * -version '[17.0,18.0)' `
       -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 Microsoft.VisualStudio.Component.VC.Tools.ARM64 `
-      -property installationPath | Select-Object -First 1)
+      -property installationPath)
+    $discoveryExit = $LASTEXITCODE
+    if ($discoveryExit -ne 0) { throw "VS2022 ARM64 discovery failed (vswhere exit $discoveryExit)" }
+    $installation = $installations | Select-Object -First 1
     if (-not $installation) {
       throw "VS2022 ARM64 tools are missing; add Microsoft.VisualStudio.Component.VC.Tools.ARM64 with the existing VS installer --add"
     }
@@ -679,7 +687,10 @@ function Invoke-FingerprintAcceptance([string]$Browser) {
   $install = Invoke-Tracked -File $python -Cwd $Repo -TimeoutSec 300 `
     -ArgList "-m pip install --disable-pip-version-check --timeout 30 --retries 1 -r `"$requirements`""
   if ($install -ne 0) { throw "fingerprint audit dependency installation failed (exit $install)" }
-  $diagnostics = Join-Path $WorkDir ("fingerprint-diagnostics\runtime-" + [Guid]::NewGuid().ToString('N'))
+  $diagnostics = if ($RecoveryDiagnostics) { Join-Path $RecoveryDiagnostics 'runtime' } else {
+    Join-Path $WorkDir ("fingerprint-diagnostics\runtime-" + [Guid]::NewGuid().ToString('N'))
+  }
+  if (Test-Path -LiteralPath $diagnostics) { throw 'Current runtime diagnostics already exist' }
   $hash = (Get-FileHash -LiteralPath $Browser -Algorithm SHA256).Hash.ToLowerInvariant()
   $script = Join-Path $Repo "tools\fingerprint_acceptance.py"
   $arguments = "-X utf8 `"$script`" --browser `"$Browser`" --expected-sha256 $hash " +
@@ -757,12 +768,15 @@ function Verify-FinalBundle {
 Write-Host "==> Chromix CI stage $StageIndex | Chromium $($Revisions.ChromiumVersion) | remaining $(Get-RemainingMin) min"
 Write-OutVar finished false
 Write-OutVar upload_parts false
-Write-OutVar snapshot_safe true
+Write-OutVar snapshot_safe $(if ($env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA) { "false" } else { "true" })
 Assert-CiScripts
 Free-Disk
 Initialize-VisualStudio
 Install-WindowsSdk
-if ($Arch -eq "arm64") { & "$PSScriptRoot\assert-arm64-toolchain.ps1" -ChromiumVersion $Revisions.ChromiumVersion }
+if ($Arch -eq "arm64") {
+  & "$PSScriptRoot\assert-arm64-toolchain.ps1" -Installation $env:GYP_MSVS_OVERRIDE_PATH `
+    -ChromiumVersion $Revisions.ChromiumVersion
+}
 git config --global core.longpaths true
 
 Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue
@@ -784,6 +798,56 @@ if ($FromArtifact) {
   & $sevenZip x "C:\restore\tree.7z.001" -o"$Root" -y | Select-Object -Last 3
   if ($LASTEXITCODE -ne 0) { throw "7z restore failed" }
   Remove-Item C:\restore -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA) {
+  Write-OutVar snapshot_safe false
+  $stage6Verify = $StageIndex -eq 6 -and $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c'
+  $stage8Verify = $StageIndex -eq 8 -and $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA -ceq '2a55082adb89cb8bac7aa7ab8bb61162b53f4c35'
+  if (-not $FromArtifact -or -not ($stage6Verify -or $stage8Verify) -or $Arch -cne "x64" -or
+      -not $RequireUpstreamCache -or $BuildProfile -cne "native" -or ($stage8Verify -and $ValidateOnly) -or
+      -not $env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO -or -not $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA -or
+      $env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA -or $env:CHROMIX_WINDOWS_MIGRATION_PROFILE) {
+    throw "unchanged-source verification requires an exact native x64 stage6 or stage8 upstream snapshot, without migration"
+  }
+  $verifyDiagnostics = Join-Path $WorkDir "fingerprint-diagnostics"
+  if ($stage8Verify) {
+    if ($env:GITHUB_RUN_ID -cnotmatch '\A[1-9][0-9]*\z' -or $env:GITHUB_RUN_ATTEMPT -cnotmatch '\A[1-9][0-9]*\z' -or
+        $env:GITHUB_JOB -cne 'build-8' -or $env:GITHUB_SHA -cnotmatch '\A[0-9a-f]{40}\z') {
+      throw 'stage8 recovery requires an exact consumer run/attempt/job/SHA'
+    }
+    $recoveryRelative = "recovery-hops/d35485726877-a1-s8-j106081168976/c$env:GITHUB_RUN_ID-a$env:GITHUB_RUN_ATTEMPT-$env:GITHUB_JOB-$env:GITHUB_SHA"
+    $RecoveryDiagnostics = Join-Path $verifyDiagnostics $recoveryRelative
+    if (Test-Path -LiteralPath $RecoveryDiagnostics) { throw 'Current recovery evidence directory already exists' }
+    New-Item -ItemType Directory -Path $RecoveryDiagnostics | Out-Null
+    $verifyDiagnostics = $RecoveryDiagnostics
+    $verifyReport = Join-Path $verifyDiagnostics 'windows-unchanged-source.json'
+  } else {
+    New-Item -ItemType Directory -Force -Path $verifyDiagnostics | Out-Null
+    $verifyReport = Join-Path $verifyDiagnostics ("windows-unchanged-source-" + [Guid]::NewGuid().ToString('N') + ".json")
+  }
+  & python -X utf8 (Join-Path $Repo "tools\verify_windows_snapshot_source.py") --workdir $WorkDir `
+    --previous-repo $env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO --repo $Repo `
+    --expected-previous-sha $env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA --arch $Arch --build-profile $BuildProfile --report $verifyReport
+  if ($LASTEXITCODE -ne 0) { throw "Windows unchanged-source verification failed; restore a clean matching snapshot" }
+  foreach ($name in @("windows-snapshot.json", "windows-snapshot-download.json")) {
+    [IO.File]::Copy((Join-Path $env:RUNNER_TEMP $name), (Join-Path $verifyDiagnostics $name), $false)
+  }
+  if ($stage8Verify) {
+    $publishHop = @'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / 'tools'))
+from verify_windows_snapshot_source import publish_stage8_hop
+publish_stage8_hop(Path(sys.argv[2]))
+'@
+    & python -X utf8 -c $publishHop $Repo $verifyDiagnostics
+    if ($LASTEXITCODE -ne 0) { throw 'Current stage8 recovery evidence binding failed' }
+    Write-OutVar recovery_report_dir $recoveryRelative
+    Write-Host "==> current strict recovery evidence: $recoveryRelative"
+  }
+  Remove-Item Env:CHROMIX_WINDOWS_VERIFY_SOURCE_REPO, Env:CHROMIX_WINDOWS_VERIFY_SOURCE_SHA
+  Write-OutVar snapshot_safe true
 }
 
 if ($env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA) {
@@ -966,7 +1030,7 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $gnArgs = Join-Path $OutDir "args.gn"
 $mergeArgs = @((Join-Path $Repo "tools\merge_gn_args.py"), $gnArgs)
 if ($BuildProfile -in @("fast", "release")) { $mergeArgs += @("--build-profile", $BuildProfile) }
-if ($RestoredUpstream -and $Arch -eq "arm64") {
+if ($RestoredUpstream) {
   $mergeArgs += @("--preserve-pgo-from", $gnArgs)
 }
 if ($RestoredUpstream) { $mergeArgs += $gnArgs }
@@ -1059,7 +1123,10 @@ for relative, keys in RESTORED.items():
   # revised patches. Verify actual hunks after preparation/substitution.
   $fingerprintDiagnostics = Join-Path $WorkDir "fingerprint-diagnostics"
   New-Item -ItemType Directory -Force -Path $fingerprintDiagnostics | Out-Null
-  $FingerprintSourceReport = Join-Path $fingerprintDiagnostics ("source-" + [Guid]::NewGuid().ToString('N') + ".json")
+  $FingerprintSourceReport = if ($RecoveryDiagnostics) { Join-Path $RecoveryDiagnostics 'source-verification.json' } else {
+    Join-Path $fingerprintDiagnostics ("source-" + [Guid]::NewGuid().ToString('N') + ".json")
+  }
+  if (Test-Path -LiteralPath $FingerprintSourceReport) { throw 'Current source verification report already exists' }
   & python -X utf8 (Join-Path $Repo "tools\verify_patch_stack.py") --src $Src --repo $Repo `
     --core $UngoogledTooling --platform-tooling $WindowsTooling --platform windows --output $FingerprintSourceReport
   if ($LASTEXITCODE -ne 0) { throw "restored source does not contain the current fingerprint patch stack" }

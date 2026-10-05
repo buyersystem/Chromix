@@ -66,7 +66,7 @@ def bundle_fixture(root, arch="arm64"):
     return root
 
 
-def archive_fixture(root, arch="arm64", extras=()):
+def archive_fixture(root, arch="arm64", extras=(), *, separator="/"):
     bundle = bundle_fixture(root / "source/chromix", arch)
     archive = root / f"chromix-win-{arch}.zip"
     with warnings.catch_warnings():
@@ -74,10 +74,11 @@ def archive_fixture(root, arch="arm64", extras=()):
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as output:
             for path in sorted(bundle.rglob("*")):
                 if path.is_file():
-                    output.write(path, path.relative_to(bundle.parent).as_posix())
+                    name = path.relative_to(bundle.parent).as_posix().replace("/", separator)
+                    output.writestr(member_info(name, stat.S_IFREG | 0o644), path.read_bytes())
             for name, payload in extras:
                 if isinstance(name, str):
-                    mode = stat.S_IFDIR | 0o755 if name.endswith('/') else stat.S_IFREG | 0o644
+                    mode = stat.S_IFDIR | 0o755 if name.endswith(("/", "\\")) else stat.S_IFREG | 0o644
                     name = member_info(name, mode)
                 output.writestr(name, payload)
     manifest = root / "SHA256SUMS"
@@ -92,7 +93,7 @@ def update_manifest(archive, manifest):
 
 def corrupt_member(archive, name):
     with zipfile.ZipFile(archive) as container:
-        item = container.getinfo(name)
+        item = next(item for item in container.infolist() if item.orig_filename == name)
     data = bytearray(archive.read_bytes())
     name_size, extra_size = struct.unpack_from("<HH", data, item.header_offset + 26)
     offset = item.header_offset + 30 + name_size + extra_size
@@ -103,12 +104,23 @@ def corrupt_member(archive, name):
 
 def member_info(name, mode):
     item = zipfile.ZipInfo(name)
-    # ZipInfo normalizes backslashes on Windows. Preserve the exact archive
-    # input instead of accidentally repairing an unsafe fixture while writing.
+    # Preserve DOS separators when writing fixtures on Windows too.
     item.filename = item.orig_filename = name
     item.create_system = 3
     item.external_attr = mode << 16
     return item
+
+
+@pytest.fixture(params=[False, True], ids=["host-decoder", "windows-decoder"])
+def zip_decoder(request, monkeypatch):
+    if request.param:
+        original = zipfile.ZipInfo.__init__
+
+        def normalizing_decoder(item, *args, **kwargs):
+            original(item, *args, **kwargs)
+            item.filename = item.filename.replace("\\", "/")
+
+        monkeypatch.setattr(zipfile.ZipInfo, "__init__", normalizing_decoder)
 
 
 @pytest.mark.parametrize("arch", verify.MACHINES)
@@ -351,9 +363,48 @@ def test_real_zip_sha_manifest_and_static_extraction(tmp_path, arch, style):
     assert (dest / "chromix/chrome.exe").read_bytes() == pe_fixture(arch)
 
 
+@pytest.mark.parametrize("arch", verify.MACHINES)
+@pytest.mark.parametrize("directory_mode", [0, stat.S_IFDIR | 0o755])
+def test_dos_zip_uses_canonical_paths_without_changing_archive(tmp_path, arch, directory_mode, zip_decoder):
+    directory = member_info("chromix\\empty\\", directory_mode)
+    directory.create_system = 0
+    directory.external_attr |= 0x10
+    regular = member_info("chromix\\dos-file.txt", 0)
+    regular.create_system, regular.external_attr = 0, 0x20
+    extras = [("chromix\\", b""), (directory, b""), (regular, b"DOS attributes"),
+              ("chromix\\153.0.8010.47.manifest", b"<assembly/>"),
+              ("chromix\\153.0.8010.47/chrome.dll", pe_fixture(arch, dll=True)),
+              ("chromix/mixed\\nested/data.txt", b"mixed separators"),
+              ("chromix\\mixed/empty/", b""), ("chromix\\mixed\\", b"")]
+    archive, manifest, dest = archive_fixture(tmp_path, arch, extras=extras, separator="\\")
+    before, checksum = archive.read_bytes(), manifest.read_bytes()
+    with zipfile.ZipFile(archive) as container:
+        names = [item.orig_filename for item in container.infolist()]
+        assert "chromix\\153.0.8010.47.manifest" in names
+        assert "chromix\\locales\\en-US.pak" in names
+    with mock.patch.object(verify.subprocess, "Popen", side_effect=AssertionError("executed")):
+        report = verify.extract_archive(archive, manifest, dest, arch)
+    assert report["static"]["status"] == "passed"
+    assert report["runtime"] == {"status": "not_run"}
+    assert report["archive"] == {"name": archive.name, "size": len(before),
+                                  "sha256": hashlib.sha256(before).hexdigest()}
+    assert archive.read_bytes() == before and manifest.read_bytes() == checksum
+    source = tmp_path / "source/chromix"
+    for path in source.rglob("*"):
+        if path.is_file():
+            assert (dest / "chromix" / path.relative_to(source)).read_bytes() == path.read_bytes()
+    assert (dest / "chromix/dos-file.txt").read_bytes() == b"DOS attributes"
+    assert (dest / "chromix/153.0.8010.47.manifest").read_bytes() == b"<assembly/>"
+    assert (dest / "chromix/153.0.8010.47/chrome.dll").read_bytes() == pe_fixture(arch, dll=True)
+    assert (dest / "chromix/mixed/nested/data.txt").read_bytes() == b"mixed separators"
+    assert (dest / "chromix/empty").is_dir() and (dest / "chromix/mixed/empty").is_dir()
+    assert all("\\" not in path.relative_to(dest).as_posix() for path in dest.rglob("*"))
+
+
+@pytest.mark.parametrize("separator", ["/", "\\"])
 @pytest.mark.parametrize("problem", ["digest", "missing", "duplicate", "wrong-name", "oversized"])
-def test_archive_checksum_manifest_failures_precede_extraction(tmp_path, problem):
-    archive, manifest, dest = archive_fixture(tmp_path)
+def test_archive_checksum_manifest_failures_precede_extraction(tmp_path, problem, separator):
+    archive, manifest, dest = archive_fixture(tmp_path, separator=separator)
     original = manifest.read_text()
     values = {"digest": f"{'0' * 64}  {archive.name}\n", "missing": "",
               "duplicate": original * 2, "wrong-name": original.replace(archive.name, "other.zip"),
@@ -384,25 +435,53 @@ def test_archive_requires_platform_filename_and_fresh_destination(tmp_path):
         verify.extract_archive(archive, manifest, dest, "arm64")
 
 
-def test_archive_corrupt_file_crc_is_rejected_even_with_matching_sha(tmp_path):
-    archive, manifest, dest = archive_fixture(tmp_path)
-    corrupt_member(archive, "chromix/resources.pak")
+@pytest.mark.parametrize("separator", ["/", "\\"])
+def test_archive_corrupt_file_crc_is_rejected_even_with_matching_sha(tmp_path, separator, zip_decoder):
+    archive, manifest, dest = archive_fixture(tmp_path, separator=separator)
+    corrupt_member(archive, f"chromix{separator}resources.pak")
     update_manifest(archive, manifest)
     with pytest.raises(zipfile.BadZipFile, match="CRC"):
         verify.extract_archive(archive, manifest, dest, "arm64")
 
 
+@pytest.mark.parametrize("problem", ["local-name", "overlap", "length"])
+def test_dos_archive_rejects_header_aliases_and_invalid_bounds(tmp_path, problem, zip_decoder):
+    name = "chromix\\extra.txt"
+    archive, manifest, dest = archive_fixture(tmp_path, extras=[(name, b"data")])
+    with zipfile.ZipFile(archive) as container:
+        item = container.infolist()[-1]
+    data = bytearray(archive.read_bytes())
+    central = data.rindex(b"PK\x01\x02")
+    if problem == "local-name":
+        start = item.header_offset + 30
+        data[start:start + len(name)] = name.replace("\\", "/").encode()
+    else:
+        local_field, central_field = (18, 20) if problem == "overlap" else (22, 24)
+        size = len(data) if problem == "overlap" else item.file_size + 1
+        struct.pack_into("<I", data, item.header_offset + local_field, size)
+        struct.pack_into("<I", data, central + central_field, size)
+    archive.write_bytes(data)
+    update_manifest(archive, manifest)
+    with pytest.raises((verify.VerificationError, zipfile.BadZipFile), match="differ|Overlapped|length mismatch"):
+        verify.extract_archive(archive, manifest, dest, "arm64")
+
+
+@pytest.mark.parametrize("separators", [("/", "/"), ("\\", "\\"), ("/", "\\"), ("\\", "/")])
 @pytest.mark.parametrize("name", [
-    "../outside", "chromix/../../outside", "chromix/../outside", "/chromix/outside",
-    "C:/chromix/outside", "//server/share/file", "chromix\\outside", "chromix/dir\\outside",
-    "other/file", "Chromix/file", "chromix/./file", "chromix//file", "chromix/file.",
+    ".", "./", "/", "//", "../outside", "chromix/../../outside", "chromix/../outside", "/chromix/outside",
+    "C:/chromix/outside", "C:chromix/outside", "//server/share/file", "//?/C:/chromix/file",
+    "//./chromix/file", "other/file", "Chromix/file", "chromix/./file", "chromix//file",
+    "chromix/file//", "chromix/file/./", "chromix/file/../", "chromix//", "chromix/file.",
     "chromix/file ", "chromix/dir./file", "chromix/dir /file", "chromix/file:stream",
+    "chromix/C:/file", "chromix/file::$DATA",
     "chromix/CON", "chromix/con.txt", "chromix/PRN.dat", "chromix/AuX/file",
     "chromix/NUL", "chromix/COM1.txt", "chromix/com9/file", "chromix/LPT1", "chromix/lpt9.txt",
     "chromix/a<b", "chromix/a>b", 'chromix/a"b', "chromix/a|b", "chromix/a?b", "chromix/a*b",
-    "chromix/a\x01b", "chromix/a\x7fb", "chromix/a\nb", "chromix/a\rb",
+    "chromix/a\x7fb", *[f"chromix/a{chr(code)}b" for code in range(1, 32)],
 ])
-def test_archive_rejects_unsafe_windows_paths_before_writing(tmp_path, name):
+def test_archive_rejects_unsafe_windows_paths_before_writing(tmp_path, name, separators, zip_decoder):
+    name = "".join(separators[index % 2] + part if index else part
+                   for index, part in enumerate(name.split("/")))
     archive, manifest, dest = archive_fixture(tmp_path, extras=[(name, b"unsafe")])
     with zipfile.ZipFile(archive) as container:
         assert any(item.orig_filename == name for item in container.infolist())
@@ -412,17 +491,27 @@ def test_archive_rejects_unsafe_windows_paths_before_writing(tmp_path, name):
     assert not (tmp_path / "outside").exists()
 
 
-@pytest.mark.parametrize("name", ["chromix\\outside", "chromix/dir\\outside"])
-def test_archive_rejects_original_name_when_decoder_normalizes_slashes(tmp_path, monkeypatch, name):
-    archive, manifest, dest = archive_fixture(tmp_path, extras=[(name, b"unsafe")])
-    original = zipfile.ZipInfo.__init__
+@pytest.mark.parametrize("original,decoded", [
+    ("chromix\\extra", "chromix/other"),
+    ("chromix/extra", "chromix\\extra"),
+    ("chromix\\dir\\extra", "chromix/dir\\extra"),
+    ("chromix\\extra", "chromix/EXTRA"),
+    ("chromix\\extra", "chromix/extra/"),
+    ("chromix\\extra\\", "chromix/extra"),
+    ("chromix\\dir\\..\\extra", "chromix/extra"),
+    ("chromix\\dir\\.\\extra", "chromix/dir/extra"),
+    ("chromix\\dir\\\\extra", "chromix/dir/extra"),
+])
+def test_archive_rejects_decoder_changes_other_than_complete_slash_normalization(tmp_path, monkeypatch, original, decoded):
+    archive, manifest, dest = archive_fixture(tmp_path, extras=[(original, b"")])
+    constructor = zipfile.ZipInfo.__init__
 
-    def normalizing_decoder(item, *args, **kwargs):
-        original(item, *args, **kwargs)
-        # Exercise Windows' decoder behavior even on a POSIX CI runner.
-        item.filename = item.filename.replace("\\", "/")
+    def modifying_decoder(item, *args, **kwargs):
+        constructor(item, *args, **kwargs)
+        if item.orig_filename == original:
+            item.filename = decoded
 
-    monkeypatch.setattr(zipfile.ZipInfo, "__init__", normalizing_decoder)
+    monkeypatch.setattr(zipfile.ZipInfo, "__init__", modifying_decoder)
     with pytest.raises(verify.VerificationError, match="unsafe Windows archive path"):
         verify.extract_archive(archive, manifest, dest, "arm64")
     assert not dest.exists()
@@ -434,31 +523,59 @@ def test_archive_rejects_original_name_when_decoder_normalizes_slashes(tmp_path,
     ["chromix/extra/", "chromix/EXTRA"],
     ["chromix/extra", "chromix/EXTRA/nested"],
     ["chromix/EXTRA/nested", "chromix/extra"],
+    ["chromix/extra", "chromix\\extra"],
+    ["chromix/extra/", "chromix\\extra\\"],
+    ["chromix/extra/", "chromix\\extra"],
+    ["chromix/extra", "chromix\\extra\\"],
+    ["chromix/extra", "chromix\\extra/nested"],
+    ["chromix/extra\\nested", "chromix\\extra"],
+    ["chromix/EXTRA/nested", "chromix\\extra/other"],
+    ["chromix\\extra/nested", "chromix/EXTRA\\"],
+    ["chromix/EXTRA/", "chromix\\extra/nested"],
+    ["chromix/locales\\en-US.pak"],
+    ["chromix\\Locales/other.pak"],
+    ["chromix\\chrome.exe"],
+    ["chromix\\", "chromix"],
+    ["chromix"],
 ])
-def test_archive_rejects_duplicates_and_file_parent_aliases(tmp_path, names):
+def test_archive_rejects_duplicates_and_file_parent_aliases(tmp_path, names, zip_decoder):
     archive, manifest, dest = archive_fixture(
-        tmp_path, extras=[(name, b"" if name.endswith("/") else b"x") for name in names])
+        tmp_path, extras=[(name, b"" if name.endswith(("/", "\\")) else b"x") for name in names])
     with pytest.raises(verify.VerificationError, match="duplicate Windows|shadows a parent"):
         verify.extract_archive(archive, manifest, dest, "arm64")
     assert not dest.exists()
 
 
+@pytest.mark.parametrize("separator", ["/", "\\"])
 @pytest.mark.parametrize("mode,payload", [
     (stat.S_IFLNK | 0o777, b"../../outside"),
     (stat.S_IFIFO | 0o600, b""),
     (stat.S_IFCHR | 0o600, b""),
+    (stat.S_IFBLK | 0o600, b""),
+    (stat.S_IFSOCK | 0o600, b""),
     (stat.S_IFDIR | 0o755, b""),
 ])
-def test_archive_rejects_links_special_files_and_directory_mode_mismatch(tmp_path, mode, payload):
-    item = member_info("chromix/extra", mode)
+def test_archive_rejects_links_special_files_and_directory_mode_mismatch(tmp_path, mode, payload, separator, zip_decoder):
+    item = member_info(f"chromix{separator}extra", mode)
     archive, manifest, dest = archive_fixture(tmp_path, extras=[(item, payload)])
     with pytest.raises(verify.VerificationError, match="unsupported archive member"):
         verify.extract_archive(archive, manifest, dest, "arm64")
     assert not dest.exists()
 
 
-def test_archive_rejects_encrypted_member_before_writing(tmp_path):
-    archive, manifest, dest = archive_fixture(tmp_path)
+@pytest.mark.parametrize("separator", ["/", "\\"])
+@pytest.mark.parametrize("mode,payload", [(stat.S_IFREG | 0o644, b""), (stat.S_IFDIR | 0o755, b"data")])
+def test_archive_rejects_directory_with_regular_file_mode_or_payload(tmp_path, separator, mode, payload, zip_decoder):
+    item = member_info(f"chromix{separator}extra{separator}", mode)
+    archive, manifest, dest = archive_fixture(tmp_path, extras=[(item, payload)])
+    with pytest.raises(verify.VerificationError, match="unsupported archive member"):
+        verify.extract_archive(archive, manifest, dest, "arm64")
+    assert not dest.exists()
+
+
+@pytest.mark.parametrize("separator", ["/", "\\"])
+def test_archive_rejects_encrypted_member_before_writing(tmp_path, separator, zip_decoder):
+    archive, manifest, dest = archive_fixture(tmp_path, separator=separator)
     data = bytearray(archive.read_bytes())
     central = data.index(b"PK\x01\x02")
     for offset in (6, central + 8):
@@ -470,39 +587,47 @@ def test_archive_rejects_encrypted_member_before_writing(tmp_path):
     assert not dest.exists()
 
 
+@pytest.mark.parametrize("separator", ["/", "\\"])
 @pytest.mark.parametrize("problem", ["empty", "member-count", "expanded-size"])
-def test_archive_resource_limits_use_tiny_fixtures(tmp_path, monkeypatch, problem):
-    archive, manifest, dest = archive_fixture(tmp_path)
+def test_archive_resource_limits_use_tiny_fixtures(tmp_path, monkeypatch, problem, separator, zip_decoder):
+    archive, manifest, dest = archive_fixture(tmp_path, separator=separator)
     if problem == "expanded-size":
         monkeypatch.setattr(verify, "MAX_EXPANDED", 1)
     else:
         with zipfile.ZipFile(archive, "w") as output:
             if problem == "member-count":
                 for index in range(10001):
-                    output.writestr(f"chromix/f{index}", b"")
+                    output.writestr(member_info(f"chromix{separator}f{index}", stat.S_IFREG | 0o644), b"")
         update_manifest(archive, manifest)
     with pytest.raises(verify.VerificationError, match="member count or expanded size"):
         verify.extract_archive(archive, manifest, dest, "arm64")
     assert not dest.exists()
 
 
-def test_archive_mixed_architecture_is_not_static_pass(tmp_path):
-    archive, manifest, dest = archive_fixture(tmp_path, extras=[("chromix/nested/foreign.DLL", pe_fixture("x64"))])
+@pytest.mark.parametrize("arch,other", [("arm64", "x64"), ("x64", "arm64")])
+@pytest.mark.parametrize("separator", ["/", "\\"])
+def test_archive_mixed_architecture_is_not_static_pass(tmp_path, arch, other, separator, zip_decoder):
+    archive, manifest, dest = archive_fixture(
+        tmp_path, arch, extras=[("chromix/nested/foreign.DLL".replace("/", separator), pe_fixture(other))],
+        separator=separator)
     with pytest.raises(verify.VerificationError, match="wrong PE architecture"):
-        verify.extract_archive(archive, manifest, dest, "arm64")
+        verify.extract_archive(archive, manifest, dest, arch)
 
 
+@pytest.mark.parametrize("separator", ["/", "\\"])
 @pytest.mark.parametrize("name", ["chromix/COM¹.txt", "chromix/com²", "chromix/COM³/file",
                                   "chromix/LPT¹", "chromix/lpt².txt", "chromix/LPT³/file"])
-def test_archive_rejects_windows_superscript_device_aliases(tmp_path, name):
-    archive, manifest, dest = archive_fixture(tmp_path, extras=[(name, b"unsafe")])
+def test_archive_rejects_windows_superscript_device_aliases(tmp_path, name, separator, zip_decoder):
+    archive, manifest, dest = archive_fixture(tmp_path, extras=[(name.replace("/", separator), b"unsafe")])
     with pytest.raises(verify.VerificationError, match="unsafe Windows archive path"):
         verify.extract_archive(archive, manifest, dest, "arm64")
     assert not dest.exists()
 
 
-def test_archive_rejects_nul_in_original_zip_member_name(tmp_path):
-    name = b"chromix/extra.txtXignored"
+@pytest.mark.parametrize("separator", ["/", "\\"])
+@pytest.mark.parametrize("name", ["chromix/extra.txtXignored", "chromix/extra/Xignored", "chromix/Xignored/"])
+def test_archive_rejects_nul_in_original_zip_member_name(tmp_path, name, separator, zip_decoder):
+    name = name.replace("/", separator).encode()
     archive, manifest, dest = archive_fixture(tmp_path, extras=[(name.decode(), b"unsafe")])
     data = archive.read_bytes()
     assert data.count(name) == 2
@@ -516,27 +641,32 @@ def test_archive_rejects_nul_in_original_zip_member_name(tmp_path):
     assert not dest.exists()
 
 
-def test_archive_checks_crc_of_directory_members(tmp_path):
-    archive, manifest, dest = archive_fixture(tmp_path, extras=[("chromix/extra/", b"directory payload")])
-    corrupt_member(archive, "chromix/extra/")
+@pytest.mark.parametrize("separator", ["/", "\\"])
+def test_archive_checks_crc_of_directory_members(tmp_path, separator, zip_decoder):
+    name = f"chromix{separator}extra{separator}"
+    archive, manifest, dest = archive_fixture(tmp_path, extras=[(name, b"directory payload")])
+    corrupt_member(archive, name)
     update_manifest(archive, manifest)
     with zipfile.ZipFile(archive) as container:
-        assert container.testzip() == "chromix/extra/"
+        assert container.testzip() == container.infolist()[-1].filename
     with pytest.raises((verify.VerificationError, zipfile.BadZipFile)):
         verify.extract_archive(archive, manifest, dest, "arm64")
 
 
-def test_archive_checks_crc_of_empty_directory_members(tmp_path):
-    archive, manifest, dest = archive_fixture(tmp_path, extras=[("chromix/empty/", b"")])
+@pytest.mark.parametrize("separator", ["/", "\\"])
+def test_archive_checks_crc_of_empty_directory_members(tmp_path, separator, zip_decoder):
+    name = f"chromix{separator}empty{separator}"
+    archive, manifest, dest = archive_fixture(tmp_path, extras=[(name, b"")])
     with zipfile.ZipFile(archive) as container:
-        item = container.getinfo("chromix/empty/")
+        item = container.infolist()[-1]
+        assert item.orig_filename == name
     data = bytearray(archive.read_bytes())
     struct.pack_into("<I", data, item.header_offset + 14, 1)
     central = data.index(b"PK\x01\x02")
     while True:
         name_size, extra_size, comment_size = struct.unpack_from("<HHH", data, central + 28)
         name = data[central + 46:central + 46 + name_size].decode()
-        if name == item.filename:
+        if name == item.orig_filename:
             struct.pack_into("<I", data, central + 16, 1)
             break
         central += 46 + name_size + extra_size + comment_size
@@ -544,7 +674,7 @@ def test_archive_checks_crc_of_empty_directory_members(tmp_path):
     archive.write_bytes(data)
     update_manifest(archive, manifest)
     with zipfile.ZipFile(archive) as container:
-        assert container.testzip() == "chromix/empty/"
+        assert container.testzip() == item.filename
     with pytest.raises((verify.VerificationError, zipfile.BadZipFile)):
         verify.extract_archive(archive, manifest, dest, "arm64")
 

@@ -171,6 +171,17 @@ PY
     python3 tools/rust/build_bindgen.py --skip-test
   fi
 fi
+if [ "$PLATFORM" = linux ] && [ "$(python3 -c 'import json, sys
+state=json.loads(sys.argv[1]).get("generator_fingerprint", {}).get("typescript", {}).get("esbuild", {})
+print("1" if state.get("install_needed") else "0")' "$INSPECT")" = 1 ]; then
+  GENERATOR_DOWNLOAD_ARGS=()
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    GENERATOR_DOWNLOAD_ARGS=(--download)
+  fi
+  python3 "$REPO/tools/install_linux_generators.py" --repo "$REPO" --workdir "$WORK" --arch "$ARCH" \
+    --downloads "${CHROMIX_LINUX_GENERATOR_DOWNLOADS:-$WORK/linux-generator-downloads}" \
+    "${GENERATOR_DOWNLOAD_ARGS[@]}"
+fi
 python3 "$REPO/tools/prepare_restored_build.py" --phase finish \
   --platform "$PLATFORM" --arch "$ARCH" --workdir "$WORK"
 touch "$SRC/.chromix-toolchain-ready"

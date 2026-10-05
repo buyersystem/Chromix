@@ -574,7 +574,7 @@ class DirectWindowsRestoredBuildTest(unittest.TestCase):
         put(repo / "build/args.windows.gn", "symbol_level = 0\n")
         for directory, name in (("ungoogled-chromium", "flags.gn"), ("ungoogled-chromium-windows", "flags.windows.gn")):
             put(work / "tooling" / directory / name, "symbol_level = 1\n")
-        put(out / "args.gn", "upstream_extra = true\nsymbol_level = 2\n")
+        put(out / "args.gn", "upstream_extra = true\nsymbol_level = 2\nchrome_pgo_phase = 2\n")
         put(out / ".ninja_log", "# ninja log v6\n")
         put(out / ".ninja_deps", "retained deps")
         put(out / "changed-compiler.obj", "upstream object")

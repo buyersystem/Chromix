@@ -1,6 +1,10 @@
 name: Restore verified Windows snapshot
-description: Validate the exact donor and artifact set before downloading a Windows source-migration snapshot.
+description: Validate the exact donor and artifact set before downloading a Windows snapshot.
 inputs:
+  mode:
+    description: 'Explicit restore mode: migration or verify-source.'
+    required: false
+    default: migration
   repository:
     description: Same-repository owner/name of the donor run.
     required: true
@@ -28,6 +32,105 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Check explicit restore mode
+      shell: powershell
+      env:
+        SNAPSHOT_MODE: ${{ inputs.mode }}
+        SNAPSHOT_SHA: ${{ inputs.source-sha }}
+        SNAPSHOT_RUN: ${{ inputs.run-id }}
+        SNAPSHOT_STAGE: ${{ inputs.stage }}
+        SNAPSHOT_ATTEMPT: ${{ inputs.attempt }}
+        SNAPSHOT_ARTIFACT_IDS: ${{ inputs.artifact-ids }}
+        SNAPSHOT_BRANCH: ${{ inputs.recovery-branch }}
+        SNAPSHOT_REPOSITORY: ${{ inputs.repository }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if ($env:SNAPSHOT_MODE -cnotin @('migration', 'verify-source')) { throw 'Unsupported Windows snapshot mode' }
+        if ($env:SNAPSHOT_MODE -ceq 'migration' -and
+            $env:SNAPSHOT_SHA -cnotin @('97f2881b0e5f43b7e9563569d92dfe702ed1df0b', '30dbab28692793fa311c82ae639186003f3a67d9')) {
+          throw 'No migration profile allows this donor SHA'
+        }
+        if ($env:SNAPSHOT_MODE -ceq 'verify-source') {
+          $artifactIds = @($env:SNAPSHOT_ARTIFACT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object)
+          $stage6 = $env:SNAPSHOT_SHA -ceq 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' -and
+            $env:SNAPSHOT_RUN -ceq '35387701778' -and $env:SNAPSHOT_STAGE -ceq '6' -and
+            $env:SNAPSHOT_ATTEMPT -ceq '1' -and ($artifactIds -join ',') -ceq '10593823308,10593998213'
+          $stage8 = $env:SNAPSHOT_SHA -ceq '2a55082adb89cb8bac7aa7ab8bb61162b53f4c35' -and
+            $env:SNAPSHOT_RUN -ceq '35485726877' -and $env:SNAPSHOT_STAGE -ceq '8' -and
+            $env:SNAPSHOT_ATTEMPT -ceq '1' -and ($artifactIds -join ',') -ceq '10608606403,10608631230' -and
+            $env:SNAPSHOT_BRANCH -ceq 'fix/win153-midl-stat-20260920' -and
+            $env:SNAPSHOT_REPOSITORY -ceq 'xiaozhou26/Chromix' -and
+            $env:CHROMIX_BUILD_PROFILE -ceq 'native' -and $env:CHROMIX_USE_UPSTREAM_CACHE -ceq '1'
+          if (-not ($stage6 -or $stage8)) {
+            throw 'verify-source requires an exact Windows153 x64 stage6 or stage8 donor profile'
+          }
+          if ($env:CHROMIX_WINDOWS_MIGRATION_REPO -or $env:CHROMIX_WINDOWS_MIGRATION_SHA -or $env:CHROMIX_WINDOWS_MIGRATION_PROFILE) {
+            throw 'verify-source cannot enable migration'
+          }
+        }
+    - name: Preflight native Windows MIDL reads
+      if: ${{ inputs.mode == 'verify-source' && (inputs.source-sha == 'e5b29c58b44e381924a2dd4bd60f54d01abb9d9c' || inputs.source-sha == '2a55082adb89cb8bac7aa7ab8bb61162b53f4c35') }}
+      shell: python
+      env:
+        PYTHONDONTWRITEBYTECODE: '1'
+      run: |
+        import os
+        from pathlib import Path
+        import stat
+        import sys
+        import tempfile
+
+        print(f"sys.version={sys.version}; executable={sys.executable}", flush=True)
+        if sys.platform != "win32":
+            raise RuntimeError("MIDL read preflight requires native Windows Python")
+        sys.path.insert(0, os.environ["GITHUB_WORKSPACE"])
+        from tools.repair_windows_midl import _read
+
+        payload = b"# Windows MIDL read preflight\r\nvalue = 1\r\n"
+        fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
+                  "st_mtime_ns", "st_ctime_ns", "st_birthtime_ns",
+                  "st_file_attributes", "st_reparse_tag")
+
+        def write(path):
+            with path.open("wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+
+        def check(case, path, *, readonly=False, mtime_ns=None):
+            before = path.lstat()
+            with path.open("rb") as stream:
+                opened = os.fstat(stream.fileno())
+            left = {key: getattr(before, key, None) for key in fields}
+            right = {key: getattr(opened, key, None) for key in fields}
+            differences = {key: (left[key], right[key]) for key in fields if left[key] != right[key]}
+            print(f"{case}: lstat={left}; fstat={right}; differences={differences}", flush=True)
+            if readonly and before.st_mode & stat.S_IWRITE:
+                raise RuntimeError("MIDL read preflight did not preserve readonly mode")
+            if mtime_ns is not None and before.st_mtime_ns != mtime_ns:
+                raise RuntimeError("MIDL read preflight did not preserve 100ns mtime")
+            if _read(path)[0] != payload:
+                raise RuntimeError(f"MIDL read preflight content mismatch: {case}")
+            print(f"{case}: OK", flush=True)
+
+        with tempfile.TemporaryDirectory(prefix="chromix-midl-read-", dir=os.environ["RUNNER_TEMP"]) as directory:
+            root = Path(directory)
+            try:
+                path = root / "probe.py"
+                write(path)
+                check("write-fsync", path)
+                path.chmod(stat.S_IREAD)
+                check("readonly", path, readonly=True)
+                path.chmod(stat.S_IREAD | stat.S_IWRITE)
+                timestamp = 1_700_000_000_123_456_700
+                os.utime(path, ns=(timestamp, timestamp))
+                check("100ns-mtime", path, mtime_ns=timestamp)
+                temporary = root / ".midl-temp.tmp"
+                write(temporary)
+                check("midl-temp", temporary)
+            finally:
+                for path in root.iterdir():
+                    path.chmod(stat.S_IREAD | stat.S_IWRITE)
     - name: Validate exact Windows snapshot origin
       id: donor
       shell: powershell
@@ -47,6 +150,40 @@ runs:
           --expected-sha "$env:SNAPSHOT_SHA" --artifact-ids "$env:SNAPSHOT_ARTIFACT_IDS" `
           --recovery-branch "$env:SNAPSHOT_BRANCH" --report "$env:RUNNER_TEMP\windows-snapshot.json"
         if ($LASTEXITCODE -ne 0) { throw 'Windows snapshot origin verification failed' }
+    - name: Bind exact stage8 checkpoint metadata
+      if: ${{ inputs.mode == 'verify-source' && inputs.source-sha == '2a55082adb89cb8bac7aa7ab8bb61162b53f4c35' }}
+      shell: python
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PYTHONDONTWRITEBYTECODE: '1'
+      run: |
+        import json
+        import os
+        from pathlib import Path
+        import sys
+
+        sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "tools"))
+        from verify_windows_snapshot_source import STAGE8_DONOR, verify_stage8_origin
+        from validate_windows_snapshot import Client
+
+        manifest = json.loads((Path(os.environ["RUNNER_TEMP"]) / "windows-snapshot.json").read_bytes())
+        verify_stage8_origin(manifest)
+        donor = STAGE8_DONOR
+        client = Client(donor["repository"], os.environ["GH_TOKEN"])
+        run = client.get(f'/actions/runs/{donor["run_id"]}')
+        if (run.get("head_branch") != donor["branch"] or run.get("event") != "workflow_dispatch"
+                or run.get("workflow_id") != 339967931 or run.get("run_attempt") != 1
+                or run.get("head_sha") != donor["head_sha"] or run.get("status") != "completed"
+                or run.get("conclusion") != "failure"
+                or any(run.get(key, {}).get("id") != 1342691290 for key in ("repository", "head_repository"))):
+            raise RuntimeError("stage8 donor run differs from the recorded failed checkpoint")
+        jobs = client.items(f'/actions/runs/{donor["run_id"]}/attempts/1/jobs', "jobs")
+        jobs = [job for job in jobs if job.get("id") == donor["job_id"]]
+        if len(jobs) != 1 or jobs[0].get("status") != "completed" or jobs[0].get("conclusion") != "failure":
+            raise RuntimeError("stage8 donor job differs from the recorded failed checkpoint")
+        steps = [step for step in jobs[0]["steps"] if step.get("name") == "Run stage 8"]
+        if len(steps) != 1 or steps[0].get("conclusion") != "failure":
+            raise RuntimeError("stage8 donor must retain its failed execution evidence")
     - name: Checkout exact previous source identity
       uses: actions/checkout@v4
       with:
@@ -71,10 +208,22 @@ runs:
           --destination 'C:\restore' --report "$env:RUNNER_TEMP\windows-snapshot-download.json"
         if ($LASTEXITCODE -ne 0) { throw 'Windows snapshot content verification failed' }
     - name: Enable explicit verified source migration
+      if: ${{ inputs.mode == 'migration' }}
       shell: powershell
       env:
         SNAPSHOT_SHA: ${{ inputs.source-sha }}
       run: |
         $previous = Join-Path $env:RUNNER_TEMP 'chromix-previous-repo'
+        $profile = if ($env:SNAPSHOT_SHA -ceq '30dbab28692793fa311c82ae639186003f3a67d9') { 'windows-152-x64-stage9' } else { 'windows-152-x64-legacy-0152' }
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_MIGRATION_PROFILE=$profile"
         Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_MIGRATION_REPO=$previous"
         Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_MIGRATION_SHA=$env:SNAPSHOT_SHA"
+    - name: Enable explicit unchanged-source verification
+      if: ${{ inputs.mode == 'verify-source' }}
+      shell: powershell
+      env:
+        SNAPSHOT_SHA: ${{ inputs.source-sha }}
+      run: |
+        $previous = Join-Path $env:RUNNER_TEMP 'chromix-previous-repo'
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_VERIFY_SOURCE_REPO=$previous"
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "CHROMIX_WINDOWS_VERIFY_SOURCE_SHA=$env:SNAPSHOT_SHA"

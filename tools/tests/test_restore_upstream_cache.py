@@ -386,7 +386,8 @@ class RestoreUpstreamCacheTest(unittest.TestCase):
         entry = self.invoke()
         self.assertEqual(entry["status"], "hit", entry)
         receipt = restore.verify_restored(self.work, "windows", "arm64", self.repo)
-        self.assertEqual(receipt["identity"]["chromium_version"], "153.0.8010.47")
+        self.assertEqual(receipt["identity"]["chromium_version"],
+                         fetcher.load_pins(self.repo, "windows")["ChromiumVersion"])
         self.assertEqual(receipt["identity"]["run_id"], 103)
         self.assertEqual(receipt["identity"]["artifact_id"], 104)
         self.assertEqual(receipt["identity"]["workflow_path"], ".github/workflows/build-arm.yml")
