@@ -48,6 +48,7 @@ HOST_LINKS = {"third_party/node/linux/node-linux-x64/bin/node",
               "third_party/dawn/tools/golang/linux-arm64/bin/go",
               "buildtools/linux64-format/clang-format"}
 LINUX154_ESBUILD_LINK = "third_party/devtools-frontend/src/node_modules/esbuild"
+LINUX154_ESBUILD_ALIAS = "third_party/devtools-frontend/src/node_modules/.bin/esbuild"
 LINUX154_ESBUILD_IDENTITY = {
     "chromium_version": "154.0.8037.97",
     "ungoogled_commit": "37085e47cf580c815a30402917d350ce97399ded",
@@ -167,7 +168,7 @@ def source_args(src: Path, identity: dict) -> dict:
 def is_known_external_link(relative: str, platform: str, identity: dict | None = None) -> bool:
     if relative in HOST_LINKS:
         return True
-    if relative == LINUX154_ESBUILD_LINK:
+    if relative in (LINUX154_ESBUILD_LINK, LINUX154_ESBUILD_ALIAS):
         if platform != "linux" or not isinstance(identity, dict):
             return False
         arch = identity.get("arch")
@@ -208,6 +209,11 @@ def missing_host_links(cache: Path, donor: Path, result: dict, platform: str,
         paths.append(path.relative_to(donor).as_posix())
     if len(set(paths)) != len(paths):
         raise Miss("duplicate omitted external symlink")
+    esbuild = {LINUX154_ESBUILD_LINK, LINUX154_ESBUILD_ALIAS}
+    if LINUX154_ESBUILD_ALIAS in paths and LINUX154_ESBUILD_LINK not in paths:
+        raise Miss("incomplete esbuild external symlink chain")
+    if platform != "linux" and esbuild.intersection(paths):
+        raise Miss("incomplete donor source: unknown external symlink")
     return sorted(paths)
 
 
@@ -410,6 +416,8 @@ def verify_restored(workdir: Path, platform: str, arch: str, repo: Path = REPO) 
             or any(not isinstance(name, str) or not is_known_external_link(name, platform, identity) for name in links)
             or len(set(links)) != len(links)):
         raise Miss("restored receipt has unknown omitted host links")
+    if LINUX154_ESBUILD_ALIAS in links and LINUX154_ESBUILD_LINK not in links:
+        raise Miss("restored receipt has incomplete esbuild external symlink chain")
     # Preparation may legitimately regenerate args and Ninja state after restoring.
     source_args(src, identity)
     return receipt

@@ -65,6 +65,7 @@ def install_linux_repo_fixture(repo, pins=LINUX153_PINS):
 def install_typescript_fixture(src):
     files = {prepare.TYPESCRIPT_WRAPPER: PORTABLE,
              prepare.TYPESCRIPT_PACKAGE + "/package.json": FIXTURE["package"],
+             prepare.TYPESCRIPT_PACKAGE + "/bin/tsc": "#!/usr/bin/env node\nrequire('../lib/tsc.js');\n",
              prepare.TYPESCRIPT_PACKAGE + "/lib/tsc.js": FIXTURE["shim"],
              prepare.TYPESCRIPT_PACKAGE + "/lib/_tsc.js": "console.log('Version 6.0.2');\n"}
     for name in FIXTURE["libraries"]:
@@ -75,6 +76,8 @@ def install_typescript_fixture(src):
         path = src / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content.encode() if isinstance(content, str) else content)
+        if relative.endswith("/bin/tsc"):
+            path.chmod(0o755)
 
 
 class LinuxTypeScriptTest(unittest.TestCase):
