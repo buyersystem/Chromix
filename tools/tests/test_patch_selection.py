@@ -28,9 +28,9 @@ def clone_repo(tmp_path: Path) -> Path:
 def set_linux_version(repo: Path, version: str) -> None:
     text = (repo / "build/ungoogled-revisions.psd1").read_text()
     replacements = {
-        'LinuxChromiumVersion = "154.0.8037.57"': f'LinuxChromiumVersion = "{version}"',
-        'LinuxUngoogledVersion = "154.0.8037.57-1"': f'LinuxUngoogledVersion = "{version}-1"',
-        'UngoogledLinuxVersion = "154.0.8037.57-1"': f'UngoogledLinuxVersion = "{version}-1"',
+        'LinuxChromiumVersion = "154.0.8037.97"': f'LinuxChromiumVersion = "{version}"',
+        'LinuxUngoogledVersion = "154.0.8037.97-1"': f'LinuxUngoogledVersion = "{version}-1"',
+        'UngoogledLinuxVersion = "154.0.8037.97-1"': f'UngoogledLinuxVersion = "{version}-1"',
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
@@ -101,19 +101,19 @@ def test_wrong_154_platform_and_core_pin_fail_closed(tmp_path):
     repo = clone_repo(tmp_path)
     text = (repo / "build/ungoogled-revisions.psd1").read_text()
     text = text.replace('MacOSChromiumVersion = "152.0.7977.82"',
-                        'MacOSChromiumVersion = "154.0.8037.57"')
+                        'MacOSChromiumVersion = "154.0.8037.97"')
     text = text.replace('MacOSUngoogledVersion = "152.0.7977.82-1"',
-                        'MacOSUngoogledVersion = "154.0.8037.57-1"')
+                        'MacOSUngoogledVersion = "154.0.8037.97-1"')
     text = text.replace('UngoogledMacOSVersion = "152.0.7977.82-1.1"',
-                        'UngoogledMacOSVersion = "154.0.8037.57-1.1"')
+                        'UngoogledMacOSVersion = "154.0.8037.97-1.1"')
     (repo / "build/ungoogled-revisions.psd1").write_text(text)
-    (repo / "CHROMIUM_MACOS_VERSION").write_text("154.0.8037.57\n")
+    (repo / "CHROMIUM_MACOS_VERSION").write_text("154.0.8037.97\n")
     with pytest.raises(selection.SelectionError, match="Windows or Linux"):
         selection.select(repo, "macos")
 
     repo = clone_repo(tmp_path / "core")
     text = (repo / "build/ungoogled-revisions.psd1").read_text()
-    text = text.replace('LinuxUngoogledCommit = "800d0bb5078472e4442c1fd73373172754a60939"',
+    text = text.replace('LinuxUngoogledCommit = "37085e47cf580c815a30402917d350ce97399ded"',
                         'LinuxUngoogledCommit = "' + "0" * 40 + '"')
     (repo / "build/ungoogled-revisions.psd1").write_text(text)
     with pytest.raises(selection.SelectionError, match="core/platform pins"):
@@ -128,7 +128,7 @@ def test_unknown_version_partial_pin_and_source_mismatch_fail_closed(tmp_path):
 
     repo = clone_repo(tmp_path / "partial")
     text = (repo / "build/ungoogled-revisions.psd1").read_text()
-    text = text.replace('  LinuxChromiumVersion = "154.0.8037.57"\n', "")
+    text = text.replace('  LinuxChromiumVersion = "154.0.8037.97"\n', "")
     (repo / "build/ungoogled-revisions.psd1").write_text(text)
     with pytest.raises(selection.SelectionError, match="overrides"):
         selection.select(repo, "linux")

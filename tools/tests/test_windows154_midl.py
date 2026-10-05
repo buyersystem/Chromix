@@ -40,33 +40,33 @@ FUNCTIONS = frozenset((
     "uuid5_substitutions", "main",
 ))
 ARM_IDENTITY = {
-    "chromium_version": "154.0.8037.57",
-    "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
-    "head_sha": "fc387c7527f875ca73c82ed4907fccaa86808c9a",
+    "chromium_version": "154.0.8037.97",
+    "ungoogled_commit": "37085e47cf580c815a30402917d350ce97399ded",
+    "head_sha": "f03c33d7974af5b40f25b01984ded8418d60fbe4",
     "platform": "windows", "arch": "arm64",
     "repository": "ungoogled-software/ungoogled-chromium-windows",
     "repository_id": 177210827,
-    "head_branch": "154.0.8037.57-1.1", "event": "push",
+    "head_branch": "154.0.8037.97-1.1", "event": "push",
     "workflow_path": ".github/workflows/build-arm.yml",
-    "run_id": 36093095856,
-    "artifact_id": 10939470078, "artifact_name": "build-artifact-arm",
-    "artifact_digest": "sha256:4f6e341e4a9dec0b2ffc5e7dab81d8bebc4074b91b55acfa78f6e9b443c25133",
-    "artifact_size_in_bytes": 16009896290,
+    "run_id": 37100793757,
+    "artifact_id": 11331063687, "artifact_name": "build-artifact-arm",
+    "artifact_digest": "sha256:65ac49ae0bf4cb6b9228cf3f8124363807dbd80dca86379e3cc98f649b46011d",
+    "artifact_size_in_bytes": 15308272345,
 }
 
 IDENTITY = {
-    "chromium_version": "154.0.8037.57",
-    "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
-    "head_sha": "fc387c7527f875ca73c82ed4907fccaa86808c9a",
+    "chromium_version": "154.0.8037.97",
+    "ungoogled_commit": "37085e47cf580c815a30402917d350ce97399ded",
+    "head_sha": "f03c33d7974af5b40f25b01984ded8418d60fbe4",
     "platform": "windows", "arch": "x64",
     "repository": "ungoogled-software/ungoogled-chromium-windows",
     "repository_id": 177210827,
-    "head_branch": "154.0.8037.57-1.1", "event": "push",
+    "head_branch": "154.0.8037.97-1.1", "event": "push",
     "workflow_path": ".github/workflows/build-x64.yml",
-    "run_id": 36093095228,
-    "artifact_id": 10915484727, "artifact_name": "build-artifact",
-    "artifact_digest": "sha256:7a6ba27fa2d056759d1e635f486e68cbfed36ef2d73ee201527e1ddb52d0d4a4",
-    "artifact_size_in_bytes": 15716545319,
+    "run_id": 37100793859,
+    "artifact_id": 11312218732, "artifact_name": "build-artifact",
+    "artifact_digest": "sha256:752273bc9cbf53820f82105f8a3668df43ac59455f1dd1062900c528e3b1370d",
+    "artifact_size_in_bytes": 15695236662,
 }
 
 
@@ -183,7 +183,7 @@ class Windows154MidlIdentityTest(unittest.TestCase):
             for alternative in alternatives:
                 with self.subTest(key=key, alternative=alternative), self.assertRaisesRegex(ValueError, "identity"):
                     self.apply(identity=dict(self.identity, **{key: alternative}))
-        for identity in ({"chromium_version": "154.0.8037.57"}, dict(self.identity, extra=True),
+        for identity in ({"chromium_version": "154.0.8037.97"}, dict(self.identity, extra=True),
                          dict(self.identity, arch="arm64")):
             with self.assertRaisesRegex(ValueError, "identity"):
                 self.apply(identity=identity)

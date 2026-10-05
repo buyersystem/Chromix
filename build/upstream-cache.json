@@ -4,33 +4,33 @@
   "ungoogled_commit": "dd8fb9b5c837982faf41ba58cd30a5664e77c329",
   "sources": {
     "linux": {
-      "chromium_version": "154.0.8037.57",
-      "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
+      "chromium_version": "154.0.8037.97",
+      "ungoogled_commit": "37085e47cf580c815a30402917d350ce97399ded",
       "repository": "ungoogled-software/ungoogled-chromium-portablelinux",
       "repository_id": 177191557,
-      "head_sha": "56b2567742c0423e8e70fd5da286f0762605d26c",
-      "head_branch": "154.0.8037.57-1",
+      "head_sha": "f1441a6efb4d79427d1a3180b1877bbbdb1af7aa",
+      "head_branch": "154.0.8037.97-1",
       "event": "push",
       "workflow_path": ".github/workflows/build.yml",
-      "run_id": 36144376832,
+      "run_id": 37075483703,
       "source_roots": [
         "build/src"
       ],
       "artifacts": {
         "x64": {
-          "id": 10896197724,
+          "id": 11271061055,
           "name": "build-cache-x86_64",
-          "size_in_bytes": 4736781615,
-          "digest": "sha256:88b9b494993940caafc5f9c3f0abf7af97a8f6a8705f6aec0f4ab820967ffdab",
-          "expires_at": "2026-12-24T13:58:16Z",
+          "size_in_bytes": 4737557847,
+          "digest": "sha256:ad79c83fe3fb790c452685d86f0e169e659e076caf4ab1592282993bf2155645",
+          "expires_at": "2026-12-31T23:00:54Z",
           "inner_archive": "build-cache-x86_64.tar.zst"
         },
         "arm64": {
-          "id": 10902309838,
+          "id": 11283212930,
           "name": "build-cache-arm64",
-          "size_in_bytes": 5671963322,
-          "digest": "sha256:7c27123cc1b93b0fa6a66ced3ad053d35eaa48e8ddf94d2ac433ce21f3c924ee",
-          "expires_at": "2026-12-24T13:58:16Z",
+          "size_in_bytes": 5672718015,
+          "digest": "sha256:4e4cdf8e1a4f4baeb54a6d62906fb1f02da6fe0136f016868f823f7f28bda21c",
+          "expires_at": "2026-12-31T23:00:54Z",
           "inner_archive": "build-cache-arm64.tar.zst"
         }
       }
@@ -68,40 +68,40 @@
       }
     },
     "windows": {
-      "chromium_version": "154.0.8037.57",
-      "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
+      "chromium_version": "154.0.8037.97",
+      "ungoogled_commit": "37085e47cf580c815a30402917d350ce97399ded",
       "repository": "ungoogled-software/ungoogled-chromium-windows",
       "repository_id": 177210827,
-      "head_sha": "fc387c7527f875ca73c82ed4907fccaa86808c9a",
-      "head_branch": "154.0.8037.57-1.1",
+      "head_sha": "f03c33d7974af5b40f25b01984ded8418d60fbe4",
+      "head_branch": "154.0.8037.97-1.1",
       "event": "push",
       "workflow_path": ".github/workflows/build-x64.yml",
-      "run_id": 36093095228,
+      "run_id": 37100793859,
       "source_roots": [
         "src",
         "build/src"
       ],
       "artifacts": {
         "x64": {
-          "id": 10915484727,
+          "id": 11312218732,
           "name": "build-artifact",
-          "size_in_bytes": 15716545319,
-          "digest": "sha256:7a6ba27fa2d056759d1e635f486e68cbfed36ef2d73ee201527e1ddb52d0d4a4",
-          "expires_at": "2026-09-30T21:34:19Z",
+          "size_in_bytes": 15695236662,
+          "digest": "sha256:752273bc9cbf53820f82105f8a3668df43ac59455f1dd1062900c528e3b1370d",
+          "expires_at": "2026-10-08T19:06:26Z",
           "inner_archive": "artifacts.zip"
         },
         "arm64": {
-          "id": 10939470078,
+          "id": 11331063687,
           "name": "build-artifact-arm",
-          "size_in_bytes": 16009896290,
-          "digest": "sha256:4f6e341e4a9dec0b2ffc5e7dab81d8bebc4074b91b55acfa78f6e9b443c25133",
-          "expires_at": "2026-10-01T18:31:10Z",
+          "size_in_bytes": 15308272345,
+          "digest": "sha256:65ac49ae0bf4cb6b9228cf3f8124363807dbd80dca86379e3cc98f649b46011d",
+          "expires_at": "2026-10-09T07:43:10Z",
           "inner_archive": "artifacts.zip",
+          "run_id": 37100793757,
           "workflow_path": ".github/workflows/build-arm.yml",
-          "run_id": 36093095856,
-          "run_attempt": 1,
-          "producer_job_id": 108631826642,
-          "producer_job_name": "build / build-13"
+          "run_attempt": 2,
+          "producer_job_id": 111600287486,
+          "producer_job_name": "build / build-9"
         }
       }
     }

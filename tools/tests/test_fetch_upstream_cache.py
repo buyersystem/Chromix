@@ -292,33 +292,33 @@ class FetchUpstreamCacheTest(unittest.TestCase):
         x64_source = copy.deepcopy(source)
         x64_source["artifacts"].pop("arm64", None)
         self.assertEqual(x64_source, {
-            "chromium_version": "154.0.8037.57",
-            "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
+            "chromium_version": "154.0.8037.97",
+            "ungoogled_commit": "37085e47cf580c815a30402917d350ce97399ded",
             "repository": "ungoogled-software/ungoogled-chromium-windows",
             "repository_id": 177210827,
-            "head_sha": "fc387c7527f875ca73c82ed4907fccaa86808c9a",
-            "head_branch": "154.0.8037.57-1.1",
+            "head_sha": "f03c33d7974af5b40f25b01984ded8418d60fbe4",
+            "head_branch": "154.0.8037.97-1.1",
             "event": "push", "workflow_path": ".github/workflows/build-x64.yml",
-            "run_id": 36093095228, "source_roots": ["src", "build/src"],
+            "run_id": 37100793859, "source_roots": ["src", "build/src"],
             "artifacts": {"x64": {
-                "id": 10915484727, "name": "build-artifact", "size_in_bytes": 15716545319,
-                "digest": "sha256:7a6ba27fa2d056759d1e635f486e68cbfed36ef2d73ee201527e1ddb52d0d4a4",
-                "expires_at": "2026-09-30T21:34:19Z", "inner_archive": "artifacts.zip",
+                "id": 11312218732, "name": "build-artifact", "size_in_bytes": 15695236662,
+                "digest": "sha256:752273bc9cbf53820f82105f8a3668df43ac59455f1dd1062900c528e3b1370d",
+                "expires_at": "2026-10-08T19:06:26Z", "inner_archive": "artifacts.zip",
             }},
         })
-        pin, identity = cache.load_manifest("windows", "x64", 36093095228, root=cache.ROOT)
+        pin, identity = cache.load_manifest("windows", "x64", 37100793859, root=cache.ROOT)
         self.assertEqual(pin, {**{key: value for key, value in source.items() if key != "artifacts"},
                                "artifact": source["artifacts"]["x64"]})
         self.assertEqual({key: identity[key] for key in (
             "chromium_version", "head_sha", "run_id", "artifact_id", "artifact_digest")}, {
-            "chromium_version": "154.0.8037.57", "head_sha": source["head_sha"],
-            "run_id": 36093095228, "artifact_id": 10915484727,
+            "chromium_version": "154.0.8037.97", "head_sha": source["head_sha"],
+            "run_id": 37100793859, "artifact_id": 11312218732,
             "artifact_digest": source["artifacts"]["x64"]["digest"],
         })
         self.assert_metadata_provenance(pin, datetime(2026, 9, 27, tzinfo=timezone.utc))
         for arch, run_id, reason in (("arm64", 36093095228,
                                       "run_id_mismatch" if "arm64" in source["artifacts"] else "unsupported_target"),
-                                     ("x64", 36093095856, "run_id_mismatch"),
+                                     ("x64", 37100793757, "run_id_mismatch"),
                                      ("x64", 34806882978, "run_id_mismatch"),
                                      ("x64", 33898278106, "run_id_mismatch")):
             with self.subTest(arch=arch, run_id=run_id):

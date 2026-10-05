@@ -15,8 +15,8 @@ import ctypes
 import errno
 import secrets
 
-PINS = ("154.0.8037.57", "800d0bb5078472e4442c1fd73373172754a60939",
-        "56b2567742c0423e8e70fd5da286f0762605d26c")
+PINS = ("154.0.8037.97", "37085e47cf580c815a30402917d350ce97399ded",
+        "f1441a6efb4d79427d1a3180b1877bbbdb1af7aa")
 DEVTOOLS = "third_party/devtools-frontend/src"
 TYPESCRIPT_PORTABLE = "99034dad55a0805c052f928fca1f03c335a59a4e61bc3ad4c183bb3c0ff4c471"
 TYPESCRIPT_REPAIRED = {

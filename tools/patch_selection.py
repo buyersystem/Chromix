@@ -14,11 +14,11 @@ try:
 except ImportError:
     from platform_pins import PLATFORMS, load_pins, load_shared_pins
 
-VERSION = "154.0.8037.57"
-CORE = "800d0bb5078472e4442c1fd73373172754a60939"
+VERSION = "154.0.8037.97"
+CORE = "37085e47cf580c815a30402917d350ce97399ded"
 PLATFORM_COMMITS = {
-    "windows": "fc387c7527f875ca73c82ed4907fccaa86808c9a",
-    "linux": "56b2567742c0423e8e70fd5da286f0762605d26c",
+    "windows": "f03c33d7974af5b40f25b01984ded8418d60fbe4",
+    "linux": "f1441a6efb4d79427d1a3180b1877bbbdb1af7aa",
 }
 LEGACY_VERSIONS = {"152.0.7977.82", "153.0.8010.36", "153.0.8010.47"}
 OVERRIDE_ROOT = "patches/chromium154"

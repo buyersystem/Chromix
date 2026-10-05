@@ -12,16 +12,16 @@ class Linux154RestoreLinksTest(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         self.identity = {
-            "chromium_version": "154.0.8037.57",
-            "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
-            "head_sha": "56b2567742c0423e8e70fd5da286f0762605d26c",
+            "chromium_version": "154.0.8037.97",
+            "ungoogled_commit": "37085e47cf580c815a30402917d350ce97399ded",
+            "head_sha": "f1441a6efb4d79427d1a3180b1877bbbdb1af7aa",
             "platform": "linux", "arch": "x64",
             "repository": "ungoogled-software/ungoogled-chromium-portablelinux",
-            "repository_id": 177191557, "head_branch": "154.0.8037.57-1", "event": "push",
-            "workflow_path": ".github/workflows/build.yml", "run_id": 36144376832,
-            "artifact_id": 10896197724, "artifact_name": "build-cache-x86_64",
-            "artifact_size_in_bytes": 4736781615,
-            "artifact_digest": "sha256:88b9b494993940caafc5f9c3f0abf7af97a8f6a8705f6aec0f4ab820967ffdab",
+            "repository_id": 177191557, "head_branch": "154.0.8037.97-1", "event": "push",
+            "workflow_path": ".github/workflows/build.yml", "run_id": 37075483703,
+            "artifact_id": 11271061055, "artifact_name": "build-cache-x86_64",
+            "artifact_size_in_bytes": 4737557847,
+            "artifact_digest": "sha256:ad79c83fe3fb790c452685d86f0e169e659e076caf4ab1592282993bf2155645",
         }
 
     def record_link(self, name=restore.LINUX154_ESBUILD_LINK):
@@ -64,9 +64,9 @@ class Linux154RestoreLinksTest(unittest.TestCase):
                 self.record_link()
                 identity = dict(self.identity)
                 if arch == "arm64":
-                    identity.update(arch="arm64", artifact_id=10902309838,
-                                    artifact_name="build-cache-arm64", artifact_size_in_bytes=5671963322,
-                                    artifact_digest="sha256:7c27123cc1b93b0fa6a66ced3ad053d35eaa48e8ddf94d2ac433ce21f3c924ee")
+                    identity.update(arch="arm64", artifact_id=11283212930,
+                                    artifact_name="build-cache-arm64", artifact_size_in_bytes=5672718015,
+                                    artifact_digest="sha256:4e4cdf8e1a4f4baeb54a6d62906fb1f02da6fe0136f016868f823f7f28bda21c")
                 omitted = restore.missing_host_links(fixture.cache, fixture.donor,
                                                      fixture.result, "linux", identity)
                 self.assertEqual(omitted, [restore.LINUX154_ESBUILD_LINK])

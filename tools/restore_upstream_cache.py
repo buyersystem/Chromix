@@ -49,18 +49,18 @@ HOST_LINKS = {"third_party/node/linux/node-linux-x64/bin/node",
               "buildtools/linux64-format/clang-format"}
 LINUX154_ESBUILD_LINK = "third_party/devtools-frontend/src/node_modules/esbuild"
 LINUX154_ESBUILD_IDENTITY = {
-    "chromium_version": "154.0.8037.57",
-    "ungoogled_commit": "800d0bb5078472e4442c1fd73373172754a60939",
-    "head_sha": "56b2567742c0423e8e70fd5da286f0762605d26c",
+    "chromium_version": "154.0.8037.97",
+    "ungoogled_commit": "37085e47cf580c815a30402917d350ce97399ded",
+    "head_sha": "f1441a6efb4d79427d1a3180b1877bbbdb1af7aa",
     "platform": "linux", "repository": "ungoogled-software/ungoogled-chromium-portablelinux",
-    "repository_id": 177191557, "head_branch": "154.0.8037.57-1", "event": "push",
-    "workflow_path": ".github/workflows/build.yml", "run_id": 36144376832,
+    "repository_id": 177191557, "head_branch": "154.0.8037.97-1", "event": "push",
+    "workflow_path": ".github/workflows/build.yml", "run_id": 37075483703,
 }
 LINUX154_ESBUILD_ARTIFACTS = {
-    "x64": (10896197724, "build-cache-x86_64", 4736781615,
-            "sha256:88b9b494993940caafc5f9c3f0abf7af97a8f6a8705f6aec0f4ab820967ffdab"),
-    "arm64": (10902309838, "build-cache-arm64", 5671963322,
-              "sha256:7c27123cc1b93b0fa6a66ced3ad053d35eaa48e8ddf94d2ac433ce21f3c924ee"),
+    "x64": (11271061055, "build-cache-x86_64", 4737557847,
+            "sha256:ad79c83fe3fb790c452685d86f0e169e659e076caf4ab1592282993bf2155645"),
+    "arm64": (11283212930, "build-cache-arm64", 5672718015,
+              "sha256:4e4cdf8e1a4f4baeb54a6d62906fb1f02da6fe0136f016868f823f7f28bda21c"),
 }
 MAC_EXTERNAL_TOOL_LINKS = {"third_party/dawn/tools/golang/mac-arm64/bin/go",
                            "third_party/dawn/tools/golang/mac-amd64/bin/go"}
