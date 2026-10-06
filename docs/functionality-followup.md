@@ -1,32 +1,39 @@
 # 功能与指纹后续批次
 
+导航：[用户功能指南](features.md) · [公开参数](fingerprint-flags.md) · [后端策略](backend-policy.md) · [实测设备模式](device-pool.md) · [原生验收](fingerprint-acceptance.md) · [当前状态](../FINGERPRINT_STATUS.md)。
+
+> 本页兼有当前功能说明与历史批次证据。157 / 165 / 191-patch 的测试结果仅证明对应批次，不代表当前合并栈的构建或原生验收；当前范围以状态记录和验收入口为准。
+
 ## 目标
 
 补齐可执行的浏览器/SDK 功能，同时把“源码实现、原生编译、运行行为、真实设备
 等价性”分别记账。此批次不是所有指纹缺口已经完成的声明。
 
-## 计划
+## 实施范围
 
-先完成 Puppeteer、显式 Cookie 迁移、原生 SOCKS5 TCP 认证和字体内容凭据；再把
-它们接入匹配二进制门禁。完整渲染隐私、UDP/ICE/TURN、TLS/HTTP persona、真实
-GPU/字体/媒体矩阵仍需后续后端工作，不能用展示参数代替。
+Puppeteer、显式 Cookie 迁移、原生 SOCKS5 TCP 认证和字体内容凭据已有源码实现，
+相关探针已接入匹配二进制门禁；接入门禁不等于通过原生验收。完整渲染隐私、
+UDP/ICE/TURN、TLS/HTTP persona、真实 GPU/字体/媒体矩阵仍需后续后端工作，
+不能用展示参数代替。
 
-### 2026-09-14 GPU 后续更新
+### 2026-09-14 GPU 后续更新（历史 165-patch 批次）
 
-最新栈为 191 个补丁、15 套验收，普通 GPU 默认模式现为 native；详见
-[后端策略](backend-policy.md)。本节保留此前 165-patch 批次的实现与证据。
+普通 GPU 默认模式现为 native；行为详见[后端策略](backend-policy.md)。
+后续 191-patch 批次接入了 15 套验收，但 191 已不是当前合并栈数量，
+最新源码范围见[状态记录](../FINGERPRINT_STATUS.md)。以下保留此前 165-patch 批次的实现与证据。
 
 当时新增 `0158`–`0165`，共 **165** 份补丁。Canvas/WebGL/WebGPU 共享不可变
 `--uxr-gpu-backend=native` 策略，禁止冲突参数重新打开旧噪声/Bridge/能力改写。
 另修未分配 snapshot 的 opaque Canvas 画布内 alpha；保留原 OOB、stride
-与设备丢失语义。未设置或 compatibility 模式保留此前接口行为。
+与设备丢失语义。**该历史批次**未设置或 compatibility 模式保留此前接口行为；
+当前普通启动未设置 GPU 模式时使用 native，不再沿用该历史默认值。
 
 measured 准入升级为 schema2/probe4，五份探针资产共同哈希，加入实际 GPU
 分配/读回/格式/生命周期与 CDP 库存。Windows CIM、Linux PCI、macOS GPU
-库存分别取证，不把驱动列表等同于 API 选择。门禁增至 **十一套**。
+库存分别取证，不把驱动列表等同于 API 选择。当时门禁增至 **十一套**。
 `gpu_device_matrix.py` 重新核验 reviewed records；已提交的 33-cell 矩阵只是
-计划，当前 **0 个 reviewed devices、33 个 not_sampled cell**，stock controls
-明确排除。本机完整采集仍因 Canvas 原生失败被拒绝，无新增 record。
+计划，该批次记录为 **0 个 reviewed devices、33 个 not_sampled cell**，stock controls
+明确排除。该批次本机完整采集仍因 Canvas 原生失败被拒绝，无新增 record。
 
 详见 [GPU 后端实施、实测与验证](gpu-backend.md)。这是共享原生策略和证据工具，
 不是完成了统一后端级隐私或跨 OS 实体设备验收。下面的 157-patch 结果保留为
@@ -144,7 +151,7 @@ DirectWrite/FreeType 栅格等价性证明。字体采样同时修正为先完�
 字体表解析模块继续支持不依赖包上下文的单文件加载；启动时才导入凭据环境
 处理，既修复 standalone import 回归，也保留对继承认证变量的清理。
 
-### 构建验证与远端更新
+### 构建验证与远端更新（历史 157-patch 批次）
 
 保留并合入远端 `aa57cbe` 的 Windows ARM64 工作，没有覆盖该批平台支持。
 合并后修复 ZIP 验证器的跨平台差异：Python 在 Windows 上会规范化反斜杠，
@@ -155,7 +162,7 @@ DirectWrite/FreeType 栅格等价性证明。字体采样同时修正为先完�
 bootstrap/编译的回归。缓存策略仍为 push 优先使用、显式请求必须使用；旧
 Canvas 摘要断言按 `5271cf4` 的原生 alpha 路径修复更新，不回退该功能。
 
-## 验证
+## 历史验证（157-patch 批次）
 
 此前批次匹配二进制门禁由七套扩至十套，新增 `sdk_cookies`、`socks_auth`、
 `font_provenance`；依旧固定 executable/source receipts，并重新校验原始观测。
@@ -173,7 +180,7 @@ fixture，检查 window/iframe/worker、错误密码和认证降级，不解析�
 20 项 family/script 矩阵、正 glyph count、文件/face 凭据。Cookie 检查具体属性，
 不只检查名字与两次输出相等。SOCKS 负向路径会拒绝任何成功认证/CONNECT 证据。
 
-本地证据目录：`tmp_build/full-followup-20260914/`。
+以下为该历史批次的本地证据目录：`tmp_build/full-followup-20260914/`。
 
 - Windows 最终聚焦回归 **1127 passed、18 skipped**（`focused-final-05.log`），
   覆盖 Python SDK、新功能探针、原生方法 shims、Canvas 验源、补丁应用/门禁及
@@ -212,9 +219,9 @@ fixture，检查 window/iframe/worker、错误密码和认证降级，不解析�
   `O_NOFOLLOW`/chmod 语义和 CRLF 等代表性失败在隔离的 `405dedc` 基线复现，
   未逐项归因其余 Windows 失败；不能用聚焦或 Linux 通过替代 Windows 全仓通过。
 
-本次尚无匹配 157 份补丁的原生浏览器验收，也没有新增合格真实设备记录。
+该批次当时尚无匹配 157 份补丁的原生浏览器验收，也没有新增合格真实设备记录。
 
-新增 `.github/workflows/fingerprint-contracts.yml`，在 Linux/Windows/macOS
+该批次新增 `.github/workflows/fingerprint-contracts.yml`，在 Linux/Windows/macOS
 分别运行 SDK、探针验证器及 ASan/UBSan extracted-method 测试；独立下载并校验
 九个固定 Chromium 源文件，避免把缺少 preimage 的 skip 当作 CI 通过。它不下载
 浏览器、不重复调度 Chromium 构建，并覆盖字体单文件导入与 Windows ZIP 原始
@@ -236,12 +243,16 @@ fixture，检查 window/iframe/worker、错误密码和认证降级，不解析�
 
 ### 尚未完成的总清单
 
-1. 匹配 165-patch 构建与十一套 native acceptance、跨 OS/真实 GPU 的运行验收。
-2. Canvas/WebGL/WebGPU 共用后端级隐私机制；本轮色域/格式/丢失探针已接入，
+1. 匹配当前合并补丁栈的构建与原生验收、跨 OS/真实 GPU 运行验收。165-patch /
+   十一套仅为历史阶段；当前[验收入口](fingerprint-acceptance.md)列出 15 套，源码范围见[状态记录](../FINGERPRINT_STATUS.md)。
+2. Canvas/WebGL/WebGPU 共用后端级隐私机制；色域/格式/丢失探针已接入，
    仍需真实设备覆盖、实际切换/故障及精确适配器绑定。
 3. 字体完整 shaping/rasterization；真实设备池的 reviewed 全设备样本。
 4. 屏幕物理切换、媒体/音频图/权限/编解码的统一实际设备模型。
 5. UDP ASSOCIATE、真实 ICE/TURN/DNS/IPv6 路由和 packet/process 归因。
-6. TLS/HTTP persona、H3/QUIC、恢复/复用、H2 流控完整策略。
+6. TLS/HTTP persona、H2 流控及完整外部传输策略。已有真实回环 TLS 恢复/复用、
+   H2 GOAWAY 和 QUIC/H3 探针入口，不等于浏览器原生验收或完成 QUIC migration / 0-RTT / Alt-Svc。
 7. 原生 portable-cookie 数据库模式、transparent-proxy 可观测协议及后端。
-8. Intl/DST/配额写入、统一 timer quantization 和完整生命周期矩阵。
+8. Intl/DST、配额写入与完整生命周期的匹配构建验收。统一 timer quantization
+   已有后端实现与探针，不能继续列为完全未实现；原生 Worker、BFCache、冻结恢复
+   等运行边界见[后端策略](backend-policy.md)。

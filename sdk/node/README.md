@@ -1,68 +1,56 @@
 # @xiaoxiaofeihh/chromix
 
-Drive the Chromix Chromium engine with a **CloakBrowser-compatible API**.
-Function names, option names (camelCase), and return types (Playwright
-`Browser` / `BrowserContext` via `playwright-core`) match the
-[`cloakbrowser`](https://github.com/CloakHQ/CloakBrowser) wrapper, so existing
-CloakBrowser scripts can migrate by changing the import:
+Drive the Chromix Chromium engine with familiar Playwright or Puppeteer objects.
+The SDK provides launch helpers, persistent profiles, proxy/GeoIP configuration,
+optional humanized interactions, and encrypted cookie migration.
 
-```diff
-- import { launch } from 'cloakbrowser';
-+ import { launch } from '@xiaoxiaofeihh/chromix';
-```
+Chromix follows CloakBrowser's common camelCase API names. Start a migration by
+changing the import to `@xiaoxiaofeihh/chromix`, then review
+[compatibility differences](#compatibility-with-cloakbrowser). Native fingerprint
+features require a matching Chromix executable; the SDK alone does not add them
+to stock Chromium or guarantee a site's detection outcome.
 
-```javascript
-import { launch } from '@xiaoxiaofeihh/chromix';
-
-const browser = await launch({
-  proxy: 'http://user:pass@residential-proxy:port',
-  geoip: true,       // match timezone + locale to proxy IP
-  headless: false,
-  humanize: true,    // human-like mouse, keyboard, scroll
-});
-const page = await browser.newPage();
-await page.goto('https://example.com');
-await browser.close();
-```
-
-Convenience wrappers:
-
-```javascript
-import {
-  launchContext,
-  launchPersistentContext,
-} from '@xiaoxiaofeihh/chromix';
-
-const context = await launchContext({
-  userAgent: 'Custom UA',
-  viewport: { width: 1920, height: 1080 },
-});
-const persistentContext = await launchPersistentContext({
-  userDataDir: './chrome-profile',
-  headless: false,
-});
-```
+**On this page:** [Install](#install) · [Quick start](#quick-start) ·
+[Profiles and seeds](#persistent-profiles-and-seeds) ·
+[Proxy and GeoIP](#proxy-and-geoip) · [Local executable](#local-executable) ·
+[Puppeteer](#puppeteer) · [Cookies](#cookies-and-session-state) ·
+[API](#api) · [Advanced options](#advanced-options) ·
+[Configuration](#configuration) · [CLI](#cli) ·
+[Compatibility](#compatibility-with-cloakbrowser)
 
 ## Install
 
+Choose one automation driver:
+
 ```bash
+# Playwright (default entry point)
 npm install @xiaoxiaofeihh/chromix playwright-core
+
+# Or Puppeteer (separate entry point)
+npm install @xiaoxiaofeihh/chromix puppeteer-core
 ```
 
-The unscoped npm name `chromix` belongs to an unrelated project. This SDK is
-published under the `@xiaoxiaofeihh` scope; use the full scoped name when
-installing or importing it.
+The SDK declares Node.js >=18; your selected driver's release may require a newer
+Node.js version. It loads an installed `playwright-core` / `playwright` or
+`puppeteer-core` / `puppeteer` at launch time. You only need the driver you use.
+Examples below use ES modules and top-level `await`: save them as `.mjs`, or set
+`"type": "module"` in your application's `package.json`.
 
-The SDK uses the lightweight `yauzl` ZIP reader and loads an installed
-`playwright-core` or `playwright` package at launch time. On first launch, the
-Chromix binary is downloaded from this repository's GitHub Release,
-SHA256-verified when the release manifest is available, and cached under
-`~/.cache/chromix`. Point `CLOAKBROWSER_BINARY_PATH` at a local build to skip
-the download.
+The unscoped npm name `chromix` belongs to an unrelated project. Always use the
+full `@xiaoxiaofeihh/chromix` package name when installing or importing. From the
+repository root, install the checkout with `npm install ./sdk/node playwright-core`.
+
+The first launch downloads the selected Chromix release into `~/.cache/chromix`.
+No separate Playwright/Puppeteer Chromium download is needed. SHA256 is checked
+when a matching entry in the release's `SHA256SUMS` is available; otherwise the
+SDK warns and continues without verification. This is not signed-release
+verification. Use a trusted release host or a [local build](#local-executable).
 
 ### Binary platforms
 
 The SDK resolves Linux x64/ARM64, Windows x64/ARM64, and macOS x64/ARM64.
+These are download mappings, not confirmation that every platform has a published
+or runtime-validated browser in the selected release.
 On Windows, `process.platform === "win32"` with `process.arch === "arm64"`
 selects `win-arm64` and `chromix-win-arm64.zip`; `process.arch === "x64"`
 keeps selecting `win-x64` and `chromix-win-x64.zip`. Use native ARM64 Node.js
@@ -76,69 +64,350 @@ require the matching asset in the selected release or `CHROMIX_DOWNLOAD_HOST`;
 SDK support alone does not publish an ARM64 browser. Windows ARM64 Widevine
 CDM discovery is not supported; an x64 CDM is not reused for ARM64.
 
-## Puppeteer
+## Quick start
 
-Install a `puppeteer-core` version compatible with your Node runtime, then use
-the separate native adapter (no Playwright driver is required):
+Save as `example.mjs` and run `node example.mjs`:
 
 ```javascript
-import { launchContext } from '@xiaoxiaofeihh/chromix/puppeteer';
+import { launch } from '@xiaoxiaofeihh/chromix';
 
-const context = await launchContext({
-  executablePath: process.env.CHROMIX_BROWSER_PATH,
-  args: ['--fingerprint=42'],
+const browser = await launch(); // Headless by default; use { headless: false } for a window.
+try {
+  const page = await browser.newPage();
+  await page.goto('https://example.com');
+  console.log(await page.title());
+} finally {
+  await browser.close();
+}
+```
+
+Use `launch()` to manage multiple contexts, or `launchContext()` for one context
+whose `close()` also closes its owned browser. Headed launches need a graphical
+session. Pages use the standard Playwright API; all launch helpers are async.
+
+## Persistent profiles and seeds
+
+Reuse a dedicated user-data directory to retain cookies, localStorage and other
+browser-managed profile data across runs:
+
+```javascript
+import { launchPersistentContext } from '@xiaoxiaofeihh/chromix';
+
+const context = await launchPersistentContext({
+  userDataDir: './profiles/account-1',
+  headless: false,
 });
 try {
   const page = await context.newPage();
   await page.goto('https://example.com');
 } finally {
-  await context.close(); // also closes this entry point's owned browser
+  await context.close();
 }
 ```
 
-Exports `launch`, `launchContext`, `launchPersistentContext`, `connect` and
-`buildLaunchOptions`. Persistent profiles share the Playwright seed format.
-The default `defaultViewport` is `null`; explicit `launchOptions` are Puppeteer
-options, not Playwright `contextOptions`. `connect` cannot change launch identity;
-failed connection preparation disconnects without closing the caller's browser.
-Humanized wheel calls keep Puppeteer's `{deltaX, deltaY}` API. Measured device
-admission and browser-wide HTTP proxy authentication are not implemented here.
+Run the same script again to reopen the profile. Do not run two browser processes
+against the same directory at once; atomic seed creation does not remove
+Chromium's profile lock. Use a separate directory per independent session.
 
-## Encrypted Cookie migration
+| Launch configuration | Seed behavior |
+|---|---|
+| `launch()` / `launchContext()` with defaults | New nonzero random 32-bit seed per launch |
+| Persistent context with defaults | Creates `.chromix-fingerprint-seed` in the profile once, then reuses it |
+| `args: ['--fingerprint=42']` | Explicit seed wins; does not create or rewrite the seed file |
+| `stealthArgs: false` | No default seed injection or profile seed I/O |
+
+The seed file is one decimal 32-bit value plus a newline, atomically created and
+shared with Python and the Puppeteer adapter. For Playwright persistent contexts,
+the effective argument list is `contextOptions.args`, then `launchOptions.args`,
+then top-level `args`; an explicit seed in that list wins. Prefer top-level `args`
+unless you need a lower-level override. If you choose an explicit seed, supply it
+on every run; it is not saved into the seed file.
+
+A seed controls fingerprint inputs, not cookies or login state, and does not
+guarantee identical rendering across different browser builds, hardware or fonts.
+Profile persistence is not a promise that copying the directory to another
+machine preserves encrypted logins.
+
+## Proxy and GeoIP
+
+Set `CHROMIX_PROXY` to your own proxy URL, for example
+`http://user:password@proxy.example:8080`, before running this Playwright example:
 
 ```javascript
-import { exportCookies, importCookies } from '@xiaoxiaofeihh/chromix/cookies';
+import { launch } from '@xiaoxiaofeihh/chromix';
 
-const options = { passphrase: process.env.COOKIE_PASSPHRASE };
-await exportCookies(sourceContext, 'cookies.enc', options);
-await importCookies(emptyDestinationContext, 'cookies.enc', options);
+const proxy = process.env.CHROMIX_PROXY;
+if (!proxy) throw new Error('Set CHROMIX_PROXY to your proxy URL');
+const browser = await launch({ proxy, geoip: true });
+try {
+  const page = await browser.newPage();
+  await page.goto('https://example.com');
+  console.log(await page.title());
+} finally {
+  await browser.close();
+}
 ```
 
-Accepts live Chromium Playwright or Puppeteer contexts. The same functions,
-plus `encryptCookies` / `decryptCookies`, are exported from the root and
-`/puppeteer`. The authenticated AES-GCM/scrypt file format interoperates with
-Python; the passphrase must contain 12–1024 UTF-8 bytes. Exports never overwrite
-an existing file. Imports require an empty context, preserve CHIPS/host-only and
-security attributes, skip expired entries and verify readback. Import failure
-can leave partial contents; there is no destructive clearing or rollback.
-This is not a native OSCrypt/profile-database portability switch. See the
-[complete format and evidence boundaries](../../docs/functionality-followup.md).
+`CHROMIX_PROXY` is only an example application variable; the SDK does not read it
+automatically. `proxy` also accepts a Playwright-shaped object with `server`,
+`username`, `password`, and optional `bypass`. URL-encode credentials in URLs,
+or use the separate fields. Do not commit real proxy credentials to scripts.
+Puppeteer has [additional proxy-auth restrictions](#puppeteer).
 
-## Options
+`geoip: true` queries **ip-api.com over HTTP** through the effective proxy to fill
+in timezone, country-derived locale and WebRTC presentation IP. With no proxy it
+uses a direct connection. Explicit `timezone: 'Europe/London'` / `locale: 'en-GB'`
+(and explicit regional flags) win over detected values. Omit `geoip` and specify
+those values yourself to avoid that lookup; `--fingerprint-webrtc-ip=auto` also
+requests an IP lookup independently.
 
-CloakBrowser options work unchanged: `headless, proxy, args, stealthArgs,
-timezone, locale, geoip, humanize, humanPreset, humanConfig, userAgent,
-viewport, colorScheme, extensionPaths, browserVersion, releaseChannel,
-licenseKey, contextOptions, launchOptions, userDataDir` (+ `startMaximized`).
+### Routing and limitations
 
-Persistent contexts create `.chromix-fingerprint-seed` inside `userDataDir` on
-first stealth launch and reuse it thereafter. The file is one decimal 32-bit
-seed followed by a newline, uses the same format as the Python SDK, and is
-published atomically for concurrent first launches. An explicit
-`--fingerprint=...` in `args`, `launchOptions.args`, or `contextOptions.args`
-wins without creating or rewriting the file; `stealthArgs: false` also skips
-seed I/O. Defaults claim the native persona: `linux`, `windows`, or `macos`.
+GeoIP is metadata, not a routing mechanism. The lookup uses the effective
+HTTP/HTTPS/SOCKS proxy, including `launchOptions.proxy` overrides, and does not
+inherit environment proxies or `NO_PROXY` bypasses. Failed lookups do not
+fall back to the host connection. Metadata transport supports SOCKS4/4a/5/5h
+and SOCKS5 credentials; that transport alone does not extend Chromium's proxy
+backend. With a browser built from patches `0154`–`0157`, the launch SDK also
+supports native SOCKS5 TCP username/password authentication via the high-level
+`proxy` option. Credentials are endpoint-bound in the launch environment, not
+argv or `page.authenticate`; context-specific SOCKS credentials are rejected.
+Unrelated launches scrub inherited auth, including Windows case aliases. UDP ASSOCIATE is not implemented;
+end-to-end validation against a matching native build remains pending.
+SOCKS5/4a metadata lookups use remote
+destination DNS; SOCKS4 uses local IPv4 DNS. Lookup accepts one raw
+`--proxy-server` route, not PAC/auto-detect, route lists, empty raw proxies,
+raw proxy credentials or a proxy conflicting with `--no-proxy-server`.
+Simultaneous raw/Playwright proxy endpoints must match; omitted default ports
+and equivalent IPv6 spellings are normalized. Supply credentials in the high-level option.
 
+With a proxy, the SDK defaults to the native
+`--force-webrtc-ip-handling-policy=disable_non_proxied_udp` unless an explicit
+native policy was supplied. This is a WebRTC policy, not a guarantee about
+all DNS, HTTP, QUIC or operating-system traffic.
+
+`--fingerprint-webrtc-ip=<IPv4|IPv6|auto>` is supported. Auto resolves before
+launch through the effective proxy. `geoip: true` reuses its one lookup to inject
+the exit IP unless an explicit IP wins; off mode skips IP injection. The browser
+rewrites local candidate/SDP/stats presentation, not sockets or STUN success.
+Remote addresses, zero placeholders and relay allocations remain native.
+`webrtc-fake-srflx` and `webrtc-fake-srflx-allow-udp` (including `uxr` equivalents)
+remain rejected. The HTTP metadata service is not independent proof of an exit
+route. Bare-browser auto has a separate bounded HTTPS startup resolver; see
+the [full resolution contract](../../docs/fingerprint-flags.md#webrtc-ip-and-proxy-resolution).
+
+GeoIP lookup failures reject with `Error`. The timeout defaults to 10
+seconds and accepts values greater than zero and at most 60. Creating a
+later context with another proxy does not recompute browser-level locale
+or timezone/IP.
+
+## Local executable
+
+Set `CLOAKBROWSER_BINARY_PATH` before launch to bypass the downloader. For example,
+on Linux or macOS (replace the path with your actual native executable):
+
+```bash
+export CLOAKBROWSER_BINARY_PATH="/absolute/path/to/chromix/chrome"
+node example.mjs
+```
+
+On macOS, a bundle's executable is typically
+`Chromium.app/Contents/MacOS/Chromium`. On Windows PowerShell:
+
+```powershell
+$env:CLOAKBROWSER_BINARY_PATH = "C:\Chromix\chrome.exe"
+node example.mjs
+```
+
+Use `chrome.exe`, not `chromix.cmd`, and keep the rest of the browser bundle
+beside it. A local path is not downloaded or checksum-verified by the SDK; it
+must match your OS/architecture and include the native patches you need.
+
+For a **per-call Playwright override**, put the path in `launchOptions`:
+
+```javascript
+import { launch } from '@xiaoxiaofeihh/chromix';
+
+const browser = await launch({
+  launchOptions: { executablePath: '/absolute/path/to/chromix/chrome' },
+});
+try {
+  const page = await browser.newPage();
+  await page.goto('https://example.com');
+} finally {
+  await browser.close();
+}
+```
+
+This override takes precedence over `CLOAKBROWSER_BINARY_PATH`. The root entry
+point does **not** use a top-level `executablePath`; the Puppeteer adapter does.
+
+## Puppeteer
+
+Use the separate native adapter; no Playwright driver is required:
+
+```javascript
+import { launchContext } from '@xiaoxiaofeihh/chromix/puppeteer';
+
+const context = await launchContext();
+try {
+  const page = await context.newPage();
+  await page.goto('https://example.com');
+  console.log(await page.title());
+} finally {
+  await context.close(); // Also closes this helper's owned browser.
+}
+```
+
+| Export | Returns / purpose |
+|---|---|
+| `launch(options)` | Native Puppeteer `Browser` |
+| `launchContext(options)` | New isolated `BrowserContext`; close also closes its browser |
+| `launchPersistentContext({ userDataDir, ...options })` | Default persistent context; close closes its browser |
+| `connect(options)` | Connect to a caller-owned browser; use `browser.disconnect()` to detach |
+| `buildLaunchOptions(options)` | Assemble Puppeteer launch settings without launching |
+
+Persistent profiles use the [same seed rules](#persistent-profiles-and-seeds).
+For a local build, supply top-level `executablePath` **or**
+`launchOptions.executablePath`, not both, or use `CLOAKBROWSER_BINARY_PATH`.
+
+Important differences from the Playwright entry point:
+
+- `defaultViewport` defaults to `null`. Use `viewport` or `defaultViewport`, not
+  both. `launchOptions` must contain Puppeteer options, not Playwright options.
+- Nonempty `contextOptions`, launch-level `userAgent` / `colorScheme`, and
+  `devicePool` are rejected. Configure returned contexts/pages using native
+  Puppeteer APIs where appropriate.
+- Browser-wide HTTP/HTTPS proxy authentication is not implemented: credentialed
+  HTTP proxies are rejected, not silently mapped to `page.authenticate()`.
+  Native SOCKS5 TCP authentication requires the matching browser patches
+  described in [proxy limitations](#routing-and-limitations).
+- `connect()` cannot change launch identity, proxy, profile or regional settings.
+  Failed connection preparation disconnects without closing the caller's browser.
+- Humanized wheel calls retain Puppeteer's `{ deltaX, deltaY }` API. Humanization
+  does not imply coverage of every Puppeteer operation or a detection guarantee.
+
+## Cookies and session state
+
+Choose the mechanism that matches your task:
+
+- **Same profile across runs:** use [persistent contexts](#persistent-profiles-and-seeds).
+- **Playwright session snapshot:** use `storageState` for cookies/localStorage.
+  This is a plaintext credential-bearing file, not a full profile or a seed backup.
+- **Encrypted cookies between live contexts/SDKs:** use the migration helpers below.
+  These migrate cookies only, not localStorage, IndexedDB or the profile seed.
+
+### Playwright storage state
+
+This example creates `state.json` on the first run and loads it when present:
+
+```javascript
+import { existsSync } from 'node:fs';
+import { launchContext } from '@xiaoxiaofeihh/chromix';
+
+const context = await launchContext({
+  contextOptions: existsSync('state.json') ? { storageState: 'state.json' } : {},
+});
+try {
+  const page = await context.newPage();
+  await page.goto('https://example.com');
+  await context.storageState({ path: 'state.json' });
+} finally {
+  await context.close();
+}
+```
+
+Protect this file and exclude it from version control. Saving state does not log
+you in; complete your application's normal login before saving if needed.
+`storageState` is a Playwright API, not a Puppeteer adapter option.
+
+### Encrypted cookie migration
+
+Set `COOKIE_PASSPHRASE` in your environment. No additional Node cryptography
+package is needed. This example migrates a demo cookie into a fresh context:
+
+```javascript
+import { launchContext } from '@xiaoxiaofeihh/chromix';
+import { exportCookies, importCookies } from '@xiaoxiaofeihh/chromix/cookies';
+
+const passphrase = process.env.COOKIE_PASSPHRASE;
+if (!passphrase) throw new Error('Set COOKIE_PASSPHRASE');
+const options = { passphrase };
+const source = await launchContext();
+try {
+  await source.addCookies([{
+    name: 'demo', value: '1', url: 'https://example.com',
+  }]);
+  console.log(await exportCookies(source, 'cookies.enc', options));
+} finally {
+  await source.close();
+}
+
+const destination = await launchContext();
+try {
+  console.log(await importCookies(destination, 'cookies.enc', options));
+} finally {
+  await destination.close();
+}
+```
+
+Use a new output filename if `cookies.enc` already exists: exports never replace
+an existing file. In real workflows pass your authenticated source context and
+a fresh destination **before navigating it**. The migration helpers accept live
+Chromium Playwright or Puppeteer contexts. The same helpers, plus
+`encryptCookies` / `decryptCookies`, are exported from the root and `/puppeteer`.
+
+The authenticated AES-GCM/scrypt file format interoperates with Python;
+passphrases must contain 12–1024 UTF-8 bytes. Keep the passphrase separate from
+the encrypted file. Imports require a cookie-empty context, preserve CHIPS,
+host-only/domain and security attributes, skip expired entries and verify
+readback. Existing cookies are never cleared. On failure, discard the destination
+context because it may contain a partial import; there is no rollback. This is
+not an OSCrypt/profile-database portability switch. See the
+[format and limitations](../../docs/functionality-followup.md).
+
+## API
+
+The root entry point uses Playwright:
+
+| Export | Returns / purpose |
+|---|---|
+| `launch(options)` | Playwright `Browser` |
+| `launchContext(options)` | `BrowserContext`; close also closes its owned browser |
+| `launchPersistentContext({ userDataDir, ...options })` | Persistent `BrowserContext` |
+| `buildLaunchOptions` / `buildContextOptions` | Assemble driver options |
+| `buildArgs` / `getDefaultStealthArgs` | Fingerprint argument assembly |
+| `maybeResolveGeoip` | Resolve timezone, locale and exit-IP metadata |
+| `ensureBinary` / `binaryInfo` / `clearCache` / `checkForUpdate` | Binary management |
+| `humanizeBrowser` / `humanizePage` / `resolveHumanConfig` | Behavioral-layer helpers |
+| `exportCookies` / `importCookies` / `encryptCookies` / `decryptCookies` | Encrypted cookie migration |
+
+### Option routing
+
+Common options include `headless`, `proxy`, `args`, `stealthArgs`, `timezone`,
+`locale`, `geoip`, `humanize`, `humanPreset`, `humanConfig`, `extensionPaths`,
+`browserVersion`, `releaseChannel`, and `startMaximized`.
+
+- Put Playwright launch settings (for example `executablePath`, `env`, `timeout`)
+  in `launchOptions`. Its `args` replaces, rather than concatenates with, top-level
+  `args`; the SDK then assembles and validates the final flags.
+- Put Playwright context settings (for example `storageState`, `permissions`,
+  `extraHTTPHeaders`) in `contextOptions`. `userAgent`, `viewport`, and
+  `colorScheme` also have top-level conveniences.
+- Use top-level `timezone` / `locale`: `contextOptions.timezoneId` / `locale`
+  are ignored in favor of browser flags. Creating another context later does
+  not change the browser's regional identity.
+- `humanize: true` enables the wrapper's mouse/typing/scroll behavior;
+  `humanPreset: 'careful'` selects slower defaults. This is not a guarantee of
+  full driver-operation coverage or site acceptance.
+- An arbitrary `userAgent` override may disagree with UA Client Hints. Prefer
+  coherent native fingerprint settings.
+
+## Advanced options
+
+### Fingerprint and viewport defaults
+
+Defaults claim the native OS persona: `linux`, `windows`, or `macos`.
 Default page viewport geometry is native. Public fingerprint mode supplies
 CPU/RAM 8/8, platform-specific screen/taskbar defaults and a 102400 MiB quota.
 The older seeded synthetic viewport/hardware pools require explicit
@@ -165,6 +434,8 @@ for defaults and limitations. Updating this SDK does not add native features
 to an old executable; use a browser rebuilt from the matching patch stack.
 
 ```javascript
+import { launch } from '@xiaoxiaofeihh/chromix';
+
 const browser = await launch({ args: [
   '--fingerprint=42',
   '--fingerprint-brand=Edge',
@@ -173,6 +444,12 @@ const browser = await launch({ args: [
   '--fingerprint-allow-3p-cookies',
   '--enable-blink-features=FakeShadowRoot',
 ] });
+try {
+  const page = await browser.newPage();
+  await page.goto('https://example.com');
+} finally {
+  await browser.close();
+}
 ```
 
 `--fingerprint=off` accepts `false/0/disable/disabled` and strips the injected
@@ -185,114 +462,103 @@ Ordinary launches default to `--fingerprint-gpu-backend=native`; explicit WebGL
 name hints require `compatibility`. The SDK no longer adds `--ignore-gpu-blocklist`.
 Use `--fingerprint-audio-render=isolated` with the fingerprint seed or an explicit
 audio seed, and `--fingerprint-timer-resolution=7` for **7 milliseconds**.
-`fontsDir` supplies a parsed default family whitelist before validating
-`--fingerprint-font-policy=restricted`; Linux also loads the actual directory
-through Fontconfig. See [backend policy](../../docs/backend-policy.md).
+See [backend policy](../../docs/backend-policy.md) for implementation limits.
 
-## Measured device launch
+### Custom font directory
+
+`fontsDir: '/path/to/fonts'` parses `.ttf` / `.otf` / `.ttc` family names and,
+on Linux, configures the actual Fontconfig directory. It does not install fonts
+into Windows/macOS font backends or prove which file rendered each glyph.
+Normal launches keep native font selection. Add
+`args: ['--fingerprint-font-policy=restricted']` to enforce the parsed family
+pool on resolved native fonts and fallback; an explicit whitelist wins.
+Legacy substitutions and persona fallback still require synthetic-test opt-in.
+Use fonts you are licensed to use. Measured mode rejects `fontsDir` overrides.
+
+### Measured device launch
 
 `launchContext({devicePool: {python: 'python', host: 'record.json',
-records: ['record.json'], seed: '42'}})` validates entire evidence bundles and
+records: ['record.json'], seed: '42'}})` validates complete device records and
 the native host, then verifies five live contexts before returning. The persistent
 variant uses `launchPersistentContext` with `userDataDir` and binds record/seed.
 Install the matching Python SDK into the selected interpreter first:
-`python -m pip install ./sdk/python` from this checkout. Set
-`CLOAKBROWSER_BINARY_PATH` to the exact collected executable. Evidence defaults to
+`python -m pip install './sdk/python[measured]'` from this checkout. Set
+`CLOAKBROWSER_BINARY_PATH` to the exact collected executable. Records default to
 a 24-hour age limit. Other field/launch/context overrides are rejected;
 browser-returning `launch` does not support measured mode. See
 [device pool documentation](../../docs/device-pool.md) for the full contract.
 
-Environment variables: `CLOAKBROWSER_BINARY_PATH`, `CLOAKBROWSER_VERSION`,
-`CLOAKBROWSER_RELEASE_CHANNEL`, `CLOAKBROWSER_GEOIP_TIMEOUT_SECONDS`,
-`CLOAKBROWSER_WIDEVINE_CDM` / `CLOAKBROWSER_WIDEVINE=0` (DRM), and
-`CHROMIX_CACHE_DIR` / `CHROMIX_DOWNLOAD_HOST` (cache / release host override).
+### High-risk engine options
 
-## Intentional differences from CloakBrowser
-
-1. `licenseKey` is accepted and ignored (one open tier).
-2. `geoip` queries ip-api.com instead of a local GeoLite2 database.
-3. Puppeteer uses `@xiaoxiaofeihh/chromix/puppeteer`, with the boundaries above.
-4. Widevine/DRM is enabled automatically when a CDM is present (installed
-   Chrome or `CLOAKBROWSER_WIDEVINE_CDM`); on Linux, fetch one with
-   `python -m chromix widevine`.
-
-High-risk engine ports are available only through explicit `args`:
-
-```javascript
-const browser = await launch({ args: [
-  '--fingerprint-devtools-runtime-suppression',
-  '--fingerprint-canvas-bridge=127.0.0.1:9228',
-  '--fingerprint-canvas-bridge-unsafe',
-] });
-```
+`--fingerprint-devtools-runtime-suppression` and
+`--fingerprint-canvas-bridge=127.0.0.1:9228` (with
+`--fingerprint-canvas-bridge-unsafe`) require explicit `args`.
 
 Runtime suppression can break console/binding-based automation. Canvas Bridge
 removes the sandbox from bridge renderer processes and forwards canvas/WebGL
-operations to the configured endpoint.
+operations to the configured endpoint. Do not enable these for ordinary launches.
 
-### Proxy and GeoIP behavior
+## Configuration
 
-GeoIP is metadata, not a routing mechanism. The lookup uses the effective
-HTTP/HTTPS/SOCKS proxy, including `launchOptions.proxy` overrides, and does not
-inherit environment proxies or `NO_PROXY` bypasses. Failed lookups do not
-fall back to the host connection. Metadata transport supports SOCKS4/4a/5/5h
-and SOCKS5 credentials; that transport alone does not extend Chromium's proxy
-backend. With a browser built from patches `0154`–`0157`, the launch SDK also
-supports native SOCKS5 TCP username/password authentication via the high-level
-`proxy` option. Credentials are endpoint-bound in the launch environment, not
-argv or `page.authenticate`; context-specific SOCKS credentials are rejected.
-Unrelated launches scrub inherited auth, including Windows case aliases. There
-is no UDP ASSOCIATE implementation or matching-native-build acceptance yet.
-SOCKS5/4a metadata lookups use remote
-destination DNS; SOCKS4 uses local IPv4 DNS. Lookup accepts one raw
-`--proxy-server` route, not PAC/auto-detect, route lists, empty raw proxies,
-raw proxy credentials or a proxy conflicting with `--no-proxy-server`.
-Simultaneous raw/Playwright proxy endpoints must match; omitted default ports
-and equivalent IPv6 spellings are normalized. Supply credentials in the high-level option.
+Set environment variables before importing the SDK, especially cache settings.
+Only the listed compatibility variables are handled; not all CloakBrowser
+environment variables have a Chromix equivalent.
 
-With a proxy, the SDK defaults to the native
-`--force-webrtc-ip-handling-policy=disable_non_proxied_udp` unless an explicit
-native policy was supplied. This is a WebRTC policy, not a guarantee about
-all DNS, HTTP, QUIC or operating-system traffic.
+| Variable | Purpose |
+|---|---|
+| `CLOAKBROWSER_BINARY_PATH` | Local executable; bypasses download |
+| `CLOAKBROWSER_RELEASE_CHANNEL` | Selects a built-in channel: `stable` (default) or `latest` |
+| `CLOAKBROWSER_VERSION` | Selects a built-in channel by Chromium major; not an arbitrary exact-version pin |
+| `CLOAKBROWSER_GEOIP_TIMEOUT_SECONDS` | GeoIP timeout, default `10`; must be >0 and <=60 |
+| `CLOAKBROWSER_WIDEVINE_CDM` | Explicit Widevine CDM directory |
+| `CLOAKBROWSER_WIDEVINE=0` | Disables automatic CDM setup |
+| `CHROMIX_CACHE_DIR` | Cache root; default `~/.cache/chromix` |
+| `CHROMIX_DOWNLOAD_HOST` | Release asset directory URL, including its `SHA256SUMS` |
 
-`--fingerprint-webrtc-ip=<IPv4|IPv6|auto>` is supported. Auto resolves before
-launch through the effective proxy. `geoip: true` reuses its one lookup to inject
-the exit IP unless an explicit IP wins; off mode skips IP injection. The browser
-rewrites local candidate/SDP/stats presentation, not sockets or STUN success.
-Remote addresses, zero placeholders and relay allocations remain native.
-`webrtc-fake-srflx` and `webrtc-fake-srflx-allow-udp` (including `uxr` equivalents)
-remain rejected. The HTTP metadata service is not independent proof of an exit
-route. Bare-browser auto has a separate bounded HTTPS startup resolver; see
-the [full resolution contract](../../docs/fingerprint-flags.md#webrtc-ip-and-proxy-resolution).
-
-GeoIP lookup failures now reject with `Error`. The timeout defaults to 10
-seconds and accepts values greater than zero and at most 60. Creating a
-later context with another proxy does not recompute browser-level locale
-or timezone/IP.
+`browserVersion` / `releaseChannel` are the per-call equivalents of the version
+and channel variables. A recognized channel takes precedence over a version;
+unmatched values fall back to `stable`. Channel tags are defined in the installed
+SDK, not dynamically selected from the newest release. `binaryInfo()` reports
+that channel's cache metadata, not a probe of a local executable override.
+`checkForUpdate()` reports availability; it does not install an update.
 
 ## CLI
 
-After installation, the package provides the `chromix` executable:
+After installation, the package provides a local `chromix` executable. Explicitly
+select the scoped package to avoid accidentally resolving the unrelated package:
 
 ```bash
-npx chromix --version
-npx chromix install       # pre-download the binary
-npx chromix info          # binary / cache info
-npx chromix clear-cache
+npm exec --package=@xiaoxiaofeihh/chromix -- chromix --version
+npm exec --package=@xiaoxiaofeihh/chromix -- chromix install
+npm exec --package=@xiaoxiaofeihh/chromix -- chromix info
+npm exec --package=@xiaoxiaofeihh/chromix -- chromix clear-cache
 ```
 
-Run the registry package without installing it first:
-
-```bash
-npx @xiaoxiaofeihh/chromix --version
-```
+`install` pre-downloads the browser and prints its path (or the environment's
+local override). `info` reports channel/cache metadata without launching a
+browser. `clear-cache` deletes the entire configured binary cache, not separately
+located profile directories. The Node CLI has no `widevine` command; the optional
+Python SDK provides `python -m chromix widevine` for Linux x64.
 
 ## Versioning
 
 The npm package follows SemVer independently of Chromium's four-part version.
-The source checkout targets Chromium `153.0.8010.36` on Linux/Windows and retains
-macOS `152.0.7977.82` until its upstream 153 platform release exists. The actual
-binary release selected by `stable` or `latest` is shown by `chromix info`.
+Package versions and source build targets may move ahead of the binary channels.
+Use `chromix info` for the installed SDK's selected release/cache metadata and
+`chromix install` to resolve its executable path; neither verifies that every
+platform asset is published or that a local override matches the channel version.
+
+## Compatibility with CloakBrowser
+
+1. Common launch names and Playwright return objects are retained; review option
+   routing and limits rather than assuming complete upstream feature parity.
+2. `licenseKey` is accepted and ignored (one open tier).
+3. GeoIP uses an HTTP metadata service, not a local GeoLite2 database. Explicit
+   timezone/locale win; failed lookups reject.
+4. Puppeteer uses `@xiaoxiaofeihh/chromix/puppeteer` with the restrictions above.
+5. Widevine setup is automatic when a supported CDM is found (installed Chrome or
+   `CLOAKBROWSER_WIDEVINE_CDM`); discovery alone does not guarantee playback for
+   a particular DRM service. Linux x64 can fetch a CDM with the Python CLI.
 
 ## License
 

@@ -1,45 +1,54 @@
 # chromix (Python)
 
-Drive the Chromix stealth Chromium engine with a **CloakBrowser-compatible API** —
-function names, keyword arguments, return types (Playwright `Browser` / `BrowserContext`)
-and `CLOAKBROWSER_*` env-var names all match the [`cloakbrowser`](https://github.com/CloakHQ/CloakBrowser)
-wrapper, so existing CloakBrowser scripts run on Chromix by changing only the import:
+Drive the Chromix Chromium engine with familiar Playwright `Browser` and
+`BrowserContext` objects. The SDK provides synchronous and asynchronous launch
+helpers, persistent profiles, proxy/GeoIP configuration, optional humanized
+interactions, and encrypted cookie migration.
 
-```diff
-- from cloakbrowser import launch
-+ from chromix import launch
-```
+Chromix follows CloakBrowser's common API names. Start a migration by changing
+`from cloakbrowser import launch` to `from chromix import launch`, then review
+[compatibility differences](#compatibility-with-cloakbrowser). Native fingerprint
+features require a matching Chromix executable; the SDK alone does not add them
+to stock Chromium or guarantee a site's detection outcome.
 
-```python
-from chromix import launch
-
-browser = launch(proxy="http://user:pass@proxy:8080", geoip=True, humanize=True)
-page = browser.new_page()
-page.goto("https://example.com")
-browser.close()
-```
+**On this page:** [Install](#install) · [Quick start](#quick-start) ·
+[Async](#async) · [Profiles and seeds](#persistent-profiles-and-seeds) ·
+[Proxy and GeoIP](#proxy-and-geoip) · [Local executable](#local-executable) ·
+[Cookies](#cookies-and-session-state) · [API](#api) ·
+[Advanced options](#advanced-options) · [Configuration](#configuration) ·
+[CLI](#cli) · [Compatibility](#compatibility-with-cloakbrowser)
 
 ## Install
 
 ```bash
-pip install chromix playwright
+python -m pip install chromix playwright
 ```
 
-The distribution and import package are both named `chromix`. To install the
-SDK directly from a repository checkout instead, run:
+The distribution and import package are both named `chromix`. From the repository
+root, install the checkout instead with:
 
 ```bash
-pip install ./sdk/python playwright
+python -m pip install './sdk/python[playwright]'
 ```
 
-On first launch the stealth Chromium binary is downloaded from this repo's GitHub
-Release, SHA256-verified, and cached under `~/.cache/chromix`. Point
-`CLOAKBROWSER_BINARY_PATH` at a local build (e.g. your own `chrome.exe`) to skip
-the download.
+Package metadata declares Python >=3.8; use a Python version supported by the
+installed Playwright and any optional dependencies. GeoIP needs no dedicated
+extra, but timezone validation needs IANA timezone data. Python >=3.9 uses
+`zoneinfo` (install `tzdata` if your system lacks the database); older Python
+falls back to system zoneinfo files. Cookie migration additionally needs
+`chromix[cookies]`.
+
+The first launch downloads the selected Chromix release into `~/.cache/chromix`.
+You do not need `playwright install chromium` for this browser. SHA256 is checked
+when a matching entry in the release's `SHA256SUMS` is available; otherwise the
+SDK warns and continues without verification. This is not signed-release
+verification. Use a trusted release host or a [local build](#local-executable).
 
 ### Binary platforms
 
 The SDK resolves Linux x64/ARM64, Windows x64/ARM64, and macOS x64/ARM64.
+These are download mappings, not confirmation that every platform has a published
+or runtime-validated browser in the selected release.
 On Windows, `platform.machine()` values `ARM64`/`aarch64` (case-insensitive)
 select `win-arm64` and `chromix-win-arm64.zip`; `AMD64`/`x86_64` keep selecting
 `win-x64` and `chromix-win-x64.zip`. Use native ARM64 Python on Windows ARM64.
@@ -53,6 +62,260 @@ require the matching asset in the selected release or `CHROMIX_DOWNLOAD_HOST`;
 SDK support alone does not publish an ARM64 browser. Windows ARM64 Widevine
 CDM discovery is not supported; an x64 CDM is not reused for ARM64.
 
+## Quick start
+
+Save as `example.py` and run `python example.py`:
+
+```python
+from chromix import launch
+
+browser = launch()  # Headless by default; use headless=False for a window.
+try:
+    page = browser.new_page()
+    page.goto("https://example.com")
+    print(page.title())
+finally:
+    browser.close()
+```
+
+Use `launch()` when you want to manage multiple contexts, or `launch_context()`
+for one context whose `close()` also closes its owned browser. Headed launches
+need a graphical session. Pages use the standard Playwright API.
+
+## Async
+
+```python
+import asyncio
+from chromix import launch_async
+
+async def main():
+    browser = await launch_async()
+    try:
+        page = await browser.new_page()
+        await page.goto("https://example.com")
+        print(await page.title())
+    finally:
+        await browser.close()
+
+asyncio.run(main())
+```
+
+`launch_context_async()` returns an async context. For persistent storage, use
+`await launch_persistent_context_async(user_data_dir="./profiles/account-1")`:
+**the async directory argument is keyword-only**, unlike the synchronous entry
+point. Close either returned context with `await context.close()`. In a notebook
+or another running event loop, await `main()` rather than calling `asyncio.run()`.
+
+## Persistent profiles and seeds
+
+Reuse a dedicated user-data directory to retain cookies, localStorage and other
+browser-managed profile data across runs:
+
+```python
+from chromix import launch_persistent_context
+
+context = launch_persistent_context("./profiles/account-1", headless=False)
+try:
+    page = context.new_page()
+    page.goto("https://example.com")
+finally:
+    context.close()
+```
+
+Run the same script again to reopen the profile. Do not run two browser processes
+against the same directory at once; atomic seed creation does not remove
+Chromium's profile lock. Use a separate directory per independent session.
+
+| Launch configuration | Seed behavior |
+|---|---|
+| `launch()` / `launch_context()` with defaults | New nonzero random 32-bit seed per launch |
+| Persistent context with defaults | Creates `.chromix-fingerprint-seed` in the profile once, then reuses it |
+| `args=["--fingerprint=42"]` | Explicit seed wins; does not create or rewrite the seed file |
+| `stealth_args=False` | No default seed injection or profile seed I/O |
+
+The seed file is one decimal 32-bit value plus a newline, atomically created and
+shared with the Node SDK. If you choose an explicit seed, supply it on every
+subsequent run; it is not saved into that file. A seed controls fingerprint
+inputs, not cookies or login state, and does not guarantee identical rendering
+across different browser builds, hardware or fonts. Profile persistence is not a
+promise that copying the directory to another machine preserves encrypted logins.
+
+## Proxy and GeoIP
+
+Set `CHROMIX_PROXY` to your own proxy URL, for example
+`http://user:password@proxy.example:8080`, before running this example:
+
+```python
+import os
+from chromix import launch
+
+browser = launch(
+    proxy=os.environ["CHROMIX_PROXY"],
+    geoip=True,
+)
+try:
+    page = browser.new_page()
+    page.goto("https://example.com")
+    print(page.title())
+finally:
+    browser.close()
+```
+
+`CHROMIX_PROXY` is only an example application variable; the SDK does not read it
+automatically. `proxy` also accepts a Playwright-shaped dict with `server`,
+`username`, `password`, and optional `bypass`. URL-encode credentials in URLs,
+or use the separate fields. Do not commit real proxy credentials to scripts.
+
+`geoip=True` queries **ip-api.com over HTTP** through the effective proxy to fill
+in timezone, country-derived locale and WebRTC presentation IP. With no proxy it
+uses a direct connection. Explicit `timezone="Europe/London"` / `locale="en-GB"`
+(and explicit regional flags) win over detected values. Omit `geoip` and specify
+those values yourself to avoid that lookup; `--fingerprint-webrtc-ip=auto` also
+requests an IP lookup independently.
+
+### Routing and limitations
+
+GeoIP is metadata, not a routing mechanism. The lookup uses the effective
+HTTP/HTTPS/SOCKS proxy and does not inherit environment proxies or `NO_PROXY`
+bypasses. Failed lookups do not fall back to the host connection. Metadata
+transport supports SOCKS4/4a/5/5h, including SOCKS5 credentials; that transport
+alone does not extend Chromium's proxy backend. A browser rebuilt with patches
+`0154`–`0157` also supports native SOCKS5 TCP authentication through the SDK's
+high-level `proxy` option. Endpoint-bound credentials travel in its launch
+environment, not argv or origin HTTP auth. Unrelated launches scrub inherited
+auth, including Windows case aliases; font environment merging cannot restore
+it. UDP ASSOCIATE is not implemented; end-to-end validation against a matching
+native build remains pending.
+SOCKS5/4a metadata lookups resolve destination names at the proxy; SOCKS4 uses local
+IPv4 DNS. Single raw `--proxy-server` routes are supported for lookup;
+PAC/auto-detect, route lists, empty raw proxies, raw proxy credentials and
+conflicting `--no-proxy-server` are rejected. If raw `--proxy-server` and a
+high-level proxy are both supplied, their endpoints must match (default ports
+and equivalent IPv6 spellings are normalized); use the high-level option for credentials.
+
+With a proxy, the SDK defaults to the native
+`--force-webrtc-ip-handling-policy=disable_non_proxied_udp` unless an explicit
+native policy was supplied. This does not guarantee the routing of all DNS,
+HTTP, QUIC or operating-system traffic.
+
+`--fingerprint-webrtc-ip=<IPv4|IPv6|auto>` is supported. Auto resolves before
+launch through the same effective proxy; `geoip=True` reuses its one lookup to
+append the exit IP unless an explicit IP wins. Off mode skips IP injection.
+The browser changes local candidate/SDP/stats presentation, not sockets or
+STUN success; remote addresses, zero placeholders and relay allocations remain
+native. `webrtc-fake-srflx` and `webrtc-fake-srflx-allow-udp` (including `uxr`
+equivalents) remain rejected. The SDK's HTTP metadata service is unauthenticated
+and is not proof of an exit route. Bare-browser auto uses its own bounded HTTPS
+startup resolver; see the [full resolution contract](../../docs/fingerprint-flags.md#webrtc-ip-and-proxy-resolution).
+
+GeoIP lookup failures raise `ValueError`. The timeout defaults to 10
+seconds and accepts values greater than zero and at most 60. Python's
+synchronous DNS/connection setup cannot always be interrupted at that
+deadline; a late connection is rejected before sending the GeoIP request.
+IANA timezone data must be installed for timezone validation. Creating a
+later context with another proxy does not recompute browser-level locale
+or timezone/IP.
+
+## Local executable
+
+Set `CLOAKBROWSER_BINARY_PATH` before launch to bypass the downloader. For example,
+on Linux or macOS (replace the path with your actual native executable):
+
+```bash
+export CLOAKBROWSER_BINARY_PATH="/absolute/path/to/chromix/chrome"
+python example.py
+```
+
+On macOS, a bundle's executable is typically
+`Chromium.app/Contents/MacOS/Chromium`. On Windows PowerShell:
+
+```powershell
+$env:CLOAKBROWSER_BINARY_PATH = "C:\Chromix\chrome.exe"
+python example.py
+```
+
+Use `chrome.exe`, not `chromix.cmd`, and keep the rest of the browser bundle
+beside it. Python's wrapper sets `executable_path` internally: use this environment
+variable, **not** `launch(executable_path=...)`. A local path is not downloaded or
+checksum-verified by the SDK; it must match your OS/architecture and include the
+native patches needed by the options you use.
+
+## Cookies and session state
+
+Choose the mechanism that matches your task:
+
+- **Same profile across runs:** use [persistent contexts](#persistent-profiles-and-seeds).
+- **Playwright session snapshot:** use `storage_state` for cookies/localStorage.
+  This is a plaintext credential-bearing file, not a full profile or a seed backup.
+- **Encrypted cookies between live contexts/SDKs:** use the migration helpers below.
+  These migrate cookies only, not localStorage, IndexedDB or the profile seed.
+
+### Playwright storage state
+
+This example creates `state.json` on the first run and loads it when present:
+
+```python
+from pathlib import Path
+from chromix import launch_context
+
+state = Path("state.json")
+context = launch_context(**({"storage_state": str(state)} if state.is_file() else {}))
+try:
+    page = context.new_page()
+    page.goto("https://example.com")
+    context.storage_state(path=str(state))
+finally:
+    context.close()
+```
+
+Protect this file and exclude it from version control. Saving state does not log
+you in; complete your application's normal login before saving if needed.
+
+### Encrypted cookie migration
+
+Install the optional dependency and set `COOKIE_PASSPHRASE` in your environment:
+
+```bash
+python -m pip install 'chromix[cookies]'
+```
+
+This self-contained example migrates a demo cookie into a fresh context:
+
+```python
+import os
+from chromix import launch_context, export_cookies, import_cookies
+
+passphrase = os.environ["COOKIE_PASSPHRASE"]
+source = launch_context()
+try:
+    source.add_cookies([{
+        "name": "demo", "value": "1", "url": "https://example.com",
+    }])
+    print(export_cookies(source, "cookies.enc", passphrase=passphrase))
+finally:
+    source.close()
+
+destination = launch_context()
+try:
+    print(import_cookies(destination, "cookies.enc", passphrase=passphrase))
+finally:
+    destination.close()
+```
+
+Use a new output filename if `cookies.enc` already exists: exports never replace
+an existing file. In real workflows pass your authenticated source context and
+a fresh destination **before navigating it**. Async contexts require
+`await export_cookies_async(...)` / `await import_cookies_async(...)`.
+
+The AES-GCM/scrypt format interoperates with Node. Passphrases must contain
+12–1024 UTF-8 bytes; keep the passphrase separate from the encrypted file. Imports
+require a cookie-empty context, skip expired entries, preserve host-only/domain,
+CHIPS and security attributes, and compare browser readback. Existing cookies are
+never cleared. CDP writes are not transactional: on failure, discard the destination
+context because it may contain a partial import. This is live-context migration,
+not OSCrypt or portable profile-database encryption. See the
+[format and limitations](../../docs/functionality-followup.md).
+
 ## API
 
 | Function | Description |
@@ -62,31 +325,43 @@ CDM discovery is not supported; an x64 CDM is not reused for ARM64.
 | `launch_context(**opts)` | Returns a `BrowserContext` (native viewport by default) |
 | `launch_context_async(**opts)` | Async variant |
 | `launch_persistent_context(user_data_dir, **opts)` | Persistent profile |
-| `launch_persistent_context_async(user_data_dir, **opts)` | Async variant |
+| `launch_persistent_context_async(user_data_dir=..., **opts)` | Async variant |
 | `build_args` / `get_default_stealth_args` | Arg assembly (32-bit random seed + native platform claim) |
-| `maybe_resolve_geoip(geoip, proxy, tz, locale, args)` | Egress IP → (tz, locale, exit_ip) |
+| `maybe_resolve_geoip(geoip, proxy, timezone, locale, args=None)` | Egress IP → (timezone, locale, exit_ip) |
 | `ensure_binary` / `clear_cache` / `binary_info` / `check_for_update` | Binary management |
 | `HumanConfig` / `resolve_human_config` | Behavioral-layer config (`default` / `careful` presets) |
 | `ProxySettings` | Playwright-shaped proxy TypedDict |
 | `export_cookies` / `import_cookies` | Explicit encrypted migration between live Chromium contexts |
-| `export_cookies_async` / `import_cookies_async` | Async Cookie migration variants |
-| `encrypt_cookies` / `decrypt_cookies` | Node-compatible authenticated Cookie envelope |
+| `export_cookies_async` / `import_cookies_async` | Async cookie migration variants |
+| `encrypt_cookies` / `decrypt_cookies` | Node-compatible authenticated cookie envelope |
 
-Options (`headless, proxy, args, stealth_args, timezone, locale, geoip, humanize,
-human_preset, human_config, extension_paths, license_key, browser_version,
-release_channel, user_agent, viewport, color_scheme`) match CloakBrowser
-name-for-name; `**kwargs` passes through to `playwright.chromium.launch()` /
-`browser.new_context()`.
+### Option routing
 
-Persistent contexts create `.chromix-fingerprint-seed` inside
-`user_data_dir` on first stealth launch and reuse it thereafter. The file is
-one decimal 32-bit seed followed by a newline, uses the same format as the
-Node SDK, and is published atomically for concurrent first launches. An
-explicit `--fingerprint=...` in `args` wins without creating or rewriting the
-file; `stealth_args=False` also skips seed I/O. Defaults claim the native
-persona: `linux`, `windows`, or `macos`. Default viewport geometry is native.
-The browser's public fingerprint mode supplies CPU/RAM 8/8, platform-specific
-screen/taskbar defaults and a 102400 MiB quota. The older seeded synthetic
+Common launch options include `headless`, `proxy`, `args`, `stealth_args`,
+`timezone`, `locale`, `geoip`, `humanize`, `human_preset`, `human_config`,
+`extension_paths`, `browser_version`, and `release_channel`.
+
+- `launch()` / `launch_async()` forward extra keywords to Playwright's Chromium
+  launch call. Context settings belong on `browser.new_context()` / `new_page()`.
+- Context helpers additionally accept `user_agent`, `viewport`, and `color_scheme`.
+  For `launch_context()` / `launch_context_async()`, extra context keywords such
+  as `storage_state` and `permissions` go to `browser.new_context()`; `env` is
+  handled as a launch setting.
+- Persistent helpers forward extra options to `chromium.launch_persistent_context()`.
+- `humanize=True` enables the wrapper's mouse/typing/scroll behavior;
+  `human_preset="careful"` selects slower defaults. Coverage depends on the helper
+  and page creation path; it is not a guarantee that every Playwright operation
+  is humanized or that a site will accept the session.
+- `user_agent` emulation can disagree with UA Client Hints. Prefer coherent native
+  fingerprint settings rather than an arbitrary UA string.
+
+## Advanced options
+
+### Fingerprint and viewport defaults
+
+Defaults claim the native OS persona: `linux`, `windows`, or `macos`, with native
+context viewport geometry. The browser's public fingerprint mode supplies
+CPU/RAM 8/8, platform-specific screen/taskbar defaults and a 102400 MiB quota. The older seeded synthetic
 viewport/hardware pools require `args=["--uxr-synthetic-device-tests=true"]`;
 that separate test mode retains deterministic cross-SDK templates. Explicit
 viewport options still win outside measured mode.
@@ -113,6 +388,8 @@ and native-versus-SDK boundaries. These source changes require a rebuilt browser
 updating this Python package alone does not upgrade an older executable.
 
 ```python
+from chromix import launch
+
 browser = launch(args=[
     "--fingerprint=42",
     "--fingerprint-brand=Edge",
@@ -121,6 +398,11 @@ browser = launch(args=[
     "--fingerprint-allow-3p-cookies",
     "--enable-blink-features=FakeShadowRoot",
 ])
+try:
+    page = browser.new_page()
+    page.goto("https://example.com")
+finally:
+    browser.close()
 ```
 
 `--fingerprint=off` also accepts `false/0/disable/disabled` and strips the
@@ -136,38 +418,19 @@ the fingerprint seed (or an explicit audio seed), and
 `--fingerprint-timer-resolution=7` means **7 milliseconds**. See
 [backend policy](../../docs/backend-policy.md) for limits and native acceptance status.
 
-### Encrypted Cookie migration
-
-Install the optional cryptography extra: `pip install 'chromix[cookies]'`.
-
-```python
-import os
-from chromix import export_cookies, import_cookies
-
-passphrase = os.environ['COOKIE_PASSPHRASE']
-export_cookies(source_context, 'cookies.enc', passphrase=passphrase)
-import_cookies(empty_destination_context, 'cookies.enc', passphrase=passphrase)
-```
-
-The AES-GCM/scrypt format interoperates with Node. Passphrases contain 12–1024
-UTF-8 bytes; exports never replace an existing file. Imports require an empty
-context, skip expired entries, preserve host-only/domain, CHIPS and security
-attributes, and compare browser readback. No existing Cookies are cleared.
-CDP writes are not transactional: failure may leave partial contents. This is
-live-context migration, not OSCrypt or portable profile-database encryption.
-See the [format and evidence boundaries](../../docs/functionality-followup.md).
-
 ### Measured device launch
 
+Install `chromix[measured]` for Playwright and the image-validation dependency.
+
 `launch_context(device_pool={"host": "record.json", "records": ["record.json"],
-"seed": "42"})` validates whole evidence bundles and native host capabilities,
+"seed": "42"})` validates whole device records and native host capabilities,
 then checks five live contexts before returning. Async and persistent context
 variants support the same option; the async persistent directory is keyword-only.
-Point `CLOAKBROWSER_BINARY_PATH` at the collected executable. Evidence defaults to
+Point `CLOAKBROWSER_BINARY_PATH` at the collected executable. Records default to
 a 24-hour maximum age, and extra launch/context overrides are rejected. Persistent
 profiles bind record and seed rather than rotating identities. Browser-returning
 `launch` does not support this option. See [device pool documentation](../../docs/device-pool.md)
-for collection, configuration, native fallback and remaining acceptance limits.
+for collection, configuration, native fallback and remaining limitations.
 
 ### Custom font directory
 
@@ -180,73 +443,42 @@ resolved native fonts and fallback; an explicit whitelist overrides generated na
 Legacy substitutions and persona fallback still require synthetic-test opt-in.
 Measured device mode rejects `fonts_dir` and other per-field overrides.
 
-```python
-browser = launch(fonts_dir="/path/to/fonts", args=["--fingerprint-font-policy=restricted"])
-```
+Pass the directory with `fonts_dir="/path/to/fonts"` and enable the policy with
+`args=["--fingerprint-font-policy=restricted"]`. Use fonts you are licensed to use.
 
-## Env vars
+### High-risk engine options
 
-- `CLOAKBROWSER_BINARY_PATH` — use a local chrome binary instead of downloading
-- `CLOAKBROWSER_VERSION` / `CLOAKBROWSER_RELEASE_CHANNEL` — pin a version/channel
-- `CLOAKBROWSER_GEOIP_TIMEOUT_SECONDS` — geoip lookup timeout
-- `CLOAKBROWSER_WIDEVINE_CDM` — explicit Widevine CDM dir (DRM); `CLOAKBROWSER_WIDEVINE=0` disables DRM
-- `CHROMIX_CACHE_DIR` / `CHROMIX_DOWNLOAD_HOST` — cache location / release host override
-
-High-risk engine ports are available only through explicit browser `args`:
-
-```python
-browser = launch(args=[
-    "--fingerprint-devtools-runtime-suppression",
-    "--fingerprint-canvas-bridge=127.0.0.1:9228",
-    "--fingerprint-canvas-bridge-unsafe",
-])
-```
+`--fingerprint-devtools-runtime-suppression` and
+`--fingerprint-canvas-bridge=127.0.0.1:9228` (with
+`--fingerprint-canvas-bridge-unsafe`) require explicit `args`.
 
 Runtime suppression can break console/binding-based automation. Canvas Bridge
 removes the sandbox from bridge renderer processes and forwards canvas/WebGL
-operations to the configured endpoint.
+operations to the configured endpoint. Do not enable these for ordinary launches.
 
-### Proxy and GeoIP behavior
+## Configuration
 
-GeoIP is metadata, not a routing mechanism. The lookup uses the effective
-HTTP/HTTPS/SOCKS proxy and does not inherit environment proxies or `NO_PROXY`
-bypasses. Failed lookups do not fall back to the host connection. Metadata
-transport supports SOCKS4/4a/5/5h, including SOCKS5 credentials; that transport
-alone does not extend Chromium's proxy backend. A browser rebuilt with patches
-`0154`–`0157` also supports native SOCKS5 TCP authentication through the SDK's
-high-level `proxy` option. Endpoint-bound credentials travel in its launch
-environment, not argv or origin HTTP auth. Unrelated launches scrub inherited
-auth, including Windows case aliases; font environment merging cannot restore
-it. UDP ASSOCIATE and matching-native-build acceptance remain open.
-SOCKS5/4a metadata lookups resolve destination names at the proxy; SOCKS4 uses local
-IPv4 DNS. Single raw `--proxy-server` routes are supported for lookup;
-PAC/auto-detect, route lists, empty raw proxies, raw proxy credentials and
-conflicting `--no-proxy-server` are rejected. If raw `--proxy-server` and a
-high-level proxy are both supplied, their endpoints must match (default ports
-and equivalent IPv6 spellings are normalized); use the high-level option for credentials.
+Set environment variables before importing the SDK, especially cache settings.
+Only the listed compatibility variables are handled; not all CloakBrowser
+environment variables have a Chromix equivalent.
 
-With a proxy, the SDK defaults to the native
-`--force-webrtc-ip-handling-policy=disable_non_proxied_udp` unless an explicit
-native policy was supplied. This does not guarantee the routing of all DNS,
-HTTP, QUIC or operating-system traffic.
+| Variable | Purpose |
+|---|---|
+| `CLOAKBROWSER_BINARY_PATH` | Local executable; bypasses download |
+| `CLOAKBROWSER_RELEASE_CHANNEL` | Selects a built-in channel: `stable` (default) or `latest` |
+| `CLOAKBROWSER_VERSION` | Selects a built-in channel by Chromium major; not an arbitrary exact-version pin |
+| `CLOAKBROWSER_GEOIP_TIMEOUT_SECONDS` | GeoIP timeout, default `10`; must be >0 and <=60 |
+| `CLOAKBROWSER_WIDEVINE_CDM` | Explicit Widevine CDM directory |
+| `CLOAKBROWSER_WIDEVINE=0` | Disables automatic CDM setup |
+| `CHROMIX_CACHE_DIR` | Cache root; default `~/.cache/chromix` |
+| `CHROMIX_DOWNLOAD_HOST` | Release asset directory URL, including its `SHA256SUMS` |
 
-`--fingerprint-webrtc-ip=<IPv4|IPv6|auto>` is supported. Auto resolves before
-launch through the same effective proxy; `geoip=True` reuses its one lookup to
-append the exit IP unless an explicit IP wins. Off mode skips IP injection.
-The browser changes local candidate/SDP/stats presentation, not sockets or
-STUN success; remote addresses, zero placeholders and relay allocations remain
-native. `webrtc-fake-srflx` and `webrtc-fake-srflx-allow-udp` (including `uxr`
-equivalents) remain rejected. The SDK's HTTP metadata service is unauthenticated
-and is not proof of an exit route. Bare-browser auto uses its own bounded HTTPS
-startup resolver; see the [full resolution contract](../../docs/fingerprint-flags.md#webrtc-ip-and-proxy-resolution).
-
-GeoIP lookup failures now raise `ValueError`. The timeout defaults to 10
-seconds and accepts values greater than zero and at most 60. Python's
-synchronous DNS/connection setup cannot always be interrupted at that
-deadline; a late connection is rejected before sending the GeoIP request.
-IANA timezone data must be installed for timezone validation. Creating a
-later context with another proxy does not recompute browser-level locale
-or timezone/IP.
+`browser_version` / `release_channel` are the per-call equivalents of the version
+and channel variables. A recognized channel takes precedence over a version;
+unmatched values fall back to `stable`. Channel tags are defined in the installed
+SDK, not dynamically selected from the newest release. `binary_info()` reports
+that channel's cache metadata, not a probe of `CLOAKBROWSER_BINARY_PATH`.
+`check_for_update()` reports availability; it does not install an update.
 
 ## CLI
 
@@ -257,14 +489,24 @@ python -m chromix widevine     # fetch the Widevine CDM (Linux x64)
 python -m chromix clear-cache
 ```
 
-## Intentional differences from CloakBrowser
+`install` prints the resolved executable path (including a local override).
+`info` does not launch a browser. `clear-cache` deletes the entire configured
+binary cache; it does not manage your separately located profile directories.
+The `widevine` downloader is Linux x64-only. CDM discovery alone does not
+guarantee playback for a particular DRM service.
 
-1. `license_key` is accepted and ignored (one open tier).
-2. `geoip` queries ip-api.com over HTTP instead of a local GeoLite2 database;
-   explicit `timezone=` / `locale=` always win.
-3. Python uses Playwright; the Node SDK also provides a native `/puppeteer` adapter.
-4. Widevine is enabled automatically when a CDM is present (installed Chrome,
-   `CLOAKBROWSER_WIDEVINE_CDM`, or `python -m chromix widevine`).
+## Compatibility with CloakBrowser
+
+1. Common launch names and Playwright return objects are retained; review option
+   routing and limits rather than assuming complete upstream feature parity.
+2. `license_key` is accepted and ignored (one open tier).
+3. GeoIP uses an HTTP metadata service, not a local GeoLite2 database or a
+   `chromix[geoip]` extra. Explicit timezone/locale win; failed lookups raise.
+4. Python uses Playwright; the [Node SDK](../node/README.md#puppeteer) also provides
+   a native Puppeteer adapter.
+5. Widevine setup is automatic when a supported CDM is found (installed Chrome,
+   `CLOAKBROWSER_WIDEVINE_CDM`, or the Python `widevine` command), subject to the
+   platform and service limitations above.
 
 ## License
 

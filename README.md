@@ -2,468 +2,315 @@
 
 English | [简体中文](readme_cn.md)
 
-[![Windows x64 build](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml)
-[![Linux x64 build](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml)
-[![Linux ARM64 build](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml)
-[![macOS Intel build](https://github.com/xiaozhou26/Chromix/actions/workflows/build-macos-x64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-macos-x64.yml)
-[![macOS ARM build](https://github.com/xiaozhou26/Chromix/actions/workflows/build-macos-arm64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-macos-arm64.yml)
-[![GitHub release](https://img.shields.io/github/v/release/xiaozhou26/Chromix?display_name=tag)](https://github.com/xiaozhou26/Chromix/releases)
+[![Windows x64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml)
+[![Linux x64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml)
+[![Linux ARM64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml)
+[![Release](https://img.shields.io/github/v/release/xiaozhou26/Chromix?display_name=tag)](https://github.com/xiaozhou26/Chromix/releases)
 
-Chromix is a Chromium-based browser build focused on presenting a coherent,
-per-launch browser persona across JavaScript-visible surfaces. It is built on
-pinned `ungoogled-chromium` sources and the matching Windows/Linux/macOS platform
-layer, then adds a reviewed Chromium 152 patch series and lightweight Python and
-Node SDKs. Six independent workflows target Windows x64/arm64, Linux x64/arm64,
-and macOS x64/arm64. Each platform publishes independently after its build,
-checksum, extraction, version, headless smoke and fingerprint regression gates succeed. Successful
-platforms append to the same Chromium-version release tag; they need not share
-a source commit or wait for other platforms.
+**A configurable Chromium browser for automation, compatibility testing, and reproducible browser-identity experiments.**
 
-> Chromix is intended for browser automation, compatibility testing, privacy
-> research, and controlled fingerprinting experiments. A custom browser does
-> not make automation undetectable; network reputation, behavior, account
-> history, and application-specific signals still matter.
+Chromix combines source-level Chromium patches with Python and Node.js SDKs. Use familiar Playwright objects, keep a stable profile across sessions, and configure language, timezone, display, and other browser-visible properties from one launch configuration. A separate Node entry point supports Puppeteer.
 
-## Highlights
+[Project website](https://xiaozhou26.github.io/Chromix/) · [Download browser](https://github.com/xiaozhou26/Chromix/releases) · [Feature guide (中文)](docs/features.md) · [Flag reference](docs/fingerprint-flags.md) · [Build guide](BUILDING.md) · [Report an issue](https://github.com/xiaozhou26/Chromix/issues)
 
-- **Configurable browser personas:** user agent, platform, locale, timezone,
-  screen, hardware, media, canvas, WebGL, WebGPU, audio, font, and related
-  surfaces, with cross-interface gaps and verification status tracked in
-  [`FINGERPRINT_STATUS.md`](FINGERPRINT_STATUS.md).
-- **Stable profile identity:** persistent SDK profiles reuse one fingerprint
-  seed; nonpersistent launches generate a random 32-bit seed. Command-line
-  switches allow reproducible test personas.
-- **CloakBrowser-compatible SDK surface:** existing Playwright-based Python and
-  Node scripts can usually migrate by changing the import.
-- **Proxy-aware setup:** optional GeoIP resolution aligns locale and timezone
-  using the effective proxy. Proxied launches default to Chromium's native
-  non-proxied-UDP restriction; explicit/GeoIP-derived WebRTC IP presentation
-  overrides leave actual ICE routing to the native backend.
-- **Portable packages:** Windows, Linux, and macOS bundles are ZIP archives with
-  runtime files, locales, fonts, and Chromium/Chromix license files. macOS
-  bundles are unsigned and not notarized.
-- **Reproducible source layers:** the Chromium source archive, ungoogled core,
-  and Windows/Linux/macOS platform revisions are pinned in the repository.
-- **Integrity checks:** releases include `SHA256SUMS`; the SDK verifies a bundle
-  before extracting it when the manifest is available.
+## At a glance
 
-## Fingerprint verification
-
-[`FINGERPRINT_STATUS.md`](FINGERPRINT_STATUS.md) records the P0/P1/P2 coverage,
-retired inconsistent overrides, and build/runtime verification boundaries.
-For a locally built or independently verified existing executable, run
-`python3 tools/fingerprint_smoke.py --browser /path/to/chrome --platform linux --locale de-DE --output /tmp/fingerprint-smoke.json`.
-The runner requires Python Playwright, serves its own loopback test pages, and
-never downloads a browser. A passing tooling test is not a passing browser smoke.
-
-The new [fingerprint regression gate](docs/fingerprint-acceptance.md) checks source
-freshness before compilation and runs fifteen bounded suites against the exact
-extracted executable. Display configuration now uses a launch-time emulation
-backend instead of separate getters. These changes still need a matching native
-Chromix build; installed Chrome control results are not release acceptance.
-
-The [shared native GPU policy and device matrix](docs/gpu-backend.md) connect
-Canvas/WebGL/WebGPU to one immutable native-policy snapshot and independently
-check resource operations. Measured admission requires probe v4 and five hashed
-assets. The 33-cell OS/architecture/API/vendor plan is currently unsampled;
-stock controls, virtual GPUs and unexercised inventory entries never count.
-
-The [backend policies](docs/backend-policy.md) make shared native GPU behavior
-the ordinary default and add optional graph audio isolation, restricted font
-pools, codec restrictions, effective CSS/input preferences and clock resolution.
-New acceptance probes cover these policies, TLS resumption and owned-loopback H3.
-The 216-patch stack still requires matching native browser acceptance.
-
-The GPU pool contains Windows/Linux/macOS identity templates, not a measured
-full-device dataset. Screen/layout, font provenance, CPU/memory capabilities,
-media backends and wire-level networking still have open consistency work.
-Storage quota overrides now use the browser quota backend; Network Information
-retains native notifier values. See the [public flag reference](docs/fingerprint-flags.md)
-for defaults, implemented boundaries and the requirement to rebuild this stack.
-
-## Downloads
-
-The source targets **Windows x64/arm64, Linux x64/arm64, and macOS x64/arm64**.
-Prebuilt packages are published on the [GitHub Releases page](https://github.com/xiaozhou26/Chromix/releases)
-as each independent platform passes verification, without waiting for the others. Available
-platforms accumulate under one `v<CHROMIUM_VERSION>` tag, titled `Chromix <version>`.
-The tag stays pinned to its initial source commit; notes identify each platform's
-actual source SHA and build run, which may differ for the same Chromium version.
-Existing assets and checksums are preserved, and an already published ZIP is never
-replaced with different bytes. Every browser bundle is accompanied by `SHA256SUMS`.
-macOS bundles remain unsigned and are not notarized because Apple signing
-credentials are not part of this build.
-
-| Target platform | Archive | Manual launcher after extraction |
+| Capability | What you can do | Details |
 |---|---|---|
-| Windows x64 | `chromix-win-x64.zip` | `chromix/chromix.cmd` |
-| Windows ARM64 | `chromix-win-arm64.zip` | `chromix/chromix.cmd` |
-| Linux x64 | `chromix-linux-x64.zip` | `chromix/chromix` |
-| Linux ARM64 | `chromix-linux-arm64.zip` | `chromix/chromix` |
-| macOS Intel | `chromix-mac-x64.zip` | `chromix/chromix` |
-| macOS Apple Silicon | `chromix-mac-arm64.zip` | `chromix/chromix` |
+| Python + Node automation | Launch Chromix through Playwright; use Puppeteer from Node | [Python](sdk/python/README.md), [Node](sdk/node/README.md) |
+| Persistent profiles | Retain cookies/localStorage and reuse a fingerprint seed | [Profile example](#persistent-profiles) |
+| Browser identity | Configure UA, platform, locale, timezone, hardware and display properties | [Public flags](docs/fingerprint-flags.md) |
+| Proxy-aware configuration | Use HTTP/HTTPS/SOCKS proxies and optionally derive locale/timezone through GeoIP | [Proxy example](#proxy-and-geoip) |
+| Rendering and media policies | Configure native GPU policy, fonts, audio and codec restrictions | [Backend policies](docs/backend-policy.md) |
+| Input helpers | Add mouse, typing and scrolling timing with `humanize` | [SDK feature details](docs/functionality-followup.md) |
+| Encrypted cookie transfer | Export/import cookies between explicitly selected active contexts | [Cookie migration](docs/functionality-followup.md#加密-cookie-迁移) |
+| Portable distribution | Use a release ZIP or a Linux amd64/arm64 container | [Downloads](#downloads-and-platforms), [Docker](docs/docker.md) |
 
-**The target list is not a list of already accepted or published binaries.**
-Windows ARM64 is cross-compiled on `windows-2022` (x64), then requires native
-verification on `windows-11-arm`. Build completion alone is not acceptance;
-check the release Assets for availability. The Windows examples below use x64;
-for a published ARM64 package, replace `win-x64` with `win-arm64` throughout.
+A **persona** is the browser identity configuration used for a launch. Its reported values, actual browser behavior, and underlying device capabilities have separate verification requirements. Chromix tracks those boundaries in [FINGERPRINT_STATUS.md](FINGERPRINT_STATUS.md); website-specific detection outcomes depend on more than browser configuration.
 
-Old aggregate runs are not automatically adopted. The selected Windows run `34080799322`
-(artifact `10066146011`, source `23fd0a7a0c63cd452cfaec6b2aba8469ef5d4123`) was
-verified and published manually to `v152.0.7977.82` as `Chromix 152.0.7977.82`, with
-the original ZIP unchanged and licenses supplied as sidecars. Successful artifacts
-from the old POSIX aggregate run `34308090891` likewise require manual verification
-before appending to that tag; a failed aggregate event cannot publish them. Future
-independent platform successes append automatically. See the release assets for
-current availability; this transition does not require another Windows build.
+## Quick start
 
-| Browser version | Platform | Release |
-|---|---|---|
-| `153.0.8010.36` | Linux x64 / ARM64 | [`v153.0.8010.36`](https://github.com/xiaozhou26/Chromix/releases/tag/v153.0.8010.36) |
-| `152.0.7977.82` | Windows x64; other platforms pending | [`v152.0.7977.82`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.82) |
-| `152.0.7977.75` | Windows x64 | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) |
-| `151.0.7922.173` | Windows x64 | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) |
+Choose a language below. The SDK resolves a locally configured executable first; otherwise it downloads and caches the browser selected by its **configured release channel**.
 
-The shared source baseline and Linux targets remain pinned to Chromium
-`153.0.8010.36`. Windows is independently pinned to `153.0.8010.47` to match
-[upstream cache run 35059013905](https://github.com/ungoogled-software/ungoogled-chromium-windows/actions/runs/35059013905).
-macOS remains explicitly pinned to `152.0.7977.82` because
-upstream had no 153 platform tag or branch at the 2026-09-17 check. The original Linux
-x64/ARM64 packages are published as `Chromix 153.0.8010.36` and marked GitHub
-Latest. This merged 216-patch source stack has not completed a new browser build;
-the published Linux packages do not establish native acceptance for this stack.
-Machine-readable source pins are in `build/ungoogled-revisions.psd1`, with
-`CHROMIUM_WINDOWS_VERSION` and `CHROMIUM_MACOS_VERSION` selecting their platform
-versions. Legacy version files remain available for tooling compatibility. SDK
-package versions and release channels are unchanged.
+> The SDK's `latest` channel is a pinned mapping, separate from GitHub's Latest release. For a specific release such as `v154.0.8037.57`, download its package and set `CLOAKBROWSER_BINARY_PATH`, or use the pinned [Docker image](docs/docker.md). Updating an SDK does not replace an explicitly configured browser.
 
-### Verify and run on Windows
+### Python
 
-Download both `chromix-win-x64.zip` and `SHA256SUMS` from the same release, then
-verify the archive in PowerShell:
-
-```powershell
-$actual = (Get-FileHash .\chromix-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-$expected = ((Get-Content .\SHA256SUMS | Where-Object { $_ -match '\s+\*?chromix-win-x64\.zip$' }) -split '\s+')[0].ToLowerInvariant()
-if ($actual -ne $expected) { throw "Chromix archive checksum mismatch" }
-```
-
-Extract and start the browser:
-
-```powershell
-Expand-Archive .\chromix-win-x64.zip -DestinationPath .\chromix-win-x64
-.\chromix-win-x64\chromix\chromix.cmd
-```
-
-Pass Chromium flags after the launcher when a deterministic test persona is
-needed:
-
-```powershell
-.\chromix-win-x64\chromix\chromix.cmd `
-  --fingerprint=123456789 `
-  --fingerprint-platform=windows `
-  --fingerprint-timezone=Europe/Berlin `
-  --fingerprint-locale=de-DE
-```
-
-## Python SDK
-
-The Python wrapper returns Playwright `Browser` and `BrowserContext` objects and
-uses CloakBrowser-compatible function names and keyword arguments.
-
-Install from PyPI:
+Requires Python 3.8+ according to the package metadata; your Playwright version must also support your Python version.
 
 ```bash
 python -m pip install chromix playwright
-python -m playwright install-deps
 ```
 
-To install the current checkout instead, replace `chromix` with `./sdk/python`.
+On Linux, install Playwright's system dependencies if needed:
 
-Launch Chromix:
+```bash
+python -m playwright install-deps chromium
+```
 
 ```python
 from chromix import launch
 
-browser = launch(
-    proxy="http://user:pass@proxy.example:8080",
-    geoip=True,
-    headless=False,
-    humanize=True,
-)
-page = browser.new_page()
-page.goto("https://example.com")
-print(page.title())
-browser.close()
+browser = launch(headless=True)
+try:
+    page = browser.new_page()
+    page.goto("https://example.com")
+    print(page.title())
+finally:
+    browser.close()
 ```
 
-Async and persistent-context variants are also available:
+Use `launch_async`, `launch_context` or `launch_persistent_context` for other lifecycles. See the [Python API guide](sdk/python/README.md). To use this checkout's SDK, install `./sdk/python` in place of `chromix`.
 
-```python
-from chromix import launch_persistent_context
+### Node.js / Playwright
 
-context = launch_persistent_context(
-    "./profile",
-    locale="en-US",
-    timezone="America/New_York",
-    headless=False,
-)
-page = context.new_page()
-page.goto("https://example.com")
-context.close()
-```
-
-Binary management commands:
-
-```bash
-python -m chromix --version
-python -m chromix install
-python -m chromix info
-python -m chromix clear-cache
-python -m chromix widevine    # Linux x64 Widevine helper
-```
-
-See [`sdk/python/README.md`](sdk/python/README.md) for the full API and
-environment variables.
-
-## Node SDK
-
-The Node wrapper uses `playwright-core` and exposes the matching camelCase API.
-A separate `@xiaoxiaofeihh/chromix/puppeteer` entry point uses an installed
-`puppeteer-core` driver. Both SDKs also support explicit encrypted Cookie
-migration. See the [SDK additions and native verification boundaries](docs/functionality-followup.md).
-
-Install from npm:
+Requires Node.js 18+ according to the package metadata; choose a compatible automation-driver version. The npm package is **`@xiaoxiaofeihh/chromix`**. The unscoped `chromix` name belongs to an unrelated project.
 
 ```bash
 npm install @xiaoxiaofeihh/chromix playwright-core
 ```
 
-Launch Chromix:
+Save as `example.mjs`, then run `node example.mjs`:
 
 ```javascript
 import { launch } from "@xiaoxiaofeihh/chromix";
 
-const browser = await launch({
-  proxy: "http://user:pass@proxy.example:8080",
-  geoip: true,
-  headless: false,
-  humanize: true,
-});
-const page = await browser.newPage();
-await page.goto("https://example.com");
-console.log(await page.title());
-await browser.close();
+const browser = await launch({ headless: true });
+try {
+  const page = await browser.newPage();
+  await page.goto("https://example.com");
+  console.log(await page.title());
+} finally {
+  await browser.close();
+}
 ```
 
-Binary management commands:
+### Node.js / Puppeteer
 
 ```bash
-npx chromix --version
-npx chromix install
-npx chromix info
-npx chromix clear-cache
+npm install @xiaoxiaofeihh/chromix puppeteer-core
 ```
 
-See [`sdk/node/README.md`](sdk/node/README.md) for all options and intentional
-compatibility differences.
+Use the separate driver entry point:
 
-### Package publication
+```javascript
+import { launch } from "@xiaoxiaofeihh/chromix/puppeteer";
 
-- The Python distribution and import package are both named [`chromix`](https://pypi.org/project/chromix/).
-- The Node SDK is [`@xiaoxiaofeihh/chromix`](https://www.npmjs.com/package/@xiaoxiaofeihh/chromix). The unscoped npm name `chromix` belongs to an unrelated project; always install and import the scoped package.
+const browser = await launch({ headless: true });
+try {
+  const page = await browser.newPage();
+  await page.goto("https://example.com");
+  console.log(await page.title());
+} finally {
+  await browser.close();
+}
+```
+
+Driver-specific options and context ownership are explained in the [Node API guide](sdk/node/README.md). Python provides Playwright integration.
+
+### Docker / Linux
+
+The container distribution uses the **existing Linux browser packages from `v154.0.8037.57`**. Docker's `amd64` platform selects the release's `linux-x64` archive; `arm64` selects `linux-arm64`.
+
+See [Docker setup and commands](docs/docker.md) for image tags, checksum verification, sandbox requirements, persistent profiles, and headless use. The image build reuses release binaries rather than compiling Chromium again.
+
+## Common configurations
+
+### Persistent profiles
+
+Use one user-data directory per identity. The SDK stores a seed with the profile so subsequent launches reuse it.
+
+```python
+from chromix import launch_persistent_context
+
+context = launch_persistent_context(
+    "./profiles/demo",
+    headless=False,
+    locale="en-US",
+    timezone="America/New_York",
+)
+try:
+    page = context.new_page()
+    page.goto("https://example.com")
+finally:
+    context.close()
+```
+
+Node uses `launchPersistentContext({ userDataDir: "./profiles/demo", ... })`. Keep concurrent browser processes on separate profile directories. For reproducible nonpersistent tests, pass an explicit `args=["--fingerprint=42"]` (Python) or `args: ["--fingerprint=42"]` (Node).
+
+### Proxy and GeoIP
+
+```python
+import os
+from chromix import launch
+
+browser = launch(
+    proxy=os.environ["CHROMIX_PROXY"],
+    geoip=True,
+    locale="en-US",
+    headless=True,
+)
+try:
+    page = browser.new_page()
+    page.goto("https://example.com")
+finally:
+    browser.close()
+```
+
+Set `CHROMIX_PROXY` to your proxy URL, for example `http://user:pass@proxy.example:8080`. Explicit locale/timezone settings take precedence over GeoIP results. GeoIP makes a metadata request through the effective proxy.
+
+Authenticated SOCKS5 TCP requires a matching patched Chromix binary. WebRTC address presentation and actual traffic routing are separate: changing a candidate IP does not create a UDP tunnel. Read the [WebRTC/proxy contract](docs/fingerprint-flags.md#webrtc-ip-and-proxy-resolution) before relying on a particular network route.
+
+### Input timing and extensions
+
+Add `humanize=True` in Python or `humanize: true` in Node to enable the SDK's input helpers. Python accepts `extension_paths`; Node uses `extensionPaths`. Consult the SDK guides for the supported operations, presets and driver-specific restrictions. Input helpers do not establish website-specific detection guarantees.
+
+## Downloads and platforms
+
+Download ZIPs and their checksum files from the **same release**. The [v154.0.8037.57 release](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57) contains the six browser assets below; check each release's Assets for its actual contents.
+
+| Target | Archive | Manual launcher inside the extracted directory |
+|---|---|---|
+| Windows x64 | `chromix-win-x64.zip` | `chromix/chromix.cmd` |
+| Windows ARM64 | `chromix-win-arm64.zip` | `chromix/chromix.cmd` |
+| Linux x64 / Docker amd64 | `chromix-linux-x64.zip` | `chromix/chromix` |
+| Linux ARM64 | `chromix-linux-arm64.zip` | `chromix/chromix` |
+| macOS Intel | `chromix-mac-x64.zip` | `chromix/chromix` |
+| macOS Apple Silicon | `chromix-mac-arm64.zip` | `chromix/chromix` |
+
+Platforms build and publish independently. Windows ARM64 cross-compiles on `windows-2022` and uses `windows-11-arm` for native verification. macOS bundles have no Developer ID distribution signature or notarization. Linux needs compatible system libraries and a working Chromium sandbox.
+
+**Checksum files may be platform-specific.** For `v154.0.8037.57`, Linux x64 uses `SHA256SUMS`, while Linux ARM64 uses `SHA256SUMS-linux-arm64`. Select the file containing your exact ZIP name; do not assume the generic manifest lists every platform.
+
+Linux x64 example, after downloading both files:
+
+```bash
+set -eu
+archive=chromix-linux-x64.zip
+awk -v name="$archive" '$2 == name || $2 == "*" name { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS > SHA256SUMS.selected
+sha256sum -c SHA256SUMS.selected
+unzip "$archive" -d chromix-linux-x64
+./chromix-linux-x64/chromix/chromix --version
+```
+
+For Linux ARM64, change the archive/directory to `chromix-linux-arm64` and the manifest to `SHA256SUMS-linux-arm64`. On macOS use `shasum -a 256 -c` and preserve framework symlinks and executable permissions. On Windows use PowerShell `Get-FileHash -Algorithm SHA256` to compare against the matching manifest before `Expand-Archive`.
+
+For Actions artifacts, first extract GitHub's outer ZIP, then verify the inner browser archive. Detailed candidate verification is in [BUILDING.md](BUILDING.md#verify-and-run-a-posix-candidate).
 
 ## Use a local browser binary
 
-Set `CLOAKBROWSER_BINARY_PATH` to bypass release download in either SDK. Point
-to the actual executable, not a ZIP, directory, Windows `.cmd`, or macOS `.app`
-directory. Keep the rest of the extracted bundle alongside it.
-
-Windows example:
+Set **`CLOAKBROWSER_BINARY_PATH`** in the same terminal as your SDK script. Keep the full extracted bundle next to the executable.
 
 ```powershell
-$env:CLOAKBROWSER_BINARY_PATH = "D:\chromix-build\src\out\Chromix\chrome.exe"
+# Windows: actual executable, rather than the .cmd launcher
+$env:CLOAKBROWSER_BINARY_PATH = "D:\chromix-win-x64\chromix\chrome.exe"
 ```
 
-For an extracted Linux candidate use `/absolute/path/chromix/chrome`; on macOS
-use `/absolute/path/chromix/Chromium.app/Contents/MacOS/Chromium`. Export that
-path in the shell running the SDK, then call the usual `launch(...)`. Verify the
-inner ZIP's checksum and preserve executable bits/framework symlinks when
-extracting it; see [BUILDING.md](BUILDING.md#verify-and-run-a-posix-candidate).
+```bash
+# Linux
+export CLOAKBROWSER_BINARY_PATH="/absolute/path/chromix/chrome"
 
-The current Python `chromix.launch`/`launch_async` wrappers resolve the binary
-first and pass their own `executable_path` to Playwright. Supplying
-`chromix.launch(executable_path=...)` is **not supported**: it does not bypass
-download and results in duplicate keyword arguments at launch. Direct Playwright
-`chromium.launch(executable_path=...)` is a different API and does accept that
-option. Similarly, Node's top-level `executablePath` is not a local-binary
-selector; `launchOptions.executablePath` overrides Playwright's option only
-*after* `ensureBinary()` runs. Use `CLOAKBROWSER_BINARY_PATH` for download-free
-local use in both wrappers.
-
-Other useful environment variables:
-
-| Variable | Purpose |
-|---|---|
-| `CLOAKBROWSER_VERSION` | Select a configured browser major/version channel |
-| `CLOAKBROWSER_RELEASE_CHANNEL` | Select `stable` or `latest` |
-| `CLOAKBROWSER_GEOIP_TIMEOUT_SECONDS` | Set the GeoIP lookup timeout |
-| `CLOAKBROWSER_WIDEVINE_CDM` | Point to an existing Widevine CDM directory |
-| `CLOAKBROWSER_WIDEVINE=0` | Disable Widevine discovery |
-| `CHROMIX_CACHE_DIR` | Override the SDK binary cache directory |
-| `CHROMIX_DOWNLOAD_HOST` | Override the release asset host |
-
-Configured native bundle targets are Windows x64, Linux x64/arm64, and macOS
-x64/arm64. All use ZIP archives. macOS candidates are unsigned for distribution
-and not notarized.
-
-## Persona options
-
-The SDK accepts familiar high-level options such as `proxy`, `timezone`,
-`locale`, `geoip`, `userAgent`, `viewport`, `colorScheme`, extension paths, and
-persistent profile directories. It converts those settings into Playwright
-options and the browser's `--fingerprint-*` command-line aliases.
-
-Useful explicit arguments include:
-
-```text
---fingerprint=<nonzero-uint64-seed>
---fingerprint-platform=linux|windows|macos
---fingerprint-timezone=<IANA-timezone>
---fingerprint-locale=<locale>
---force-webrtc-ip-handling-policy=disable_non_proxied_udp
+# macOS (use this assignment instead on a Mac)
+export CLOAKBROWSER_BINARY_PATH="/absolute/path/chromix/Chromium.app/Contents/MacOS/Chromium"
 ```
 
-Explicit caller settings take priority over GeoIP-derived values. Keep one
-stable seed and profile directory when a test needs a persistent identity;
-generate a new seed only when a new persona is intended.
+Then use the usual SDK launch functions. This environment variable works in both SDKs. Python `launch(executable_path=...)` conflicts with the wrapper's own argument. Node's ordinary Playwright launches also accept `launchOptions: { executablePath: "/absolute/path/to/chrome" }` to bypass download; the Puppeteer entry point additionally accepts top-level `executablePath`. Measured-device launches have separate restrictions; see the Node guide.
 
-The complete [public fingerprint flag table](docs/fingerprint-flags.md) covers
-GPU, CPU/RAM, screen/taskbar, brand/version, quota, Windows font metrics, WebRTC
-IP/auto, noise/off, third-party cookies, Windows voices and `FakeShadowRoot`.
-Public fingerprint mode defaults to CPU/RAM 8/8 and platform-specific screen
-geometry; these are declared defaults, not measured device records. The SDK's
-page viewport stays native unless explicitly configured. Previously released
-executables do not gain these features by updating the SDK alone.
+### Versions and download channels
 
-## Advanced opt-in features
+These are separate version sources:
 
-The following ports are compiled in but **disabled by default** because they can
-break automation assumptions or weaken browser isolation:
+| Version source | Current checkout | Meaning |
+|---|---|---|
+| Linux / Windows source pins | Chromium `154.0.8037.97` | Version compiled by those platform workflows |
+| macOS source pin | Chromium `152.0.7977.82` | Independent macOS source baseline |
+| Container browser | Chromium `154.0.8037.57` | Release ZIPs selected for Docker |
+| SDK `stable` channel | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) | Configured automatic download target |
+| SDK `latest` channel | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) | Configured automatic download target |
 
-- `--fingerprint-devtools-runtime-suppression` suppresses selected V8 Runtime
-  observables and can interfere with console delivery or automation bindings.
-- `--fingerprint-canvas-bridge=<host:port|ws://...>` plus
-  `--fingerprint-canvas-bridge-unsafe` forwards canvas/WebGL operations to a
-  configured endpoint and removes the sandbox from participating renderer
-  processes.
+Source pins are authoritative in [build/ungoogled-revisions.psd1](build/ungoogled-revisions.psd1); channel mappings are in the [Python](sdk/python/chromix/_binary.py) and [Node](sdk/node/_binary.js) downloaders. `CLOAKBROWSER_VERSION` selects a configured major/channel rather than an arbitrary release tag. A source feature requires a browser built with the corresponding patches; an SDK update alone cannot add it to an older executable.
 
-`--fingerprint-webrtc-ip=<IP|auto>` is supported as a local presentation override.
-The SDK can resolve it through HTTP/HTTPS/SOCKS metadata transport before launch;
-bare-browser auto uses a bounded startup network request. The retired
-`--fingerprint-webrtc-fake-srflx` and `--fingerprint-webrtc-fake-srflx-allow-udp`
-options (and their `uxr` counterparts) remain rejected. Changing candidate text
-does not route traffic; see the [resolution contract](docs/fingerprint-flags.md#webrtc-ip-and-proxy-resolution).
+## Feature scope and verification
 
-Use these only in controlled environments. More implementation detail is in
-[`patches/README.md`](patches/README.md).
+- **Identity settings:** supported flags and defaults are listed in the [flag reference](docs/fingerprint-flags.md). Screen size and page viewport are separate settings.
+- **GPU behavior:** the default uses the shared native policy. Identity templates and measured device records have different admission requirements; see [GPU backend](docs/gpu-backend.md) and [device pool](docs/device-pool.md).
+- **Experimental controls:** runtime suppression and the remote Canvas bridge are opt-in. The bridge's unsafe mode changes renderer sandboxing; read the [patch documentation](patches/README.md) before enabling it.
+- **Evidence:** [fingerprint acceptance](docs/fingerprint-acceptance.md) describes checks against the exact built executable. Unit tests, source patches, browser startup and full runtime acceptance establish different facts.
 
-## Build from source
+For a verified local executable, run a focused smoke check:
 
-Chromix packages Windows x64, Linux x64/arm64, and macOS x64/arm64. The pinned layers are:
+```bash
+python3 tools/fingerprint_smoke.py \
+  --browser /absolute/path/chromix/chrome \
+  --platform linux --locale en-US \
+  --output /tmp/chromix-fingerprint-smoke.json
+```
 
-| Layer | Pin |
+This requires Python Playwright and uses local test pages. It does not download a browser.
+
+## Troubleshooting
+
+| Symptom | First checks |
 |---|---|
-| Chromium (Linux/Windows) | `153.0.8010.36` |
-| ungoogled-chromium (Linux/Windows) | `153.0.8010.36-1` |
-| ungoogled-chromium-windows | `153.0.8010.36-1.1` |
-| ungoogled-chromium-portablelinux | `153.0.8010.36-1` |
-| Chromium / ungoogled-chromium (macOS override) | `152.0.7977.82` / `152.0.7977.82-1` |
-| ungoogled-chromium-macos | `152.0.7977.82-1.1` |
-| Chromix | 216 patches listed in `patches/series` |
+| SDK downloads an older browser or returns 404 | Check configured channels and release Assets; use `CLOAKBROWSER_BINARY_PATH` for the exact build you downloaded |
+| A flag has no visible effect | Confirm the executable version and relevant source feature; distinguish profile settings from native device capabilities |
+| Linux fails to start | Check system libraries, sandbox support, user permissions and shared memory in containers |
+| Headed mode fails on a server | Use headless mode or configure a display server |
+| Proxy/GeoIP fails | Check credentials, DNS, protocol and metadata reachability through that proxy; explicit locale/timezone can avoid a GeoIP dependency |
+| Windows crashes on reload | Follow [Windows crash diagnostics](docs/windows-crash-diagnostics.md) and record the exact executable/build |
+| A GitHub build fails | Reuse the latest verified uploaded file-tree checkpoint; see [BUILDING.md](BUILDING.md) for exact run/stage/attempt/asset inputs |
 
-Requirements include Visual Studio 2022 with Desktop development with C++, the
-Windows 11 SDK 10.0.28000.0 headers, libraries and Debugging Tools, Python 3, Git, PowerShell 7, 7-Zip,
-and roughly 120 GB of free disk space for Windows. Linux additionally needs
-Chromium's Debian/Ubuntu build dependencies, Node.js, Go, and Ninja. macOS
-needs Xcode, the command-line tools, Node.js, Ninja, and `zip` for packaging.
-macOS artifacts are unsigned and not notarized because Developer ID and Apple
-notary credentials are not part of this build.
+When reporting an issue, include OS/architecture, browser version, SDK version, launch options with credentials removed, build/run link, and a minimal reproduction.
 
-From a Developer PowerShell:
+## Documentation map
+
+| Goal | Read |
+|---|---|
+| Choose a feature and configure it | [Feature guide (中文)](docs/features.md) |
+| Use Python / async contexts | [Python SDK](sdk/python/README.md) |
+| Use Node / Playwright / Puppeteer | [Node SDK](sdk/node/README.md) |
+| Run a Linux container | [Docker](docs/docker.md) |
+| Look up native browser switches | [Fingerprint flags](docs/fingerprint-flags.md) |
+| Understand rendering and media behavior | [Backend policy](docs/backend-policy.md), [Canvas](docs/canvas-chain.md), [GPU](docs/gpu-backend.md) |
+| Evaluate device templates and measured records | [Device pool](docs/device-pool.md) |
+| Inspect verification status | [Status](FINGERPRINT_STATUS.md), [coverage](docs/fingerprint-coverage-matrix.md), [acceptance](docs/fingerprint-acceptance.md) |
+| Compare CloakBrowser-compatible APIs | [Functionality comparison](docs/cloakbrowser-functionality-comparison.md), [implementation history](docs/functionality-followup.md) |
+| Build, resume, package or publish | [BUILDING.md](BUILDING.md) |
+
+## Build and contribute
+
+The repository pins Chromium, ungoogled core and platform overlays, then applies the Chromix stack from [patches/series](patches/series). See [BUILDING.md](BUILDING.md) for per-platform dependencies and staged GitHub Actions builds.
+
+Windows needs Visual Studio C++ tools and Windows SDK **10.0.28000.0**, including Debugging Tools, plus Python, Git, PowerShell 7 and 7-Zip. Linux and macOS require their respective Chromium toolchains. Build caches restore source and intermediate outputs; Ninja recompiles outputs affected by changed inputs.
 
 ```powershell
 pwsh build/windows/build.ps1 -WorkDir D:\chromix-build -Jobs 8
-```
-
-Resume an interrupted compile with the same source tree:
-
-```powershell
+# Continue with the same work directory:
 pwsh build/windows/build.ps1 -WorkDir D:\chromix-build -Resume -Jobs 8
 ```
 
-The resulting browser is written to:
-
-```text
-D:\chromix-build\src\out\Chromix\chrome.exe
-```
-
-Read [`BUILDING.md`](BUILDING.md) for source revisions, GitHub Actions cache
-reuse, domain substitution, packaging, and patch-maintenance details.
-
-For reload crashes and `Crashpad_NotConnectedToHandler`, see
-[Windows crash diagnostics and issue #3](docs/windows-crash-diagnostics.md).
-It explains the timing fixes, disabled Crashpad behavior, and external dump
-capture; using the fixes requires a matching rebuilt browser.
-
-## Repository layout
-
-Canvas root causes, native fixes and validation boundaries are recorded in
-[the Canvas chain audit](docs/canvas-chain.md). The
-[pinned CloakBrowser functionality comparison](docs/cloakbrowser-functionality-comparison.md)
-separates implemented SDK/source features from remaining integration gaps.
-
-```text
-patches/          Chromium persona and integration patch series
-build/windows/    Windows preparation, staged CI, build, and packaging scripts
-build/linux/      Linux packaging helper
-build/macos/      macOS build and notarization helpers
-sdk/python/       Python Playwright wrapper and binary manager
-sdk/node/         Node Playwright wrapper and binary manager
-tools/            Patch linter, GN helpers, and regression tests
-assets/fonts/     Font assets and provenance used by packaging
-```
-
-## Development checks
-
-Run the repository checks before submitting a change:
+Useful development checks, with the appropriate development dependencies installed:
 
 ```bash
 python3 tools/check_patches.py
 python3 -m unittest discover -s tools/tests -v
+npm --prefix sdk/node test
 git diff --check
 ```
 
-A full source preparation and compile is performed by the staged Windows GitHub
-Actions workflow and the parallel Linux/macOS workflow; Chromium builds exceed a
-single hosted runner's normal time budget.
+```text
+patches/       Chromium source patches and version-specific overrides
+build/         Platform preparation, staged compilation and packaging
+docker/        Release-based Linux container
+site/          GitHub Pages project website
+sdk/           Python and Node automation wrappers
+tools/         Build validation, diagnostics and regression tests
+docs/          Feature guides, design notes and acceptance boundaries
+assets/fonts/  Font assets and provenance
+```
 
 ## License
 
-Chromix's original source code, patch integration, and SDKs are released under
-the [BSD 3-Clause License](LICENSE). Bundled Chromium and third-party components
-retain their own upstream licenses and notices; the BSD license does not replace
-those terms. Font assets likewise retain the terms documented by their original
-providers—see [`assets/fonts/SOURCE.md`](assets/fonts/SOURCE.md).
+Chromix's original code, patch integration and SDKs use the [BSD 3-Clause License](LICENSE). Chromium, third-party components and fonts retain their own terms; see [font provenance](assets/fonts/SOURCE.md). Referenced projects retain their own branding and licensing.
 
-## Project status
-
-Chromix is under active development. Chromium rebases can require individual
-patch updates, and binaries are published only after the corresponding staged
-Windows build and package checks succeed. Use a fixed release tag and verify its
-checksum for reproducible automation.
-
-## community
-
-[LINUX DO](https://linux.do)
+[Issues](https://github.com/xiaozhou26/Chromix/issues) · [Releases](https://github.com/xiaozhou26/Chromix/releases) · [LINUX DO](https://linux.do)

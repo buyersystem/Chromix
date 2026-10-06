@@ -2,85 +2,187 @@
 
 [English](README.md) | 简体中文
 
-[![Windows x64 构建](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml)
-[![Linux x64 构建](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml)
-[![Linux ARM64 构建](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml)
-[![macOS Intel 构建](https://github.com/xiaozhou26/Chromix/actions/workflows/build-macos-x64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-macos-x64.yml)
-[![macOS ARM 构建](https://github.com/xiaozhou26/Chromix/actions/workflows/build-macos-arm64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-macos-arm64.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/xiaozhou26/Chromix?display_name=tag)](https://github.com/xiaozhou26/Chromix/releases)
+[![Windows x64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml)
+[![Linux x64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml)
+[![Linux ARM64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml)
+[![Release](https://img.shields.io/github/v/release/xiaozhou26/Chromix?display_name=tag)](https://github.com/xiaozhou26/Chromix/releases)
 
-Chromix 是基于 Chromium 的浏览器项目，面向浏览器自动化、兼容性测试、隐私研究和受控的指纹实验。项目在固定版本的 `ungoogled-chromium` 及对应平台补丁之上，维护 Chromium 152 补丁集，并提供基于 Playwright 的 Python 和 Node.js SDK。
+**可配置的 Chromium 浏览器，面向自动化、兼容性测试和可复现的浏览器身份实验。**
 
-这里的 **persona（浏览器身份配置）** 指一次启动使用的平台、语言、时区等配置。项目关注这些配置在 JavaScript 接口、浏览器行为和实际能力之间的一致性；配置字段存在，不代表对应的完整设备模拟或运行时验收已经完成。
+Chromix 在固定版本的 Chromium、ungoogled 核心及平台层之上维护源码补丁，并提供 Python 和 Node.js SDK。你可以继续使用熟悉的 Playwright 页面操作，通过启动配置控制语言、时区、显示等浏览器属性，使用持久化目录保留会话。Node.js 另有独立的 Puppeteer 入口。
 
-> 定制浏览器不等于“无法检测的自动化”。网络信誉、操作行为、账户历史以及网站自身的判断逻辑仍会影响结果。已实现的接口、已退役的覆盖项与尚未验证的能力，见 [指纹状态记录](FINGERPRINT_STATUS.md)。
+[项目主页](https://xiaozhou26.github.io/Chromix/) · [下载浏览器](https://github.com/xiaozhou26/Chromix/releases) · [功能指南](docs/features.md) · [参数表](docs/fingerprint-flags.md) · [构建文档](BUILDING.md) · [问题反馈](https://github.com/xiaozhou26/Chromix/issues)
 
-## 主要特点
+## 能做什么
 
-- **可配置的浏览器身份**：支持 UA、平台、语言、时区等设置，并维护 Canvas、WebGL、WebGPU、媒体、字体等相关补丁；各项能力以状态记录中的限制为准。
-- **持久化配置种子**：SDK 的持久化用户目录复用同一个指纹种子；非持久化启动默认生成随机 32 位种子，命令行也支持显式种子。
-- **Playwright 集成**：Python 返回 `Browser` / `BrowserContext`，Node.js 提供对应的 camelCase API，并保持 CloakBrowser 风格的常用接口。
-- **代理感知配置**：可选 GeoIP 查询通过实际使用的代理获取语言、时区和出口 IP；代理启动默认限制非代理 UDP。WebRTC IP 参数修改本地地址的展示副本，实际 ICE 路由仍由原生后端负责。
-- **六平台独立构建**：Windows x64/ARM64、Linux x64/ARM64、macOS Intel/Apple Silicon 各自构建和验证，不因其他平台尚未完成而阻塞已验证平台。
-- **固定源码与完整性检查**：源码版本和平台层固定，发布包附带 `SHA256SUMS`；SDK 在校验清单可用时先校验归档，再进行安全解压。
+| 功能 | 使用方式与用途 | 详细说明 |
+|---|---|---|
+| Python / Node 自动化 | 用 Playwright 启动和操作 Chromix；Node 也支持 Puppeteer | [Python SDK](sdk/python/README.md)、[Node SDK](sdk/node/README.md) |
+| 持久化身份 | 保留 Cookie、localStorage，同一用户目录复用指纹种子 | [持久化目录示例](#持久化目录) |
+| 浏览器身份配置 | 配置 UA、平台、语言、时区、硬件与屏幕属性 | [原生参数表](docs/fingerprint-flags.md) |
+| 代理感知启动 | 设置 HTTP/HTTPS/SOCKS 代理，可选 GeoIP 推导语言和时区 | [代理示例](#代理与-geoip) |
+| 图形与媒体策略 | 配置原生 GPU 策略、字体、音频及编解码限制 | [后端策略](docs/backend-policy.md) |
+| 输入动作辅助 | `humanize` 为部分鼠标、输入和滚动操作加入轨迹与时序 | [功能指南](docs/features.md) |
+| 加密 Cookie 迁移 | 在明确选定的活动 context 之间导出、导入 Cookie | [迁移说明](docs/functionality-followup.md#加密-cookie-迁移) |
+| 跨平台分发 | 使用 ZIP 发布包，或 Linux amd64/arm64 Docker 镜像 | [下载](#下载与平台)、[Docker](docs/docker.md) |
 
-## 下载与平台支持
+**persona（浏览器身份配置）** 指一次启动使用的身份参数。接口显示值、实际浏览器行为、底层设备能力分别需要验证；设置一个平台名称不会把主机变成另一种物理设备。项目将各项实现与验证边界记录在 [FINGERPRINT_STATUS.md](FINGERPRINT_STATUS.md)，网站判断还会受网络、行为和其他因素影响。
 
-Canvas 原生路径修复和验收边界见 [Canvas 链路记录](docs/canvas-chain.md)；
-参考功能、刻意差异及待补齐项见 [CloakBrowser 公开功能对照](docs/cloakbrowser-functionality-comparison.md)。
-刷新后崩溃或出现 `Crashpad_NotConnectedToHandler` 时，参见
-[Windows 崩溃诊断与 issue #3](docs/windows-crash-diagnostics.md)：包含计时递归修复、
-Crashpad 默认禁用的说明和外部调试器取证方法；修复需要重新构建浏览器，既有发布包不会自动更新。
+## 快速开始
 
-从 [GitHub Releases](https://github.com/xiaozhou26/Chromix/releases) 下载已经发布的包。源码目标平台如下，**实际可下载的平台以对应 Release 的 Assets 为准**，构建目标列表不表示所有包都已发布。
+选择下面任一种 SDK。SDK 优先使用显式配置的本地可执行文件，否则按**代码内配置的发布通道**下载浏览器并缓存。
 
-| 平台 | 归档名称 | 解压后的手动启动入口 |
+> SDK 的 `latest` 是固定版本映射，与 GitHub 的 Latest Release 分开维护。要使用指定版本（例如 `v154.0.8037.57`），请下载对应发布包并设置 `CLOAKBROWSER_BINARY_PATH`，或使用固定版本的 [Docker 镜像](docs/docker.md)。更新 SDK 不会替换显式指定的浏览器。
+
+### Python
+
+包元数据要求 Python 3.8+；所安装的 Playwright 版本也需要支持你的 Python 版本。
+
+```bash
+python -m pip install chromix playwright
+```
+
+Linux 如缺少运行依赖，可以安装 Playwright 的系统依赖：
+
+```bash
+python -m playwright install-deps chromium
+```
+
+```python
+from chromix import launch
+
+browser = launch(headless=True)
+try:
+    page = browser.new_page()
+    page.goto("https://example.com")
+    print(page.title())
+finally:
+    browser.close()
+```
+
+其他入口包括 `launch_async`、`launch_context` 和 `launch_persistent_context`。参见 [Python API 指南](sdk/python/README.md)。需要使用当前仓库 SDK 时，将安装命令里的 `chromix` 替换为 `./sdk/python`。
+
+### Node.js / Playwright
+
+包元数据要求 Node.js 18+，还需选择兼容的自动化驱动版本。npm 包名为 **`@xiaoxiaofeihh/chromix`**；不带 scope 的 `chromix` 属于其他项目。
+
+```bash
+npm install @xiaoxiaofeihh/chromix playwright-core
+```
+
+保存为 `example.mjs`，执行 `node example.mjs`：
+
+```javascript
+import { launch } from "@xiaoxiaofeihh/chromix";
+
+const browser = await launch({ headless: true });
+try {
+  const page = await browser.newPage();
+  await page.goto("https://example.com");
+  console.log(await page.title());
+} finally {
+  await browser.close();
+}
+```
+
+### Node.js / Puppeteer
+
+```bash
+npm install @xiaoxiaofeihh/chromix puppeteer-core
+```
+
+使用独立的驱动入口：
+
+```javascript
+import { launch } from "@xiaoxiaofeihh/chromix/puppeteer";
+
+const browser = await launch({ headless: true });
+try {
+  const page = await browser.newPage();
+  await page.goto("https://example.com");
+  console.log(await page.title());
+} finally {
+  await browser.close();
+}
+```
+
+Puppeteer 的启动参数和 context 生命周期与 Playwright 有区别，详见 [Node API 指南](sdk/node/README.md)。Python SDK 提供 Playwright 集成。
+
+### Docker / Linux
+
+容器使用 **`v154.0.8037.57` 已发布的 Linux 浏览器包**：Docker 平台 `amd64` 对应发布资产 `linux-x64`，`arm64` 对应 `linux-arm64`。制作镜像时复用现有二进制，无需再次编译 Chromium。
+
+镜像标签、启动命令、sandbox 环境要求、持久化目录和 headless 用法见 [Docker 指南](docs/docker.md)。
+
+## 常用配置
+
+### 持久化目录
+
+每个身份使用独立用户目录。SDK 会保存与目录绑定的种子，后续启动继续复用。
+
+```python
+from chromix import launch_persistent_context
+
+context = launch_persistent_context(
+    "./profiles/demo",
+    headless=False,
+    locale="zh-CN",
+    timezone="Asia/Shanghai",
+)
+try:
+    page = context.new_page()
+    page.goto("https://example.com")
+finally:
+    context.close()
+```
+
+Node 对应 `launchPersistentContext({ userDataDir: "./profiles/demo", ... })`。并发浏览器进程应使用不同目录。非持久化测试需要固定种子时，Python 传 `args=["--fingerprint=42"]`，Node 传 `args: ["--fingerprint=42"]`。
+
+### 代理与 GeoIP
+
+```python
+import os
+from chromix import launch
+
+browser = launch(
+    proxy=os.environ["CHROMIX_PROXY"],
+    geoip=True,
+    locale="zh-CN",
+    headless=True,
+)
+try:
+    page = browser.new_page()
+    page.goto("https://example.com")
+finally:
+    browser.close()
+```
+
+将 `CHROMIX_PROXY` 设为实际代理 URL，例如 `http://user:pass@proxy.example:8080`。显式语言、时区优先于 GeoIP 推导值；GeoIP 会通过当前代理发起元数据查询。
+
+带认证的 SOCKS5 TCP 需要匹配补丁的 Chromix 二进制。WebRTC 地址展示与流量路由分别处理：修改候选 IP 不会建立 UDP 隧道。具体限制见 [WebRTC 与代理解析约定](docs/fingerprint-flags.md#webrtc-ip-and-proxy-resolution)。
+
+### 输入动作与扩展
+
+Python 使用 `humanize=True`，Node 使用 `humanize: true` 启用 SDK 动作辅助。扩展路径分别使用 `extension_paths`、`extensionPaths`。支持哪些操作、如何选择预设及各驱动限制，以 SDK 文档为准；动作辅助本身不代表网站检测结果。
+
+## 下载与平台
+
+从**同一个 Release** 下载浏览器 ZIP 和对应校验文件。[v154.0.8037.57](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57) 已包含下表六个平台的浏览器资产；其他版本以各自 Assets 为准。
+
+| 目标平台 | 归档 | 解压后的手动启动入口 |
 |---|---|---|
 | Windows x64 | `chromix-win-x64.zip` | `chromix/chromix.cmd` |
 | Windows ARM64 | `chromix-win-arm64.zip` | `chromix/chromix.cmd` |
-| Linux x64 | `chromix-linux-x64.zip` | `chromix/chromix` |
+| Linux x64 / Docker amd64 | `chromix-linux-x64.zip` | `chromix/chromix` |
 | Linux ARM64 | `chromix-linux-arm64.zip` | `chromix/chromix` |
 | macOS Intel | `chromix-mac-x64.zip` | `chromix/chromix` |
 | macOS Apple Silicon | `chromix-mac-arm64.zip` | `chromix/chromix` |
 
-Windows ARM64 在 `windows-2022`（x64）上交叉编译，再由 `windows-11-arm` 执行原生验证。**构建完成不等于已验收或已发布**，请以 Release 的 Assets 为准。下方 Windows 示例使用 x64；下载已发布的 ARM64 包时，将示例中的 `win-x64` 全部替换为 `win-arm64`。
+各平台独立构建和发布。Windows ARM64 在 `windows-2022` 交叉编译，在 `windows-11-arm` 做原生验证。macOS 包没有 Developer ID 分发签名和公证；Linux 需要兼容的系统库及可工作的 Chromium sandbox。
 
-当前共享源码基线及 Linux 保持 Chromium **`153.0.8010.36`**；Windows 通过 `CHROMIUM_WINDOWS_VERSION` 独立固定到 **`153.0.8010.47`**，匹配[上游缓存 35059013905](https://github.com/ungoogled-software/ungoogled-chromium-windows/actions/runs/35059013905)。截至 2026-09-17 的检查，macOS 上游尚无 153 标签或分支，因此通过 `CHROMIUM_MACOS_VERSION` 和平台覆盖字段保留 **`152.0.7977.82`**。Linux x64/ARM64 原构建包已发布为 [`Chromix 153.0.8010.36`](https://github.com/xiaozhou26/Chromix/releases/tag/v153.0.8010.36)，并设为 GitHub Latest。本次合并后的 216 补丁源码尚未完成新的浏览器构建；已发布的 Linux 包不代表这套合并源码已通过原生验收。现有 [`v152.0.7977.82`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.82) 发布保持不变。
+**校验清单可能按平台拆分。** 该版本 Linux x64 对应 `SHA256SUMS`，Linux ARM64 对应 `SHA256SUMS-linux-arm64`。选择包含你下载的 ZIP 名称的清单；通用清单未必覆盖所有平台。
 
-同一 Chromium 版本的各平台通过构建、校验、解压、版本和无界面运行检查后，可以追加到同一发布标签。不同平台可能来自不同源码提交，具体来源以发布说明中的提交 SHA、工作流和运行记录为准。已有归档不会被同名但内容不同的文件替换。
-
-**macOS 包没有 Developer ID 分发签名，也未公证。** 系统可能阻止打开下载的应用；编译器生成的临时签名不等于 Apple 分发签名。Linux 包仍依赖兼容的系统库和可用的 Chromium sandbox，并非完全静态二进制。
-
-### Windows：校验并启动
-
-从同一个 Release 下载 `chromix-win-x64.zip` 和 `SHA256SUMS`，在 PowerShell 中执行：
-
-```powershell
-$actual = (Get-FileHash .\chromix-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-$lines = @(Get-Content .\SHA256SUMS | Where-Object { $_ -match '\s+\*?chromix-win-x64\.zip$' })
-if ($lines.Count -ne 1) { throw "校验清单中缺少或重复记录了 Windows 归档" }
-$expected = ($lines[0] -split '\s+')[0].ToLowerInvariant()
-if ($actual -ne $expected) { throw "Chromix 归档 SHA-256 不匹配" }
-
-Expand-Archive .\chromix-win-x64.zip -DestinationPath .\chromix-win-x64
-.\chromix-win-x64\chromix\chromix.cmd
-```
-
-需要可复现的测试配置时，可以在启动入口后添加参数：
-
-```powershell
-.\chromix-win-x64\chromix\chromix.cmd `
-  --fingerprint=123456789 `
-  --fingerprint-platform=windows `
-  --fingerprint-timezone=Europe/Berlin `
-  --fingerprint-locale=de-DE
-```
-
-### Linux / macOS：校验并启动
-
-下载对应架构的 ZIP 与同一发布版本的 `SHA256SUMS`。校验清单可能列出多个平台，下面只提取本次下载包的记录；清单记录不唯一或校验失败都会中止。
-
-Linux x64 示例：
+Linux x64 下载两份文件后：
 
 ```bash
 set -eu
@@ -91,310 +193,122 @@ unzip "$archive" -d chromix-linux-x64
 ./chromix-linux-x64/chromix/chromix --version
 ```
 
-macOS Apple Silicon 示例：
+Linux ARM64 替换归档、解压目录及校验清单名称；macOS 使用 `shasum -a 256 -c`，保留执行权限和 framework 符号链接。Windows 使用 `Get-FileHash -Algorithm SHA256` 对比清单，再执行 `Expand-Archive`。
 
-```bash
-set -eu
-archive=chromix-mac-arm64.zip
-awk -v name="$archive" '$2 == name || $2 == "*" name { print; count++ } END { if (count != 1) exit 1 }' SHA256SUMS > SHA256SUMS.selected
-shasum -a 256 -c SHA256SUMS.selected
-unzip "$archive" -d chromix-mac-arm64
-./chromix-mac-arm64/chromix/chromix --version
-```
+如果下载的是 Actions artifact，先解开 GitHub 外层 ZIP，再校验内层浏览器归档。完整步骤见 [候选包验证](BUILDING.md#verify-and-run-a-posix-candidate)。
 
-Linux ARM64 或 Intel Mac 请分别替换为 `chromix-linux-arm64.zip`、`chromix-mac-x64.zip`，并同步修改解压目录。使用新的解压目录，保留执行权限以及 macOS framework 的符号链接。运行时使用普通用户和可用的 sandbox；不要通过追加 `--no-sandbox` 把启动失败当作验证通过。
+## 使用指定浏览器
 
-如果下载的是 **Actions artifact**，先解开 GitHub 的外层归档，再校验内层浏览器 ZIP；内层 `SHA256SUMS` 不能用于校验外层下载文件。详细步骤见 [构建文档](BUILDING.md#verify-and-run-a-posix-candidate)。
-
-## Python SDK
-
-### 安装
-
-```bash
-python -m pip install chromix playwright
-```
-
-Linux 上如需安装 Playwright 的系统依赖，可以运行：
-
-```bash
-python -m playwright install-deps
-```
-
-要使用当前仓库中的 SDK，而不是 PyPI 版本，在仓库根目录执行：
-
-```bash
-python -m pip install ./sdk/python playwright
-```
-
-### 启动浏览器
-
-```python
-from chromix import launch
-
-browser = launch(headless=False)
-try:
-    page = browser.new_page()
-    page.goto("https://example.com")
-    print(page.title())
-finally:
-    browser.close()
-```
-
-需要代理和 GeoIP 时，向 `launch` 传入 `proxy="http://user:pass@proxy.example:8080"` 与 `geoip=True`，并将示例代理替换为实际配置。GeoIP 可影响默认语言和时区，显式传入的设置优先。未指定本地浏览器时，SDK 会按所配置的版本和通道查找或下载二进制；对应平台尚未发布时，应使用下文的本地二进制方式。
-
-### 持久化用户目录
-
-```python
-from chromix import launch_persistent_context
-
-context = launch_persistent_context(
-    "./profile",
-    locale="zh-CN",
-    timezone="Asia/Shanghai",
-    headless=False,
-)
-try:
-    page = context.new_page()
-    page.goto("https://example.com")
-finally:
-    context.close()
-```
-
-异步 API 包括 `launch_async` 等变体，详见 [Python SDK 文档](sdk/python/README.md)。
-
-### 二进制管理
-
-```bash
-python -m chromix --version
-python -m chromix install
-python -m chromix info
-python -m chromix clear-cache
-python -m chromix widevine
-```
-
-`widevine` 是 Linux x64 的辅助命令，不代表每个平台都具备相同的 DRM 能力。
-
-## Node.js SDK
-
-Node.js SDK 使用 `playwright-core`，包名为 **`@xiaoxiaofeihh/chromix`**。npm 上不带 scope 的 `chromix` 属于其他项目，请勿混用。
-
-```bash
-npm install @xiaoxiaofeihh/chromix playwright-core
-```
-
-将以下代码保存为 `.mjs` 文件，或在启用了 ES Modules 的项目中运行：
-
-```javascript
-import { launch } from "@xiaoxiaofeihh/chromix";
-
-const browser = await launch({ headless: false });
-try {
-  const page = await browser.newPage();
-  await page.goto("https://example.com");
-  console.log(await page.title());
-} finally {
-  await browser.close();
-}
-```
-
-代理与 GeoIP 使用 `proxy`、`geoip` 选项；持久化目录使用 `launchPersistentContext`。完整参数及兼容性差异见 [Node.js SDK 文档](sdk/node/README.md)。
-
-```bash
-npx chromix --version
-npx chromix install
-npx chromix info
-npx chromix clear-cache
-```
-
-## 使用本地浏览器二进制
-
-两个 SDK 都通过 **`CLOAKBROWSER_BINARY_PATH`** 指定本地浏览器并跳过发布包下载。路径必须指向实际可执行文件，而不是 ZIP、目录、Windows `.cmd` 或 macOS `.app` 目录，并保留旁边的完整运行时文件。
-
-Windows：
+在运行 SDK 的同一终端设置 **`CLOAKBROWSER_BINARY_PATH`**，并保留旁边完整的运行时文件。
 
 ```powershell
-$env:CLOAKBROWSER_BINARY_PATH = "D:\chromix-build\src\out\Chromix\chrome.exe"
+# Windows：指向实际可执行文件
+$env:CLOAKBROWSER_BINARY_PATH = "D:\chromix-win-x64\chromix\chrome.exe"
 ```
 
-Linux：
-
 ```bash
+# Linux
 export CLOAKBROWSER_BINARY_PATH="/absolute/path/chromix/chrome"
-```
 
-macOS：
-
-```bash
+# macOS：在 Mac 上改用这一行
 export CLOAKBROWSER_BINARY_PATH="/absolute/path/chromix/Chromium.app/Contents/MacOS/Chromium"
 ```
 
-在同一终端运行平常的 SDK 启动代码即可。请先校验所使用的包，并确保二进制与本机操作系统、架构匹配。
+随后运行普通启动示例即可，该环境变量适用于两种 SDK。Python `launch(executable_path=...)` 会与包装层参数冲突。Node 普通 Playwright 启动也支持 `launchOptions: { executablePath: "/absolute/path/to/chrome" }` 跳过下载，Puppeteer 入口还支持顶层 `executablePath`。实测设备模式有独立参数限制，详见 Node 指南。
 
-Python 包装层的 `chromix.launch(executable_path=...)` **不是受支持的本地路径选择方式**：包装层会先解析二进制，并自行传入 `executable_path`，重复提供会发生参数冲突。直接调用 Playwright 的 `chromium.launch(executable_path=...)` 是另一套 API。
+### 分清三类版本
 
-Node.js 顶层 `executablePath` 也不是该包装层的下载绕过选项；`launchOptions.executablePath` 在 `ensureBinary()` 之后才生效。需要不下载的本地启动时，两种 SDK 都使用上述环境变量。
+| 版本来源 | 当前仓库配置 | 含义 |
+|---|---|---|
+| Linux / Windows 源码 | Chromium `154.0.8037.97` | 对应平台工作流要编译的版本 |
+| macOS 源码 | Chromium `152.0.7977.82` | 独立的平台源码基线 |
+| Docker 内的浏览器 | Chromium `154.0.8037.57` | 此次容器选用的发布 ZIP |
+| SDK `stable` 通道 | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) | 自动下载器当前固定映射 |
+| SDK `latest` 通道 | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) | 自动下载器当前固定映射 |
 
-### 常用环境变量
+源码配置以 [build/ungoogled-revisions.psd1](build/ungoogled-revisions.psd1) 为准，下载通道见 [Python](sdk/python/chromix/_binary.py) / [Node](sdk/node/_binary.js) 下载器。`CLOAKBROWSER_VERSION` 选择已配置的主版本或通道，不是任意 Release 标签下载器。SDK 版本、浏览器发布版本和源码固定版本分别维护；新原生功能需要相应补丁编译出的浏览器。
 
-| 变量 | 用途 |
-|---|---|
-| `CLOAKBROWSER_BINARY_PATH` | 使用本地可执行文件，跳过发布包下载 |
-| `CLOAKBROWSER_VERSION` | 选择 SDK 中配置的浏览器主版本或版本通道 |
-| `CLOAKBROWSER_RELEASE_CHANNEL` | 选择 `stable` 或 `latest` |
-| `CLOAKBROWSER_GEOIP_TIMEOUT_SECONDS` | 设置 GeoIP 查询超时 |
-| `CLOAKBROWSER_WIDEVINE_CDM` | 指向已有 Widevine CDM 目录 |
-| `CLOAKBROWSER_WIDEVINE=0` | 关闭 Widevine 自动查找 |
-| `CHROMIX_CACHE_DIR` | 覆盖 SDK 二进制缓存目录 |
-| `CHROMIX_DOWNLOAD_HOST` | 覆盖发布资产下载主机 |
+## 功能边界与验证
 
-## 身份配置与能力边界
+- **身份参数**：支持的开关及默认值见 [参数表](docs/fingerprint-flags.md)。页面 viewport 与 screen 分别配置。
+- **GPU 策略**：普通启动使用共享原生策略。身份模板与经过测量的设备记录有不同准入条件，见 [GPU 后端](docs/gpu-backend.md)、[设备池](docs/device-pool.md)。
+- **实验选项**：Runtime suppression 和远端 Canvas bridge 需要显式启用。bridge 的 unsafe 模式会改变渲染进程 sandbox，使用前请阅读 [补丁文档](patches/README.md)。
+- **验证证据**：工具单测、补丁可应用、浏览器启动和完整运行验收分别说明不同层面的状态，详见 [验收说明](docs/fingerprint-acceptance.md)。
 
-常用显式命令行参数：
+对于已经核验来源的本地二进制，可以运行：
 
-```text
---fingerprint=<非零 uint64 种子>
---fingerprint-platform=linux|windows|macos
---fingerprint-timezone=<IANA 时区，例如 Asia/Shanghai>
---fingerprint-locale=<语言标签，例如 zh-CN>
---force-webrtc-ip-handling-policy=disable_non_proxied_udp
+```bash
+python3 tools/fingerprint_smoke.py \
+  --browser /absolute/path/chromix/chrome \
+  --platform linux --locale zh-CN \
+  --output /tmp/chromix-fingerprint-smoke.json
 ```
 
-显式调用参数优先于 GeoIP 推导结果。需要长期稳定身份的测试，应复用同一个种子和用户目录；只有需要新身份时才更换种子。平台配置是声明的测试身份，不会把 Linux 主机变成真实的 Windows 或 macOS 设备。
+工具需要 Python Playwright，使用本地测试页面，不会自动下载浏览器。
 
-完整参数表见 [指纹参数说明](docs/fingerprint-flags.md)：GPU、CPU/内存、屏幕/任务栏、品牌/版本、配额、Windows 字体度量、WebRTC IP/auto、noise/off、第三方 Cookie、Windows 声音表和 `FakeShadowRoot` 均已接入当前源码。**需要重编译；只更新 SDK 不会让旧二进制自动具备这些功能。**
+## 常见问题
 
-当前实现的默认值和边界：
-
-- 启用 `--fingerprint` 后默认 CPU/内存为 8/8，屏幕为 Windows/Linux 1920×1080、macOS 1440×900；任务栏高度分别为 48/0/95。页面 viewport 与 screen 是不同设置，SDK 不会因此自动套用旧的随机 viewport 模板。
-- 存储配额接入浏览器后端，默认 102400 MiB；真实使用量、磁盘耗尽和桶限制仍保留。Network Information 与原生通知器保持一致。
-- WebRTC 支持显式 IP 和 `auto`，GeoIP 可复用同次查询的出口 IP；不生成虚假候选或 STUN 成功，保留远端和 TURN relay 地址。修改候选字符串不等于改变流量路径。
-- GPU 池包含 Windows/Linux/macOS **身份模板**，不是经过测量的完整设备数据库；公开身份参数保留真实 GL/Dawn 能力。
-- 普通启动默认使用共享 `native` GPU 策略；显式 WebGL 名称覆盖需要 `compatibility`。SDK 不再自动绕过 GPU 驱动黑名单。新增音频图隔离、受限字体、codec 禁用、CSS/input 偏好与毫秒时钟配置，详见 [后端策略](docs/backend-policy.md)。
-- 旧的独立 CPU/内存/屏幕随机池、GL 能力模板、字体替换和 Canvas 读回/导出噪声仍需 `--uxr-synthetic-device-tests=true`。`noise=false` 保留种子并关闭已有扰动，但不代表四套 Canvas/WebGL/audio/client-rect 噪声引擎已经实现。
-- Windows 字体参数是有条件的字体度量对齐，不是完整 DirectWrite 模拟；普通声音列表使用真实后端，跨系统声音表仅为 synthetic 测试且不安装 SAPI。第三方 Cookie 和 closed shadow DOM 访问均为显式选项。
-- 屏幕与实际布局、字体来源、媒体后端、图形渲染以及 TLS/HTTP 等网络层的一致性，仍有未完成或未通过匹配浏览器验收的项目。
-
-实现细节与验收边界以 [指纹状态记录](FINGERPRINT_STATUS.md)、[真实设备池说明](docs/device-pool.md) 和 [Canvas 链路说明](docs/canvas-chain.md) 为准。[指纹回归门禁](docs/fingerprint-acceptance.md) 在编译前核验实际补丁内容，解包后固定二进制 hash/版本运行十五项测试，包含后端策略、媒体操作、TLS 恢复及回环 H3。当前 191 个补丁仍需匹配的原生构建验收；单元测试通过或补丁可应用不能替代真实浏览器验证。
-
-### 高级实验选项
-
-以下能力默认关闭，可能干扰自动化或削弱浏览器隔离：
-
-- `--fingerprint-devtools-runtime-suppression`：抑制部分 V8 Runtime 可观测行为，可能影响控制台消息和自动化绑定。
-- `--fingerprint-canvas-bridge=<host:port|ws://...>` 配合 `--fingerprint-canvas-bridge-unsafe`：实验性远端 Canvas Bridge；参与的渲染进程会失去 sandbox。当前 Canvas 路径还需要合成测试开关，且不代表完整的 WebGL 远端替换已经实现。
-
-`--fingerprint-webrtc-ip` 已恢复为本地展示层参数，并增加启动前 `auto` 解析；`--fingerprint-webrtc-fake-srflx`、`--fingerprint-webrtc-fake-srflx-allow-udp` 及对应 `uxr` 参数仍然退役。解析失败不会回退直连，SDK 的 SOCKS 元数据查询能力也不等于 Chromium 新增了 SOCKS 认证支持。更多信息见 [参数说明](docs/fingerprint-flags.md) 和 [补丁说明](patches/README.md)。
-
-## 从源码构建
-
-源码层次固定为：**Chromium 归档 → ungoogled 核心补丁 → 对应平台补丁 → 二进制裁剪 → Chromix 补丁集**。
-
-| 层次 | 固定版本 |
+| 问题 | 优先检查 |
 |---|---|
-| Chromium（Linux/Windows） | `153.0.8010.36` |
-| ungoogled-chromium（Linux/Windows） | `153.0.8010.36-1` |
-| ungoogled-chromium-windows | `153.0.8010.36-1.1` |
-| ungoogled-chromium-portablelinux | `153.0.8010.36-1` |
-| Chromium / ungoogled-chromium（macOS 覆盖） | `152.0.7977.82` / `152.0.7977.82-1` |
-| ungoogled-chromium-macos | `152.0.7977.82-1.1` |
-| Chromix | [patches/series](patches/series) 中的 216 个补丁 |
+| SDK 下载旧版或返回 404 | 检查 SDK 通道及对应 Release Assets；指定版本使用 `CLOAKBROWSER_BINARY_PATH` |
+| 参数设置没有效果 | 检查实际浏览器版本、对应补丁，并区分身份参数与底层设备能力 |
+| Linux 启动失败 | 检查系统库、sandbox、用户权限，以及容器共享内存 |
+| 服务器无法打开有界面窗口 | 使用 headless，或配置显示服务 |
+| 代理或 GeoIP 失败 | 检查认证、DNS、协议及代理上的元数据访问；可显式设置语言和时区 |
+| Windows 刷新后崩溃 | 按 [崩溃诊断](docs/windows-crash-diagnostics.md) 记录具体版本和故障信息 |
+| Actions 编译失败 | 使用最近上传且验证通过的文件树检查点续编，参数见 [BUILDING.md](BUILDING.md) |
 
-完整提交固定值见 [build/ungoogled-revisions.psd1](build/ungoogled-revisions.psd1)。
+提交问题时，请提供操作系统和架构、浏览器及 SDK 版本、已移除凭据的启动参数、构建链接与最小复现步骤。
 
-### Windows x64
+## 文档导航
 
-需要 Visual Studio 2022 的 C++ 桌面开发工作负载、Windows 11 SDK 10.0.28000.0 的头文件、库及 Debugging Tools、Python 3、Git、PowerShell 7 和 7-Zip。约 120 GB 空闲磁盘只是起始估算，实际需求取决于源码、对象、快照和打包同时占用的空间。
+| 你想做什么 | 文档 |
+|---|---|
+| 了解功能及选择配置 | [功能指南](docs/features.md) |
+| 使用 Python、异步或持久化 context | [Python SDK](sdk/python/README.md) |
+| 使用 Node、Playwright 或 Puppeteer | [Node SDK](sdk/node/README.md) |
+| 使用 Linux Docker 镜像 | [Docker 指南](docs/docker.md) |
+| 查找浏览器启动参数 | [指纹参数](docs/fingerprint-flags.md) |
+| 理解图形、字体、媒体策略 | [后端策略](docs/backend-policy.md)、[Canvas](docs/canvas-chain.md)、[GPU](docs/gpu-backend.md) |
+| 区分设备模板与实测数据 | [设备池](docs/device-pool.md) |
+| 查看实现和验证状态 | [状态记录](FINGERPRINT_STATUS.md)、[覆盖矩阵](docs/fingerprint-coverage-matrix.md)、[验收](docs/fingerprint-acceptance.md) |
+| 了解兼容性与开发历史 | [CloakBrowser 对照](docs/cloakbrowser-functionality-comparison.md)、[历史实现批次](docs/functionality-followup.md) |
+| 编译、续编、打包与发布 | [构建文档](BUILDING.md) |
 
-在仓库根目录的 Developer PowerShell 中执行：
+## 构建与贡献
+
+源码固定 Chromium、ungoogled 核心和平台覆盖层，再应用 [patches/series](patches/series) 中的 Chromix 补丁。各平台依赖和 GitHub Actions 分阶段构建详见 [BUILDING.md](BUILDING.md)。
+
+Windows 需要 Visual Studio C++ 工具、Windows SDK **10.0.28000.0**（含 Debugging Tools）、Python、Git、PowerShell 7 和 7-Zip。Linux/macOS 使用对应 Chromium 工具链。缓存恢复源码与中间输出，输入变化后 Ninja 仍会重新编译受影响部分。
 
 ```powershell
 pwsh build/windows/build.ps1 -WorkDir D:\chromix-build -Jobs 8
-```
-
-用同一工作目录继续中断的编译：
-
-```powershell
+# 使用原工作目录续编：
 pwsh build/windows/build.ps1 -WorkDir D:\chromix-build -Resume -Jobs 8
 ```
 
-普通源码构建的输出为 `D:\chromix-build\src\out\Chromix\chrome.exe`。
-
-### Linux / macOS
-
-Linux 需要 Chromium 对应的 Debian/Ubuntu 构建依赖，以及 Python 3、Git、Ninja、Node.js、Go 和归档工具。以下示例在原生 x64 Linux 主机上执行：
-
-```bash
-build/build.sh /path/to/chromix-linux-build x64
-build/linux/package-linux.sh /path/to/chromix-linux-build/src/out/Chromix /path/to/dist x64
-```
-
-macOS 需要 **Xcode 26+ 与 macOS SDK 26+**、命令行工具、Python 3、Git、Ninja、Node.js、Go 和归档工具；构建架构应与主机匹配。Apple Silicon 示例：
-
-```bash
-build/macos/build.sh /path/to/chromix-mac-build arm64
-build/macos/package-macos.sh \
-  /path/to/chromix-mac-build/src/out/Chromix/Chromium.app \
-  /path/to/dist arm64
-```
-
-Intel Mac 将 `arm64` 替换为 `x64`。Linux/macOS 建议至少从 100 GB 空闲磁盘开始评估，这不是足够空间的保证。恢复上游完整构建树时输出可能位于 `out/Default`，手动打包必须使用对应路径。
-
-### GitHub Actions 与缓存续编
-
-五个平台分别使用独立工作流；POSIX 平台默认 `fast`、`staged`，可通过 `compile_jobs=auto|N` 控制编译并行度。`fast` 调整 ThinLTO 优化策略，不代表关闭 sandbox 或浏览器能力，也不保证指定的构建耗时。
-
-缓存续编恢复的是经过校验的源码、构建状态及对象文件。源码、编译器、SDK 或依赖发生变化时，Ninja 仍会重编相关输出。**缓存下载成功不等于对象已被保留，也不等于已测得加速。** 跨阶段快照、下载摘要、SDK 内容指纹、对象保留报告和最终原生运行验证是不同的证据。
-
-完整构建、缓存选择、失败恢复、源码迁移、打包及发布流程见 [BUILDING.md](BUILDING.md)。已经运行的 Actions 使用启动时的工作流提交，新文档或源码提交不会改变这些运行中的构建。
-
-## 开发与验证
-
-在仓库根目录运行：
+安装相应开发依赖后，可以运行：
 
 ```bash
 python3 tools/check_patches.py
 python3 -m unittest discover -s tools/tests -v
-python3 -m pytest -q
 npm --prefix sdk/node test
 git diff --check
 ```
 
-这些检查需要对应的开发依赖和平台工具；环境相关跳过不算验证通过。完整 Chromium 编译与浏览器集成验证仍需单独执行。
-
-对于已经构建、来源独立核验过的本地浏览器，可运行：
-
-```bash
-python3 tools/fingerprint_smoke.py \
-  --browser /path/to/verified/chromix/chrome \
-  --platform linux \
-  --locale zh-CN \
-  --output /tmp/chromix-fingerprint-smoke.json
-```
-
-该工具需要 Python Playwright，使用自己的本地回环测试页面，不会自动下载浏览器。`--browser` 必须是实际可执行文件。发布归档的 SHA-256 与可执行文件的 SHA-256 是不同对象的摘要，不能混用；普通工具测试也不能当作匹配版本 Chromix 的运行验收。
-
-## 仓库结构
-
 ```text
-patches/          Chromium 身份配置与集成补丁
-build/windows/    Windows 准备、分阶段构建和打包脚本
-build/linux/      Linux 打包与 sandbox 辅助工具
-build/macos/      macOS 构建、打包及可选公证辅助工具
-build/posix/      Linux/macOS 缓存恢复与阶段交接脚本
-sdk/python/       Python Playwright 包装层与二进制管理
-sdk/node/         Node.js Playwright 包装层与二进制管理
-tools/            补丁检查、构建辅助工具和回归测试
-docs/             指纹一致性、设备池和设计说明
-assets/fonts/     字体资源及其来源说明
+patches/       Chromium 补丁及版本覆盖
+build/         平台准备、分阶段编译与打包
+docker/        基于 Linux 发布包的容器
+site/          GitHub Pages 项目主页
+sdk/           Python 和 Node 自动化包装层
+tools/         构建校验、诊断与回归测试
+docs/          功能指南、设计与验收边界
+assets/fonts/  字体资源及来源
 ```
 
 ## 许可证
 
-Chromix 原创源码、补丁集成和 SDK 使用 [BSD 3-Clause License](LICENSE)。Chromium、第三方组件及字体保留各自的许可证和声明，BSD 许可证不会替代这些条款。字体来源与许可见 [assets/fonts/SOURCE.md](assets/fonts/SOURCE.md)。
+Chromix 原创代码、补丁集成和 SDK 使用 [BSD 3-Clause License](LICENSE)。Chromium、第三方组件和字体保留各自条款，字体来源见 [assets/fonts/SOURCE.md](assets/fonts/SOURCE.md)。参考项目保留其自身品牌与许可。
 
-## 项目状态与社区
-
-项目持续开发中，Chromium 升级可能需要逐项调整补丁。使用固定发布标签并核对校验清单，有助于复现环境；单个平台的基础启动检查不代表全部指纹能力已经完成。
-
-- [问题反馈](https://github.com/xiaozhou26/Chromix/issues)
-- [LINUX DO](https://linux.do)
+[问题反馈](https://github.com/xiaozhou26/Chromix/issues) · [Releases](https://github.com/xiaozhou26/Chromix/releases) · [LINUX DO](https://linux.do)
