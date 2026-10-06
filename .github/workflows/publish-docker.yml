@@ -19,7 +19,7 @@ concurrency:
 env:
   IMAGE: ghcr.io/xiaozhou26/chromix
   AMD64_VERSION: 154.0.8037.97
-  ARM64_VERSION: 154.0.8037.57
+  ARM64_VERSION: 154.0.8037.97
 
 jobs:
   build:
@@ -129,7 +129,7 @@ jobs:
           path: digests
           merge-multiple: true
 
-      - name: Publish amd64 release and mixed-version latest
+      - name: Publish multi-architecture release and latest
         shell: bash
         run: |
           docker buildx imagetools inspect --raw "$IMAGE:154.0.8037.57" > original-57.json
@@ -139,11 +139,14 @@ jobs:
             [[ "$ref" =~ ^ghcr.io/xiaozhou26/chromix@sha256:[a-f0-9]{64}$ ]]
             refs+=("$ref")
           done
-          docker buildx imagetools create --prefer-index=true \
-            --tag "$IMAGE:$AMD64_VERSION" --tag "$IMAGE:amd64-$AMD64_VERSION" "${refs[0]}"
+          [[ "$AMD64_VERSION" == "$ARM64_VERSION" ]]
           docker buildx imagetools create \
-            --tag "$IMAGE:latest" "${refs[@]}"
-          for tag in "$AMD64_VERSION" "amd64-$AMD64_VERSION" latest; do
+            --tag "$IMAGE:$AMD64_VERSION" --tag "$IMAGE:latest" "${refs[@]}"
+          docker buildx imagetools create --prefer-index=true \
+            --tag "$IMAGE:amd64-$AMD64_VERSION" "${refs[0]}"
+          docker buildx imagetools create --prefer-index=true \
+            --tag "$IMAGE:arm64-$ARM64_VERSION" "${refs[1]}"
+          for tag in "$AMD64_VERSION" latest "amd64-$AMD64_VERSION" "arm64-$ARM64_VERSION"; do
             docker buildx imagetools inspect --raw "$IMAGE:$tag" > "$tag.json"
           done
           docker buildx imagetools inspect --raw "$IMAGE:154.0.8037.57" > preserved-57.json
@@ -153,8 +156,9 @@ jobs:
           import os
           from pathlib import Path
           version = os.environ['AMD64_VERSION']
-          for tag, arches in ((version, {'amd64'}), (f'amd64-{version}', {'amd64'}),
-                              ('latest', {'amd64', 'arm64'})):
+          assert version == os.environ['ARM64_VERSION']
+          for tag, arches in ((version, {'amd64', 'arm64'}), ('latest', {'amd64', 'arm64'}),
+                              (f'amd64-{version}', {'amd64'}), (f'arm64-{version}', {'arm64'})):
               manifests = json.loads(Path(f'{tag}.json').read_text())['manifests']
               platforms = {(item['platform']['os'], item['platform']['architecture']) for item in manifests}
               assert len(manifests) == len(arches) and platforms == {('linux', arch) for arch in arches}, manifests
@@ -171,14 +175,14 @@ jobs:
           config="$(mktemp -d)"
           trap 'rm -rf "$config"' EXIT
           # Package visibility must be set to public by the repository owner.
-          docker --config "$config" pull --platform linux/amd64 "$IMAGE:$AMD64_VERSION"
-          docker --config "$config" pull --platform linux/amd64 "$IMAGE:amd64-$AMD64_VERSION"
+          docker --config "$config" manifest inspect "$IMAGE:$AMD64_VERSION" > /dev/null
           docker --config "$config" manifest inspect "$IMAGE:latest" > /dev/null
           docker --config "$config" manifest inspect "$IMAGE:154.0.8037.57" > /dev/null
           for arch in amd64 arm64; do
-            docker --config "$config" pull --platform "linux/$arch" "$IMAGE:latest"
-            docker --config "$config" image inspect "$IMAGE:latest" > image.json
-            python3 - "$arch" <<'PYCODE'
+            for tag in "$AMD64_VERSION" latest "$arch-$AMD64_VERSION"; do
+              docker --config "$config" pull --platform "linux/$arch" "$IMAGE:$tag"
+              docker --config "$config" image inspect "$IMAGE:$tag" > image.json
+              python3 - "$arch" "$tag" <<'PYCODE'
           import json
           import os
           from pathlib import Path
@@ -187,6 +191,7 @@ jobs:
           from smoke import VERSIONS, check_image_metadata
           arch = check_image_metadata(json.loads(Path('image.json').read_text())[0], sys.argv[1])
           assert VERSIONS[arch] == os.environ[f'{arch.upper()}_VERSION']
-          print(f'Anonymous pull: linux/{arch}, OCI version {VERSIONS[arch]}')
+          print(f'Anonymous pull: {sys.argv[2]}, linux/{arch}, OCI version {VERSIONS[arch]}')
           PYCODE
+            done
           done

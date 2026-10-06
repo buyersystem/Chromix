@@ -11,10 +11,10 @@ case "$arch" in
         digest=dc7dfd45d0dc1c1eea52f36a2dcdc4111e2780540392d30913107c50bf353aa5
         ;;
     arm64)
-        version=154.0.8037.57
+        version=154.0.8037.97
         asset=chromix-linux-arm64.zip
         manifest=SHA256SUMS-linux-arm64
-        digest=26be9806543e2957ed82469830c17d4b38bc018b5c85dcaefd434fa2e50c2a60
+        digest=2a6982052a74571e506bd171a058a114f8a4bc3f296b851440e96e4dae5f55fd
         ;;
     *) echo "Unsupported architecture: $arch" >&2; exit 2 ;;
 esac

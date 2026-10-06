@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import uuid
 
-VERSIONS = {"amd64": "154.0.8037.97", "arm64": "154.0.8037.57"}
+VERSIONS = {"amd64": "154.0.8037.97", "arm64": "154.0.8037.97"}
 ROOT = Path(__file__).resolve().parent
 MARKER = '<p id="result">chromix-docker-js-ok</p>'
 

@@ -45,6 +45,6 @@ FROM runtime AS runtime-amd64
 LABEL org.opencontainers.image.version="154.0.8037.97"
 
 FROM runtime AS runtime-arm64
-LABEL org.opencontainers.image.version="154.0.8037.57"
+LABEL org.opencontainers.image.version="154.0.8037.97"
 
 FROM runtime-${TARGETARCH}
