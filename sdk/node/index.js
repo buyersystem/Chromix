@@ -61,7 +61,7 @@ function personaGeometryFor(options) {
   return entry;
 }
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.1.2";
 export const CHROMIUM_VERSION = "152";
 export const CHROMIUM_BUILD_VERSION = BROWSER_VERSION;
 export const DEFAULT_VIEWPORT = { width: 1920, height: 947 };

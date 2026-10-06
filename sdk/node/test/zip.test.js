@@ -114,7 +114,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
   ["darwin", "x64", "mac-x64"], ["darwin", "arm64", "mac-arm64"]]) {
   test(`ZIP download, public API and cache: ${plat}`, async (t) => {
     mockPlatform(t, platform, arch);
-    const tag = plat === "linux-x64" ? "v154.0.8037.97" : "v151.0.7922.173";
+    const tag = ["linux-x64", "linux-arm64"].includes(plat) ? "v154.0.8037.97" : "v151.0.7922.173";
     const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
     assert.equal(binary.resolvePlatform(), plat);
     assert.equal(api.binaryInfo(options).installed, false);
@@ -152,7 +152,7 @@ test("ZIP preserves framework links, chains and internal parent-relative targets
   assert.equal(readFileSync(join(root, "chromix/Framework/chrome"), "utf8"), "chrome fixture");
 });
 
-for (const plat of ["linux-x64", "win-x64", "win-arm64"])
+for (const plat of ["linux-x64", "linux-arm64", "win-x64", "win-arm64"])
 for (const failure of ["http", "network", "stream", "checksum", "corrupt", "missing-launcher", "missing-binary", "directory-binary"]) {
   test(`ZIP ${plat} ${failure} cleans staging, keeps old cache and permits retry`, async (t) => {
     const root = join(cache, tag, plat), marker = join(root, "old-cache");
@@ -174,12 +174,12 @@ for (const failure of ["http", "network", "stream", "checksum", "corrupt", "miss
   });
 }
 
-for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"],
+for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "arm64", "linux-arm64"],
   ["win32", "x64", "win-x64"], ["win32", "arm64", "win-arm64"]])
 for (const missing of ["launcher", "binary", "directory", "external-link"]) {
   test(`public API rejects incomplete ${plat} cache: ${missing}`, { skip: missing === "external-link" && process.platform === "win32" }, async (t) => {
     mockPlatform(t, platform, arch);
-    const tag = plat === "linux-x64" ? "v154.0.8037.97" : "v151.0.7922.173";
+    const tag = ["linux-x64", "linux-arm64"].includes(plat) ? "v154.0.8037.97" : "v151.0.7922.173";
     const root = join(cache, tag, plat);
     const launcher = join(root, binary.ASSETS[plat].launcher), chrome = binary.binaryPath(plat, root);
     mkdirSync(dirname(chrome), { recursive: true });
@@ -292,7 +292,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
     test(`platform channel, install and CLI agree: ${plat} ${channel || "default"}`, async (t) => {
       mockPlatform(t, platform, arch);
       process.env.CLOAKBROWSER_RELEASE_CHANNEL = channel;
-      const version = plat === "linux-x64" ? "154.0.8037.97" :
+      const version = ["linux-x64", "linux-arm64"].includes(plat) ? "154.0.8037.97" :
         channel === "latest" ? "152.0.7977.75" : "151.0.7922.173";
       const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
       assert.equal(api.binaryInfo().version, version);
@@ -320,6 +320,25 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
     });
   }
 
+  for (const [channel, oldTag] of [["stable", "v151.0.7922.173"], ["latest", "v152.0.7977.75"]]) {
+    test(`Linux channel promotion preserves other platform caches: ${plat} ${channel}`, async (t) => {
+      mockPlatform(t, platform, arch);
+      const oldRoot = join(cache, oldTag, plat), oldChrome = binary.binaryPath(plat, oldRoot);
+      mkdirSync(dirname(oldChrome), { recursive: true });
+      writeFileSync(oldChrome, "old browser");
+      writeFileSync(join(oldRoot, binary.ASSETS[plat].launcher), "old launcher");
+      const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
+      const promoted = ["linux-x64", "linux-arm64"].includes(plat);
+      assert.equal(api.binaryInfo({ releaseChannel: channel }).installed, !promoted);
+      const selectedTag = promoted ? "v154.0.8037.97" : oldTag;
+      assert.equal(await api.ensureBinary({ releaseChannel: channel }), binary.binaryPath(plat, join(cache, selectedTag, plat)));
+      assert.equal(urls.length, promoted ? 2 : 0);
+      assert.equal(await api.ensureBinary({ browserVersion: oldTag }), oldChrome);
+      assert.equal(readFileSync(oldChrome, "utf8"), "old browser");
+      assert.equal(urls.length, promoted ? 2 : 0);
+    });
+  }
+
   for (const [version, expected] of [["151", "151.0.7922.173"], ["152", "152.0.7977.75"],
     ["151.0.7922.100", "151.0.7922.100"], ["v154.0.8037.97", "154.0.8037.97"],
     ["154.0.8037.97", "154.0.8037.97"]]) {
@@ -340,7 +359,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
 
   test(`major, invalid selectors and precedence: ${plat}`, async (t) => {
     mockPlatform(t, platform, arch);
-    if (plat === "linux-x64") assert.equal(api.binaryInfo({ browserVersion: "154" }).version, "154.0.8037.97");
+    if (["linux-x64", "linux-arm64"].includes(plat)) assert.equal(api.binaryInfo({ browserVersion: "154" }).version, "154.0.8037.97");
     else assert.throws(() => api.binaryInfo({ browserVersion: "154" }), /Unsupported browser version/);
     for (const version of ["15", "999", "152.0", "../154.0.8037.97"]) {
       assert.throws(() => api.binaryInfo({ browserVersion: version }), /Unsupported browser version/);
@@ -363,7 +382,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
     process.env.CLOAKBROWSER_BINARY_PATH = local;
     assert.equal(await api.ensureBinary({ browserVersion: "invalid", releaseChannel: "invalid" }), local);
     const info = api.binaryInfo();
-    assert.equal(info.version, plat === "linux-x64" ? "154.0.8037.97" : "151.0.7922.173");
+    assert.equal(info.version, ["linux-x64", "linux-arm64"].includes(plat) ? "154.0.8037.97" : "151.0.7922.173");
     assert.equal(info.installed, false);
     assert.equal(info.path, null);
     rmSync(local);
@@ -374,7 +393,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
     test(`update requires newer platform asset: ${plat} ${scenario}`, async (t) => {
       mockPlatform(t, platform, arch);
       process.env.CLOAKBROWSER_RELEASE_CHANNEL = "latest";
-      const current = plat === "linux-x64" ? "154.0.8037.97" : "152.0.7977.75";
+      const current = ["linux-x64", "linux-arm64"].includes(plat) ? "154.0.8037.97" : "152.0.7977.75";
       let candidate = scenario === "matching" ? "155.0.1.2" : "154.0.8037.97";
       if (scenario === "older") candidate = "151.0.7922.173";
       if (scenario === "invalid") candidate = "not-a-version";
@@ -389,7 +408,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
         updateAvailable: scenario === "matching",
       });
       assert.equal((await api.checkForUpdate({ browserVersion: "155.0.1.2", releaseChannel: "stable" })).currentVersion,
-        plat === "linux-x64" ? "154.0.8037.97" : "151.0.7922.173");
+        ["linux-x64", "linux-arm64"].includes(plat) ? "154.0.8037.97" : "151.0.7922.173");
     });
   }
 }

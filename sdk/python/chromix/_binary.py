@@ -27,6 +27,10 @@ _PLATFORM_CHANNELS = {
         "stable": {"tag": "v154.0.8037.97"},
         "latest": {"tag": "v154.0.8037.97"},
     },
+    "linux-arm64": {
+        "stable": {"tag": "v154.0.8037.97"},
+        "latest": {"tag": "v154.0.8037.97"},
+    },
 }
 _CACHE = Path(os.environ.get("CHROMIX_CACHE_DIR",
                              Path.home() / ".cache" / "chromix"))

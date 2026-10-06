@@ -20,6 +20,10 @@ const PLATFORM_CHANNELS = {
     stable: { tag: "v154.0.8037.97" },
     latest: { tag: "v154.0.8037.97" },
   },
+  "linux-arm64": {
+    stable: { tag: "v154.0.8037.97" },
+    latest: { tag: "v154.0.8037.97" },
+  },
 };
 export const CACHE = process.env.CHROMIX_CACHE_DIR || join(homedir(), ".cache", "chromix");
 export const hostFor = (tag) => process.env.CHROMIX_DOWNLOAD_HOST
