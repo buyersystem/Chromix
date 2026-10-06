@@ -116,7 +116,7 @@ python3 docker/smoke.py chromix:local --apparmor-profile chromix-docker
 
 主 `SHA256SUMS` 只有 x64，不作为 arm64 的依据。未知架构、下载失败、缺失/重复/不匹配摘要、ZIP 损坏均使 build 失败。基础 Ubuntu 标签和 apt 安全更新未按 digest 锁定，因此是浏览器资产固定，而不是整个镜像逐字节可复现。
 
-`docker/seccomp.json` 来自 Microsoft Playwright 提交 [`ae935a43d9e376e4759548f6b3c6905c7b282333`](https://github.com/microsoft/playwright/blob/ae935a43d9e376e4759548f6b3c6905c7b282333/utils/docker/seccomp_profile.json)，许可保存在 `docker/seccomp.LICENSE`。在上游策略基础上增加了 `clone3 → ENOSYS (38)` 规则，让现代 glibc 回退到已经允许的 `clone`，避免默认 EPERM 导致线程创建失败；没有把默认拒绝策略改成全放行。
+`docker/seccomp.json` 来自 Microsoft Playwright 提交 [`ae935a43d9e376e4759548f6b3c6905c7b282333`](https://github.com/microsoft/playwright/blob/ae935a43d9e376e4759548f6b3c6905c7b282333/utils/docker/seccomp_profile.json)，许可保存在 `docker/seccomp.LICENSE`。在上游策略基础上增加了 `clone3 → ENOSYS (38)` 规则，让现代 glibc 回退到已经允许的 `clone`，避免默认 EPERM 导致线程创建失败；同时允许 `chroot` 系统调用，供 Chromium 在自身用户命名空间内收紧根目录；这不会授予宿主 `CAP_SYS_CHROOT`，内核仍检查调用进程的权限。默认拒绝策略保持不变。
 
 ## GHCR 发布及管理员准备
 

@@ -195,7 +195,7 @@ class SmokeTests(unittest.TestCase):
         for rule in profile["syscalls"]:
             if rule["action"] == "SCMP_ACT_ALLOW" and not rule.get("includes") and not rule.get("args"):
                 allowed.update(rule["names"])
-        self.assertTrue({"clone", "unshare", "setns"}.issubset(allowed))
+        self.assertTrue({"clone", "unshare", "setns", "chroot"}.issubset(allowed))
         clone3 = [rule for rule in profile["syscalls"] if "clone3" in rule["names"]]
         self.assertEqual(len(clone3), 1)
         self.assertEqual(clone3[0]["errnoRet"], 38)

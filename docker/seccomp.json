@@ -57,8 +57,9 @@
 			"errnoRet": 38
 		},
 		{
-			"comment": "Allow create user namespaces",
+			"comment": "Allow Chromium user-namespace creation and its namespace-local chroot",
 			"names": [
+				"chroot",
 				"clone",
 				"setns",
 				"unshare"
