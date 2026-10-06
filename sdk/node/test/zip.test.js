@@ -98,7 +98,8 @@ function mockPlatform(t, platform, arch) {
   Object.defineProperty(process, "platform", { value: platform, configurable: true });
   Object.defineProperty(process, "arch", { value: arch, configurable: true });
   t.after(() => Object.defineProperties(process, descriptors));
-  for (const [key, value] of [["CHROMIX_DOWNLOAD_HOST", host], ["CLOAKBROWSER_BINARY_PATH", ""]]) {
+  for (const [key, value] of [["CHROMIX_DOWNLOAD_HOST", host], ["CLOAKBROWSER_BINARY_PATH", ""],
+    ["CLOAKBROWSER_VERSION", ""], ["CLOAKBROWSER_RELEASE_CHANNEL", ""]]) {
     const original = process.env[key];
     process.env[key] = value;
     t.after(() => {
@@ -113,6 +114,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
   ["darwin", "x64", "mac-x64"], ["darwin", "arm64", "mac-arm64"]]) {
   test(`ZIP download, public API and cache: ${plat}`, async (t) => {
     mockPlatform(t, platform, arch);
+    const tag = plat === "linux-x64" ? "v154.0.8037.97" : "v151.0.7922.173";
     const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
     assert.equal(binary.resolvePlatform(), plat);
     assert.equal(api.binaryInfo(options).installed, false);
@@ -177,6 +179,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"],
 for (const missing of ["launcher", "binary", "directory", "external-link"]) {
   test(`public API rejects incomplete ${plat} cache: ${missing}`, { skip: missing === "external-link" && process.platform === "win32" }, async (t) => {
     mockPlatform(t, platform, arch);
+    const tag = plat === "linux-x64" ? "v154.0.8037.97" : "v151.0.7922.173";
     const root = join(cache, tag, plat);
     const launcher = join(root, binary.ASSETS[plat].launcher), chrome = binary.binaryPath(plat, root);
     mkdirSync(dirname(chrome), { recursive: true });
@@ -280,4 +283,146 @@ test("missing SHA256SUMS retains optional-manifest behavior", async (t) => {
   mockRelease(t, "linux-x64", zipFixture(bundle("linux-x64")), "manifest");
   await binary.ensureNative("linux-x64", host, tag);
   assert.equal(binary.bundleComplete("linux-x64", join(cache, tag, "linux-x64")), true);
+});
+
+for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "arm64", "linux-arm64"],
+  ["win32", "x64", "win-x64"], ["win32", "arm64", "win-arm64"],
+  ["darwin", "x64", "mac-x64"], ["darwin", "arm64", "mac-arm64"]]) {
+  for (const channel of ["", "stable", "latest"]) {
+    test(`platform channel, install and CLI agree: ${plat} ${channel || "default"}`, async (t) => {
+      mockPlatform(t, platform, arch);
+      process.env.CLOAKBROWSER_RELEASE_CHANNEL = channel;
+      const version = plat === "linux-x64" ? "154.0.8037.97" :
+        channel === "latest" ? "152.0.7977.75" : "151.0.7922.173";
+      const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
+      assert.equal(api.binaryInfo().version, version);
+      assert.equal(api.binaryInfo().channel, channel || "stable");
+      const chrome = await api.ensureBinary();
+      assert.equal(chrome, binary.binaryPath(plat, join(cache, `v${version}`, plat)));
+      assert.equal(api.binaryInfo().path, chrome);
+      assert.equal(binary.hostFor(`v${version}`), host);
+      delete process.env.CHROMIX_DOWNLOAD_HOST;
+      assert.equal(binary.hostFor(`v${version}`), `https://github.com/xiaozhou26/Chromix/releases/download/v${version}`);
+      const { execFileSync } = await import("node:child_process");
+      const cli = new URL("../cli.js", import.meta.url).href;
+      for (const command of ["info", "install"]) {
+        const script = `Object.defineProperty(process, "platform", {value: ${JSON.stringify(platform)}});
+          Object.defineProperty(process, "arch", {value: ${JSON.stringify(arch)}});
+          process.argv = [process.execPath, "cli.js", ${JSON.stringify(command)}];
+          await import(${JSON.stringify(cli)});`;
+        const result = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+          encoding: "utf8", env: { ...process.env, CHROMIX_CACHE_DIR: cache },
+        }).trim();
+        if (command === "info") assert.deepEqual(JSON.parse(result), api.binaryInfo());
+        else assert.equal(result, chrome);
+      }
+      assert.equal(urls.length, 2);
+    });
+  }
+
+  for (const [version, expected] of [["151", "151.0.7922.173"], ["152", "152.0.7977.75"],
+    ["151.0.7922.100", "151.0.7922.100"], ["v154.0.8037.97", "154.0.8037.97"],
+    ["154.0.8037.97", "154.0.8037.97"]]) {
+    test(`explicit versions remain independent of channel moves: ${plat} ${version}`, async (t) => {
+      mockPlatform(t, platform, arch);
+      const info = api.binaryInfo({ browserVersion: version });
+      assert.equal(info.version, expected);
+      if (version.includes(".")) assert.equal(info.channel, null);
+      process.env.CLOAKBROWSER_VERSION = version;
+      assert.deepEqual(api.binaryInfo(), info);
+      const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
+      const chrome = await api.ensureBinary({ browserVersion: version });
+      assert.equal(chrome, binary.binaryPath(plat, join(cache, `v${expected}`, plat)));
+      assert.equal(api.binaryInfo().path, chrome);
+      assert.equal(urls.length, 2);
+    });
+  }
+
+  test(`major, invalid selectors and precedence: ${plat}`, async (t) => {
+    mockPlatform(t, platform, arch);
+    if (plat === "linux-x64") assert.equal(api.binaryInfo({ browserVersion: "154" }).version, "154.0.8037.97");
+    else assert.throws(() => api.binaryInfo({ browserVersion: "154" }), /Unsupported browser version/);
+    for (const version of ["15", "999", "152.0", "../154.0.8037.97"]) {
+      assert.throws(() => api.binaryInfo({ browserVersion: version }), /Unsupported browser version/);
+      await assert.rejects(api.ensureBinary({ browserVersion: version }), /Unsupported browser version/);
+    }
+    assert.throws(() => api.binaryInfo({ releaseChannel: "unknown" }), /Unknown release channel/);
+    assert.throws(() => api.binaryInfo({ releaseChannel: "toString" }), /Unknown release channel/);
+    process.env.CLOAKBROWSER_RELEASE_CHANNEL = "latest";
+    assert.equal(api.binaryInfo({ browserVersion: "151" }).channel, "latest");
+    assert.equal(api.binaryInfo({ releaseChannel: "stable" }).channel, "stable");
+    delete process.env.CLOAKBROWSER_RELEASE_CHANNEL;
+    process.env.CLOAKBROWSER_VERSION = "151";
+    assert.equal(api.binaryInfo({ browserVersion: "152" }).version, "152.0.7977.75");
+  });
+
+  test(`local override bypasses selection while info remains metadata: ${plat}`, async (t) => {
+    mockPlatform(t, platform, arch);
+    const local = join(cache, "local-chrome");
+    writeFileSync(local, "local");
+    process.env.CLOAKBROWSER_BINARY_PATH = local;
+    assert.equal(await api.ensureBinary({ browserVersion: "invalid", releaseChannel: "invalid" }), local);
+    const info = api.binaryInfo();
+    assert.equal(info.version, plat === "linux-x64" ? "154.0.8037.97" : "151.0.7922.173");
+    assert.equal(info.installed, false);
+    assert.equal(info.path, null);
+    rmSync(local);
+    await assert.rejects(api.ensureBinary(), /does not exist/);
+  });
+
+  for (const scenario of ["linux-only", "matching", "older", "offline", "prerelease", "draft", "no-assets", "invalid"]) {
+    test(`update requires newer platform asset: ${plat} ${scenario}`, async (t) => {
+      mockPlatform(t, platform, arch);
+      process.env.CLOAKBROWSER_RELEASE_CHANNEL = "latest";
+      const current = plat === "linux-x64" ? "154.0.8037.97" : "152.0.7977.75";
+      let candidate = scenario === "matching" ? "155.0.1.2" : "154.0.8037.97";
+      if (scenario === "older") candidate = "151.0.7922.173";
+      if (scenario === "invalid") candidate = "not-a-version";
+      t.mock.method(globalThis, "fetch", async (url) => {
+        assert.ok(url.endsWith("/releases/latest"));
+        if (scenario === "offline") throw new Error("offline");
+        return Response.json({ tag_name: `v${candidate}`, prerelease: scenario === "prerelease", draft: scenario === "draft",
+          assets: scenario === "no-assets" ? [] : [{ name: binary.ASSETS[scenario === "linux-only" ? "linux-x64" : plat].asset }] });
+      });
+      assert.deepEqual(await api.checkForUpdate(), {
+        currentVersion: current, latestVersion: scenario === "matching" ? candidate : current,
+        updateAvailable: scenario === "matching",
+      });
+      assert.equal((await api.checkForUpdate({ browserVersion: "155.0.1.2", releaseChannel: "stable" })).currentVersion,
+        plat === "linux-x64" ? "154.0.8037.97" : "151.0.7922.173");
+    });
+  }
+}
+
+test("explicit unavailable release fails without falling back", async (t) => {
+  mockPlatform(t, "win32", "arm64");
+  const urls = mockRelease(t, "win-arm64", Buffer.alloc(0), "http");
+  await assert.rejects(api.ensureBinary({ browserVersion: "154.0.8037.97" }), /download failed: 404/);
+  assert.deepEqual(urls, [`${host}/chromix-win-arm64.zip`]);
+  assert.equal(api.binaryInfo({ browserVersion: "154.0.8037.97" }).version, "154.0.8037.97");
+});
+
+test("local override works even on unsupported platforms", async (t) => {
+  mockPlatform(t, "freebsd", "x64");
+  const local = join(cache, "local-chrome");
+  writeFileSync(local, "local");
+  process.env.CLOAKBROWSER_BINARY_PATH = local;
+  assert.equal(await api.ensureBinary(), local);
+  assert.equal(api.binaryInfo().platform, "unknown");
+});
+
+test("updates use exact environment and per-call versions", async (t) => {
+  mockPlatform(t, "linux", "x64");
+  process.env.CLOAKBROWSER_VERSION = "151.0.7922.100";
+  t.mock.method(globalThis, "fetch", async () => Response.json({
+    tag_name: "v154.0.8037.97", assets: [{ name: "chromix-linux-x64.zip" }],
+  }));
+  assert.deepEqual(await api.checkForUpdate(), {
+    currentVersion: "151.0.7922.100", latestVersion: "154.0.8037.97", updateAvailable: true,
+  });
+  assert.deepEqual(await api.checkForUpdate({ browserVersion: "155.0.1.2" }), {
+    currentVersion: "155.0.1.2", latestVersion: "155.0.1.2", updateAvailable: false,
+  });
+  Object.defineProperty(process, "platform", { value: "freebsd", configurable: true });
+  assert.equal((await api.checkForUpdate()).updateAvailable, false);
 });

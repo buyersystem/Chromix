@@ -10,15 +10,49 @@ import yauzl from "yauzl";
 
 export const VERSION = "152.0.7977.82";
 const REPO = "xiaozhou26/Chromix";
-// Release channels track the latest verified binary for each supported major.
-// Source/package versions may move ahead while the staged Chromium build runs.
+// Defaults remain on prior releases until each platform asset is published.
 export const CHANNELS = {
   stable: { tag: "v151.0.7922.173" },
   latest: { tag: "v152.0.7977.75" },
 };
+const PLATFORM_CHANNELS = {
+  "linux-x64": {
+    stable: { tag: "v154.0.8037.97" },
+    latest: { tag: "v154.0.8037.97" },
+  },
+};
 export const CACHE = process.env.CHROMIX_CACHE_DIR || join(homedir(), ".cache", "chromix");
 export const hostFor = (tag) => process.env.CHROMIX_DOWNLOAD_HOST
   || `https://github.com/${REPO}/releases/download/${tag}`;
+
+export function resolveRelease(plat, browserVersion, releaseChannel) {
+  const channels = PLATFORM_CHANNELS[plat] || CHANNELS;
+  const ver = browserVersion || process.env.CLOAKBROWSER_VERSION;
+  const ch = releaseChannel || process.env.CLOAKBROWSER_RELEASE_CHANNEL;
+  if (ch) {
+    if (!Object.hasOwn(channels, ch)) throw new Error(`Unknown release channel: ${ch}`);
+    return { channel: ch, tag: channels[ch].tag };
+  }
+  if (!ver) return { channel: "stable", tag: channels.stable.tag };
+  if (/^v?[0-9]+(?:\.[0-9]+){3}$/.test(ver))
+    return { channel: null, tag: `v${ver.replace(/^v/, "")}` };
+  if (/^v?[0-9]+$/.test(ver)) {
+    const major = ver.replace(/^v/, "");
+    for (const [name, spec] of Object.entries(channels))
+      if (spec.tag.slice(1).split(".")[0] === major) return { channel: name, tag: spec.tag };
+    for (const spec of Object.values(CHANNELS))
+      if (spec.tag.slice(1).split(".")[0] === major) return { channel: null, tag: spec.tag };
+  }
+  throw new Error(`Unsupported browser version for ${plat}: ${ver}; use a known major or exact four-part version`);
+}
+
+export function newerVersion(candidate, current) {
+  if (!/^v?[0-9]+(?:\.[0-9]+){3}$/.test(candidate)) return false;
+  const parts = (tag) => tag.replace(/^v/, "").split(".").map(Number);
+  const a = parts(candidate), b = parts(current);
+  const index = a.findIndex((part, i) => part !== b[i]);
+  return index !== -1 && a[index] > b[index];
+}
 
 // platform key -> { asset, kind, launcher }
 export const ASSETS = {

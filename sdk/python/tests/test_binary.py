@@ -1,6 +1,7 @@
 """Offline download/extraction integration tests using real ZIP fixtures."""
 import hashlib
 import io
+import json
 import os
 import stat
 import sys
@@ -59,7 +60,8 @@ def cache(tmp_path, monkeypatch):
     monkeypatch.setattr(binary, "_CACHE", root)
     monkeypatch.setattr(api, "_CACHE", root)
     monkeypatch.setenv("CHROMIX_DOWNLOAD_HOST", HOST)
-    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
+    for name in ("CLOAKBROWSER_BINARY_PATH", "CLOAKBROWSER_VERSION", "CLOAKBROWSER_RELEASE_CHANNEL"):
+        monkeypatch.delenv(name, raising=False)
     return root
 
 
@@ -100,17 +102,18 @@ def test_zip_download_public_api_and_cache(cache, monkeypatch, system, machine, 
     assert binary.resolve_platform() == plat
     assert binary._ASSETS[plat][:2] == (f"chromix-{plat}.zip", "zip")
     assert not api.binary_info(release_channel="stable")["installed"]
-    root = cache / TAG / plat
+    tag = "v154.0.8037.97" if plat == "linux-x64" else TAG
+    root = cache / tag / plat
     chrome = binary._binary_path(plat, root)
     assert api.ensure_binary(release_channel="stable") == chrome
     assert chrome.read_bytes() == b"chrome fixture"
     info = api.binary_info(release_channel="stable")
     assert info["platform"] == plat
     assert info["installed"] and info["path"] == str(chrome)
-    assert binary._download(plat, HOST, TAG) == root / binary._ASSETS[plat][2]
+    assert binary._download(plat, HOST, tag) == root / binary._ASSETS[plat][2]
     assert api.ensure_binary(release_channel="stable") == chrome
     assert urls == [f"{HOST}/{binary._ASSETS[plat][0]}", f"{HOST}/SHA256SUMS"]
-    assert list((cache / TAG).iterdir()) == [root]
+    assert list((cache / tag).iterdir()) == [root]
     assert not (root / binary._ASSETS[plat][0]).exists()
     if plat.startswith("mac-"):
         assert chrome.relative_to(root).as_posix() == "chromix/Chromium.app/Contents/MacOS/Chromium"
@@ -193,7 +196,8 @@ def test_public_api_rejects_incomplete_cache(cache, monkeypatch, plat, missing):
     if missing == "external-link" and os.name == "nt":
         pytest.skip("POSIX symlink fixture")
     monkeypatch.setattr(api, "resolve_platform", lambda: plat)
-    root = cache / TAG / plat
+    tag = "v154.0.8037.97" if plat == "linux-x64" else TAG
+    root = cache / tag / plat
     launcher = root / binary._ASSETS[plat][2]
     chrome = binary._binary_path(plat, root)
     chrome.parent.mkdir(parents=True)
@@ -308,3 +312,154 @@ def test_missing_manifest_keeps_optional_verification(cache, monkeypatch):
     mock_release(monkeypatch, "linux-x64", zip_fixture(bundle("linux-x64")), "manifest")
     binary._download("linux-x64", HOST, TAG)
     assert binary._bundle_complete("linux-x64", cache / TAG / "linux-x64")
+
+
+@pytest.mark.parametrize("system,machine,plat", PLATFORMS)
+@pytest.mark.parametrize("channel", [None, "stable", "latest"])
+def test_platform_channels_info_install_and_cli(cache, monkeypatch, capsys, system, machine, plat, channel):
+    from chromix.__main__ import main
+
+    monkeypatch.setattr(binary.platform, "system", lambda: system)
+    monkeypatch.setattr(binary.platform, "machine", lambda: machine)
+    if channel:
+        monkeypatch.setenv("CLOAKBROWSER_RELEASE_CHANNEL", channel)
+    expected = ("154.0.8037.97" if plat == "linux-x64" else
+                "152.0.7977.75" if channel == "latest" else "151.0.7922.173")
+    monkeypatch.delenv("CHROMIX_DOWNLOAD_HOST")
+    calls = []
+
+    def download(platform, host, tag):
+        calls.append((platform, host, tag))
+        assert platform == plat
+        assert tag == f"v{expected}"
+        assert host == f"https://github.com/xiaozhou26/Chromix/releases/download/{tag}"
+        root = cache / tag / plat
+        chrome = binary._binary_path(plat, root)
+        chrome.parent.mkdir(parents=True, exist_ok=True)
+        chrome.write_text("fixture")
+        (root / binary._ASSETS[plat][2]).write_text("launcher")
+
+    monkeypatch.setattr(api, "_download", download)
+    assert api.binary_info()["version"] == expected
+    assert api.binary_info()["channel"] == (channel or "stable")
+    chrome = api.ensure_binary()
+    assert api.binary_info()["path"] == str(chrome)
+    monkeypatch.setattr(sys, "argv", ["chromix", "info"])
+    main()
+    assert json.loads(capsys.readouterr().out)["version"] == expected
+    monkeypatch.setattr(sys, "argv", ["chromix", "install"])
+    main()
+    assert capsys.readouterr().out.strip() == str(chrome)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("system,machine,plat", PLATFORMS)
+@pytest.mark.parametrize("version,expected", [
+    ("151", "151.0.7922.173"), ("152", "152.0.7977.75"),
+    ("151.0.7922.100", "151.0.7922.100"), ("v154.0.8037.97", "154.0.8037.97"),
+    ("154.0.8037.97", "154.0.8037.97"),
+])
+def test_explicit_versions_do_not_follow_new_default(cache, monkeypatch, system, machine, plat, version, expected):
+    monkeypatch.setattr(api, "resolve_platform", lambda: plat)
+    info = api.binary_info(browser_version=version)
+    assert info["version"] == expected
+    if "." in version:
+        assert info["channel"] is None
+    monkeypatch.setenv("CLOAKBROWSER_VERSION", version)
+    assert api.binary_info() == info
+    urls = mock_release(monkeypatch, plat, zip_fixture(bundle(plat)))
+    chrome = api.ensure_binary(browser_version=version)
+    assert chrome == binary._binary_path(plat, cache / f"v{expected}" / plat)
+    assert api.binary_info()["path"] == str(chrome)
+    assert len(urls) == 2
+
+
+@pytest.mark.parametrize("plat", binary._ASSETS)
+def test_major_and_invalid_selectors(cache, monkeypatch, plat):
+    monkeypatch.setattr(api, "resolve_platform", lambda: plat)
+    if plat == "linux-x64":
+        assert api.binary_info(browser_version="154")["version"] == "154.0.8037.97"
+    else:
+        with pytest.raises(ValueError, match="Unsupported browser version"):
+            api.binary_info(browser_version="154")
+    for version in ("15", "999", "152.0", "../154.0.8037.97"):
+        with pytest.raises(ValueError, match="Unsupported browser version"):
+            api.binary_info(browser_version=version)
+        with pytest.raises(ValueError):
+            api.ensure_binary(browser_version=version)
+    with pytest.raises(ValueError, match="Unknown release channel"):
+        api.binary_info(release_channel="unknown")
+    monkeypatch.setenv("CLOAKBROWSER_RELEASE_CHANNEL", "latest")
+    assert api.binary_info(browser_version="151")["channel"] == "latest"
+    assert api.binary_info(release_channel="stable")["channel"] == "stable"
+    monkeypatch.delenv("CLOAKBROWSER_RELEASE_CHANNEL")
+    monkeypatch.setenv("CLOAKBROWSER_VERSION", "151")
+    assert api.binary_info(browser_version="152")["version"] == "152.0.7977.75"
+
+
+@pytest.mark.parametrize("plat", [*binary._ASSETS, None])
+def test_local_override_bypasses_resolution_but_info_stays_metadata(cache, monkeypatch, plat):
+    monkeypatch.setattr(api, "resolve_platform", lambda: plat)
+    local = cache / "local-chrome"
+    local.write_text("local")
+    monkeypatch.setenv("CLOAKBROWSER_BINARY_PATH", str(local))
+    assert api.ensure_binary(browser_version="invalid", release_channel="invalid") == local
+    info = api.binary_info()
+    assert info["version"] == ("154.0.8037.97" if plat == "linux-x64" else "151.0.7922.173")
+    assert not info["installed"] and info["path"] is None
+    local.unlink()
+    with pytest.raises(FileNotFoundError):
+        api.ensure_binary()
+
+
+@pytest.mark.parametrize("plat", binary._ASSETS)
+@pytest.mark.parametrize("case", ["linux-only", "matching", "older", "offline", "prerelease", "draft", "no-assets", "invalid"])
+def test_update_requires_newer_platform_asset(cache, monkeypatch, plat, case):
+    monkeypatch.setattr(api, "resolve_platform", lambda: plat)
+    monkeypatch.setenv("CLOAKBROWSER_RELEASE_CHANNEL", "latest")
+    current = "154.0.8037.97" if plat == "linux-x64" else "152.0.7977.75"
+    candidate = "155.0.1.2" if case == "matching" else "154.0.8037.97"
+    if case == "older":
+        candidate = "151.0.7922.173"
+    if case == "invalid":
+        candidate = "not-a-version"
+    release = {"tag_name": f"v{candidate}", "prerelease": case == "prerelease", "draft": case == "draft",
+               "assets": [{"name": binary._ASSETS["linux-x64" if case == "linux-only" else plat][0]}]}
+
+    if case == "no-assets":
+        release["assets"] = []
+
+    def urlopen(request, timeout):
+        assert request.full_url.endswith("/releases/latest")
+        if case == "offline":
+            raise OSError("offline")
+        return io.BytesIO(json.dumps(release).encode())
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", urlopen)
+    update = api.check_for_update()
+    assert update == {"current_version": current, "latest_version": candidate if case == "matching" else current,
+                      "update_available": case == "matching"}
+    assert api.check_for_update(browser_version="155.0.1.2", release_channel="stable")["current_version"] == (
+        "154.0.8037.97" if plat == "linux-x64" else "151.0.7922.173")
+
+
+def test_explicit_missing_release_never_falls_back(cache, monkeypatch):
+    monkeypatch.setattr(api, "resolve_platform", lambda: "win-arm64")
+    urls = mock_release(monkeypatch, "win-arm64", b"", "http")
+    with pytest.raises(urllib.error.HTTPError):
+        api.ensure_binary(browser_version="154.0.8037.97")
+    assert urls == [f"{HOST}/chromix-win-arm64.zip"]
+    assert api.binary_info(browser_version="154.0.8037.97")["version"] == "154.0.8037.97"
+
+
+def test_update_uses_exact_environment_and_per_call_versions(cache, monkeypatch):
+    monkeypatch.setattr(api, "resolve_platform", lambda: "linux-x64")
+    monkeypatch.setenv("CLOAKBROWSER_VERSION", "151.0.7922.100")
+    release = {"tag_name": "v154.0.8037.97", "assets": [{"name": "chromix-linux-x64.zip"}]}
+    monkeypatch.setattr(api.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO(json.dumps(release).encode()))
+    assert api.check_for_update() == {"current_version": "151.0.7922.100", "latest_version": "154.0.8037.97",
+                                     "update_available": True}
+    assert api.check_for_update(browser_version="155.0.1.2") == {
+        "current_version": "155.0.1.2", "latest_version": "155.0.1.2", "update_available": False}
+    monkeypatch.setattr(api, "resolve_platform", lambda: None)
+    assert not api.check_for_update()["update_available"]

@@ -38,7 +38,7 @@ class LicenseMetadataRegressionTest(unittest.TestCase):
     def test_node_package_includes_license_and_repository_metadata(self):
         package = json.loads(NODE_PACKAGE.read_text(encoding="utf-8"))
         self.assertEqual(package["name"], "@xiaoxiaofeihh/chromix")
-        self.assertEqual(package["version"], "0.1.0")
+        self.assertEqual(package["version"], "0.1.1")
         self.assertEqual(package["publishConfig"]["access"], "public")
         self.assertEqual(package["license"], "BSD-3-Clause")
         self.assertIn("LICENSE", package["files"])

@@ -508,7 +508,7 @@ environment variables have a Chromix equivalent.
 |---|---|
 | `CLOAKBROWSER_BINARY_PATH` | Local executable; bypasses download |
 | `CLOAKBROWSER_RELEASE_CHANNEL` | Selects a built-in channel: `stable` (default) or `latest` |
-| `CLOAKBROWSER_VERSION` | Selects a built-in channel by Chromium major; not an arbitrary exact-version pin |
+| `CLOAKBROWSER_VERSION` | Known Chromium major or exact four-part version (optional `v` prefix) |
 | `CLOAKBROWSER_GEOIP_TIMEOUT_SECONDS` | GeoIP timeout, default `10`; must be >0 and <=60 |
 | `CLOAKBROWSER_WIDEVINE_CDM` | Explicit Widevine CDM directory |
 | `CLOAKBROWSER_WIDEVINE=0` | Disables automatic CDM setup |
@@ -516,11 +516,51 @@ environment variables have a Chromix equivalent.
 | `CHROMIX_DOWNLOAD_HOST` | Release asset directory URL, including its `SHA256SUMS` |
 
 `browserVersion` / `releaseChannel` are the per-call equivalents of the version
-and channel variables. A recognized channel takes precedence over a version;
-unmatched values fall back to `stable`. Channel tags are defined in the installed
-SDK, not dynamically selected from the newest release. `binaryInfo()` reports
-that channel's cache metadata, not a probe of a local executable override.
-`checkForUpdate()` reports availability; it does not install an update.
+and channel variables. Each per-call value overrides its corresponding environment
+variable. A selected channel takes precedence over a version, including a channel
+set in the environment; unset `CLOAKBROWSER_RELEASE_CHANNEL` to select by version.
+Unknown channels, unsupported majors, and malformed versions raise an error
+instead of silently selecting a different browser.
+
+Channel tags are built into the installed SDK and resolved independently by platform:
+
+| Platform | `stable` (default) | `latest` |
+|---|---|---|
+| Linux x64 | `v154.0.8037.97` | `v154.0.8037.97` |
+| Linux arm64 | `v151.0.7922.173` | `v152.0.7977.75` |
+| Windows x64 / arm64 | `v151.0.7922.173` | `v152.0.7977.75` |
+| macOS x64 / arm64 | `v151.0.7922.173` | `v152.0.7977.75` |
+
+Only Linux x64 has the published Chromium 154 asset in this rollout. The other
+platforms retain their prior channel mappings; `latest` does not mean GitHub's
+globally newest release. Major `151` still selects `v151.0.7922.173`, and `152`
+selects `v152.0.7977.75`, including on Linux x64. Major `154` is available only
+on Linux x64. A full version such as `154.0.8037.97` or `v154.0.8037.97` pins
+that exact release tag on any platform: it never substitutes the channel's patch
+version. Explicit pins require a published asset for that platform (or a complete
+cached bundle); missing assets fail without falling back to another version.
+
+`binaryInfo()` and CLI `info` report the same selected release/cache metadata used
+by installation, not the version of `CLOAKBROWSER_BINARY_PATH`. The `channel`
+field is null for exact pins or historical majors no longer represented by a
+platform's channels. A local executable override still bypasses downloading and
+version/channel validation for installation and launch, even on unsupported hosts.
+
+`checkForUpdate()` accepts the same version/channel selectors and compares the
+selected tag, not a probed executable, with GitHub's latest release. It reports
+an update only when that release has a newer four-part version and the current
+platform's asset. Missing assets, older releases, and offline checks leave the
+reported latest version at the selected version. It does not install an update
+or change the built-in channel mapping.
+
+### Upgrade from this checkout
+
+These mappings require this SDK checkout; an already installed registry package
+does not acquire them automatically. From the repository root,
+install the updated Node SDK with `npm install ./sdk/node`, then run
+`./node_modules/.bin/chromix info` and `./node_modules/.bin/chromix install`.
+Changing browser-channel mappings does not itself publish a PyPI or npm package.
+SDK package versioning and registry publication are separate release decisions.
 
 ## CLI
 

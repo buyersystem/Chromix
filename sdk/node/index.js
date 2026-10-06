@@ -21,8 +21,8 @@ import { existsSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { profileSeed } from "./_profile.js";
 import {
-  VERSION as BROWSER_VERSION, CHANNELS, CACHE, hostFor, resolvePlatform, ensureNative,
-  binaryPath, bundleComplete,
+  VERSION as BROWSER_VERSION, ASSETS, CACHE, hostFor, resolvePlatform, ensureNative,
+  binaryPath, bundleComplete, resolveRelease, newerVersion,
 } from "./_binary.js";
 import { fontLaunchEnv, fontDirWhitelistArg } from "./_fonts.js";
 import { ensurePersonaGeometry } from "./_persona.js";
@@ -61,7 +61,7 @@ function personaGeometryFor(options) {
   return entry;
 }
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 export const CHROMIUM_VERSION = "152";
 export const CHROMIUM_BUILD_VERSION = BROWSER_VERSION;
 export const DEFAULT_VIEWPORT = { width: 1920, height: 947 };
@@ -74,17 +74,6 @@ function chromeBinaryPath(plat, tag) {
   return binaryPath(plat, join(CACHE, tag, plat));
 }
 
-function channelFor(browserVersion, releaseChannel) {
-  const ver = browserVersion || process.env.CLOAKBROWSER_VERSION;
-  const ch = releaseChannel || process.env.CLOAKBROWSER_RELEASE_CHANNEL;
-  if (CHANNELS[ch]) return ch;
-  if (ver) {
-    for (const [name, spec] of Object.entries(CHANNELS))
-      if (spec.tag.replace(/^v/, "").startsWith(ver.split(".")[0])) return name;
-  }
-  return "stable";
-}
-
 export async function ensureBinary({ browserVersion, releaseChannel } = {}) {
   const explicit = process.env.CLOAKBROWSER_BINARY_PATH;
   if (explicit) {
@@ -93,8 +82,7 @@ export async function ensureBinary({ browserVersion, releaseChannel } = {}) {
   }
   const plat = resolvePlatform();
   if (!plat) throw new Error("No native Chromix binary for this platform (Linux x64/arm64, Windows x64/arm64, macOS x64/arm64); or point CLOAKBROWSER_BINARY_PATH at a local build.");
-  const ch = channelFor(browserVersion, releaseChannel);
-  const tag = CHANNELS[ch].tag;
+  const { tag } = resolveRelease(plat, browserVersion, releaseChannel);
   const chrome = chromeBinaryPath(plat, tag);
   await ensureNative(plat, hostFor(tag), tag);
   if (!existsSync(chrome)) throw new Error(`bundle extracted but chrome binary missing: ${chrome}`);
@@ -102,9 +90,8 @@ export async function ensureBinary({ browserVersion, releaseChannel } = {}) {
 }
 
 export function binaryInfo({ browserVersion, releaseChannel } = {}) {
-  const ch = channelFor(browserVersion, releaseChannel);
-  const tag = CHANNELS[ch].tag;
   const plat = resolvePlatform() || "unknown";
+  const { channel: ch, tag } = resolveRelease(plat, browserVersion, releaseChannel);
   const path = chromeBinaryPath(plat, tag);
   const installed = bundleComplete(plat, join(CACHE, tag, plat));
   return { tier: "open-source", version: tag.replace(/^v/, ""), channel: ch,
@@ -114,13 +101,20 @@ export function binaryInfo({ browserVersion, releaseChannel } = {}) {
 
 export function clearCache() { rmSync(CACHE, { recursive: true, force: true }); }
 
-export async function checkForUpdate() {
-  const current = CHANNELS.stable.tag;
+export async function checkForUpdate({ browserVersion, releaseChannel } = {}) {
+  const plat = resolvePlatform() || "unknown";
+  const { tag: current } = resolveRelease(plat, browserVersion, releaseChannel);
   let latest = current;
   try {
     const r = await fetch("https://api.github.com/repos/xiaozhou26/Chromix/releases/latest",
       { headers: { Accept: "application/vnd.github+json" } });
-    if (r.ok) latest = (await r.json()).tag_name || current;
+    if (r.ok) {
+      const release = await r.json();
+      const asset = ASSETS[plat]?.asset;
+      if (asset && release.assets?.some((item) => item.name === asset) &&
+          !release.draft && !release.prerelease && newerVersion(release.tag_name, current))
+        latest = release.tag_name;
+    }
   } catch { /* offline */ }
   return { currentVersion: current.replace(/^v/, ""), latestVersion: latest.replace(/^v/, ""),
            updateAvailable: latest !== current };

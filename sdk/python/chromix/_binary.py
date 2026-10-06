@@ -17,14 +17,50 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 _REPO = "xiaozhou26/Chromix"
-# Release channels track the latest verified binary for each supported major.
-# Source/package versions may move ahead while the staged Chromium build runs.
+# Defaults remain on prior releases until each platform asset is published.
 _CHANNELS = {
     "stable": {"tag": "v151.0.7922.173"},
     "latest": {"tag": "v152.0.7977.75"},
 }
+_PLATFORM_CHANNELS = {
+    "linux-x64": {
+        "stable": {"tag": "v154.0.8037.97"},
+        "latest": {"tag": "v154.0.8037.97"},
+    },
+}
 _CACHE = Path(os.environ.get("CHROMIX_CACHE_DIR",
                              Path.home() / ".cache" / "chromix"))
+
+
+def _resolve_release(plat: str, browser_version: str | None = None,
+                     release_channel: str | None = None) -> tuple[str | None, str]:
+    """Resolve platform channels, known majors, or an exact four-part tag."""
+    channels = _PLATFORM_CHANNELS.get(plat, _CHANNELS)
+    ver = browser_version or os.environ.get("CLOAKBROWSER_VERSION")
+    ch = release_channel or os.environ.get("CLOAKBROWSER_RELEASE_CHANNEL")
+    if ch:
+        if ch not in channels:
+            raise ValueError(f"Unknown release channel: {ch}")
+        return ch, channels[ch]["tag"]
+    if not ver:
+        return "stable", channels["stable"]["tag"]
+    if re.fullmatch(r"v?[0-9]+(?:\.[0-9]+){3}", ver):
+        return None, "v" + ver.lstrip("v")
+    if re.fullmatch(r"v?[0-9]+", ver):
+        major = ver.lstrip("v")
+        for name, spec in channels.items():
+            if spec["tag"][1:].split(".")[0] == major:
+                return name, spec["tag"]
+        for spec in _CHANNELS.values():
+            if spec["tag"][1:].split(".")[0] == major:
+                return None, spec["tag"]
+    raise ValueError(f"Unsupported browser version for {plat}: {ver}; use a known major or exact four-part version")
+
+
+def _version_parts(tag: str) -> tuple[int, ...]:
+    if not re.fullmatch(r"v?[0-9]+(?:\.[0-9]+){3}", tag):
+        return ()
+    return tuple(map(int, tag.lstrip("v").split(".")))
 
 
 def _host(tag: str) -> str:

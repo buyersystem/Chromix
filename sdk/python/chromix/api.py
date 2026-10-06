@@ -29,7 +29,8 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from ._binary import (
-    _CACHE, _CHANNELS, _binary_path, _bundle_complete, _download, _host, resolve_platform,
+    _ASSETS, _CACHE, _binary_path, _bundle_complete, _download, _host,
+    _resolve_release, _version_parts, resolve_platform,
 )
 from ._fonts import apply_font_env, font_dir_whitelist_arg
 from ._socks_auth import native_socks_config, apply_native_socks_auth
@@ -68,18 +69,6 @@ class ProxySettings(_ProxySettingsRequired, total=False):
 # Binary management (CLOAKBROWSER_* env aliases)
 # ---------------------------------------------------------------------------
 
-def _channel_for(browser_version: str | None, release_channel: str | None) -> str:
-    ver = browser_version or os.environ.get("CLOAKBROWSER_VERSION")
-    ch = release_channel or os.environ.get("CLOAKBROWSER_RELEASE_CHANNEL")
-    if ch in _CHANNELS:
-        return ch
-    if ver:
-        for name, spec in _CHANNELS.items():
-            if spec["tag"].lstrip("v").startswith(ver.split(".")[0]):
-                return name
-    return "stable"
-
-
 def _chrome_binary(plat: str, tag: str) -> Path:
     return _binary_path(plat, _CACHE / tag / plat)
 
@@ -102,8 +91,7 @@ def ensure_binary(license_key: str | None = None,
         raise RuntimeError(
             "No native Chromix binary for this platform (Linux x64/arm64, "
             "Windows x64/arm64, macOS x64/arm64); or point CLOAKBROWSER_BINARY_PATH at a local build.")
-    ch = _channel_for(browser_version, release_channel)
-    tag = _CHANNELS[ch]["tag"]
+    _, tag = _resolve_release(plat, browser_version, release_channel)
     chrome = _chrome_binary(plat, tag)
     _download(plat, _host(tag), tag)
     if not chrome.exists():
@@ -113,9 +101,8 @@ def ensure_binary(license_key: str | None = None,
 
 def binary_info(browser_version: str | None = None,
                 release_channel: str | None = None) -> dict:
-    ch = _channel_for(browser_version, release_channel)
-    tag = _CHANNELS[ch]["tag"]
     plat = resolve_platform() or "unknown"
+    ch, tag = _resolve_release(plat, browser_version, release_channel)
     chrome = _chrome_binary(plat, tag)
     installed = _bundle_complete(plat, _CACHE / tag / plat)
     return {
@@ -134,16 +121,24 @@ def clear_cache() -> None:
         shutil.rmtree(_CACHE, ignore_errors=True)
 
 
-def check_for_update() -> dict:
-    """Compare the installed stable tag against the latest GitHub release."""
-    current = _CHANNELS["stable"]["tag"]
+def check_for_update(browser_version: str | None = None,
+                     release_channel: str | None = None) -> dict:
+    """Check whether the latest release has a newer asset for this platform."""
+    plat = resolve_platform() or "unknown"
+    _, current = _resolve_release(plat, browser_version, release_channel)
     latest = current
     try:
         req = urllib.request.Request(
             "https://api.github.com/repos/xiaozhou26/Chromix/releases/latest",
             headers={"Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(req, timeout=15) as r:
-            latest = json.load(r).get("tag_name", current)
+            release = json.load(r)
+            candidate = release.get("tag_name", "")
+            asset = _ASSETS.get(plat, (None,))[0]
+            if (asset and any(item.get("name") == asset for item in release.get("assets", []))
+                    and not release.get("draft") and not release.get("prerelease")
+                    and _version_parts(candidate) > _version_parts(current)):
+                latest = candidate
     except Exception:
         pass
     return {"current_version": current.lstrip("v"),
