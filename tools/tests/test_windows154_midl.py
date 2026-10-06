@@ -49,9 +49,9 @@ ARM_IDENTITY = {
     "head_branch": "154.0.8037.97-1.1", "event": "push",
     "workflow_path": ".github/workflows/build-arm.yml",
     "run_id": 37100793757,
-    "artifact_id": 11374949381, "artifact_name": "build-artifact-arm",
-    "artifact_digest": "sha256:cc18df9a9169f62520fd21f52b27105a49a20a07004688c35f1a4c0a4cd1c66f",
-    "artifact_size_in_bytes": 15738033821,
+    "artifact_id": 11400140219, "artifact_name": "build-artifact-arm",
+    "artifact_digest": "sha256:51e706c5f85603616ea808eb0a8b8baa9114635bdfd90bcc4135aa591b8d3132",
+    "artifact_size_in_bytes": 16217698638,
 }
 
 IDENTITY = {
@@ -159,6 +159,25 @@ class Windows154MidlIdentityTest(unittest.TestCase):
         result = self.apply(arch="arm64", identity=ARM_IDENTITY)
         self.assertEqual(result["status"], "repaired")
         self.assertEqual(json.loads((self.src / repair.RECORD).read_text())["identity"], ARM_IDENTITY)
+
+    def test_arm64_manifest_restore_identity_matches_final_repair_pin(self):
+        from tools.fetch_upstream_cache import ROOT
+        from tools.restore_upstream_cache import identities
+
+        identity, _, _ = identities(ROOT, "windows", "arm64")
+        self.assertEqual(identity, ARM_IDENTITY)
+        self.assertEqual(self.apply(arch="arm64", identity=identity)["status"], "repaired")
+
+    def test_old_arm64_checkpoint_is_rejected_before_output_deletion(self):
+        _, outputs = self.outputs()
+        old = dict(ARM_IDENTITY, artifact_id=11374949381,
+                   artifact_digest="sha256:cc18df9a9169f62520fd21f52b27105a49a20a07004688c35f1a4c0a4cd1c66f",
+                   artifact_size_in_bytes=15738033821)
+        with self.assertRaisesRegex(ValueError, "unverified Windows154 MIDL upstream identity"):
+            self.apply(arch="arm64", identity=old)
+        self.assertEqual(self.script.read_bytes(), self.original)
+        self.assertTrue(all(path.read_bytes() == b"stale" for path in outputs))
+        self.assertFalse((self.src / repair.RECORD).exists())
 
     def test_unknown_partial_crlf_and_corrupted_pin_rejected_before_output_deletion(self):
         _, outputs = self.outputs()

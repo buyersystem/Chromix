@@ -360,5 +360,62 @@ class Arm64UpstreamCacheTest(unittest.TestCase):
             client.download.assert_not_called()
 
 
+class FinalArm64UpstreamCacheTest(unittest.TestCase):
+    def setUp(self):
+        self.pin, self.identity = cache.load_manifest("windows", "arm64", 37100793757)
+        self.now = datetime(2026, 10, 6, 11, tzinfo=timezone.utc)
+        self.run, self.artifact = fixtures.metadata(self.pin)
+        self.run.update(run_attempt=2)
+        self.artifact.update(created_at="2026-10-06T08:39:51Z")
+
+    def test_final_pin_requires_no_checkpoint_producer(self):
+        self.assertEqual(self.pin["artifact"], {
+            "id": 11400140219, "name": "build-artifact-arm", "size_in_bytes": 16217698638,
+            "digest": "sha256:51e706c5f85603616ea808eb0a8b8baa9114635bdfd90bcc4135aa591b8d3132",
+            "expires_at": "2026-10-10T08:37:38Z", "inner_archive": "artifacts.zip",
+            "run_id": 37100793757, "workflow_path": ".github/workflows/build-arm.yml",
+        })
+        for value in (self.pin, self.pin["artifact"], self.identity):
+            self.assertFalse(cache.CHECKPOINT_FIELDS.intersection(value))
+        cache.validate_metadata(self.pin, self.run, self.artifact, self.now)
+
+    def test_final_pin_rejects_moving_failed_expired_or_old_artifact(self):
+        for status, conclusion in (("in_progress", None), ("queued", None),
+                                   ("completed", "failure"), ("completed", "cancelled"),
+                                   ("completed", None)):
+            with self.subTest(status=status, conclusion=conclusion), self.assertRaisesRegex(
+                    cache.CacheMiss, "untrusted_run"):
+                cache.validate_metadata(self.pin, dict(self.run, status=status, conclusion=conclusion),
+                                        self.artifact, self.now)
+        for patch, reason in (
+            ({"id": 11374949381}, "artifact_mismatch"),
+            ({"digest": "sha256:cc18df9a9169f62520fd21f52b27105a49a20a07004688c35f1a4c0a4cd1c66f"},
+             "artifact_mismatch"),
+            ({"size_in_bytes": 15738033821}, "artifact_mismatch"),
+            ({"expired": True}, "artifact_expired"),
+            ({"expires_at": self.now.isoformat()}, "artifact_expired"),
+        ):
+            with self.subTest(patch=patch), self.assertRaisesRegex(cache.CacheMiss, reason):
+                cache.validate_metadata(self.pin, self.run, dict(self.artifact, **patch), self.now)
+
+    def test_final_fetch_checks_run_and_artifact_without_checkpoint_api(self):
+        client = mock.Mock()
+        client.json.side_effect = (self.run, self.artifact)
+        client.download.side_effect = cache.CacheMiss("metadata_verified")
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(cache, "datetime", wraps=datetime) as clock, \
+                mock.patch.object(cache.shutil, "disk_usage", return_value=mock.Mock(free=1024**4)), \
+                mock.patch("sys.stderr", new=io.StringIO()):
+            clock.now.return_value = self.now
+            result = cache.fetch("windows", "arm64", Path(temporary), 37100793757, client=client)
+        self.assertEqual(result["reason"], "metadata_verified")
+        base = "/repos/ungoogled-software/ungoogled-chromium-windows/actions"
+        self.assertEqual(client.json.call_args_list, [
+            mock.call(base + "/runs/37100793757"),
+            mock.call(base + "/artifacts/11400140219"),
+        ])
+        client.download.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

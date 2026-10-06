@@ -91,17 +91,14 @@
           "inner_archive": "artifacts.zip"
         },
         "arm64": {
-          "id": 11374949381,
+          "id": 11400140219,
           "name": "build-artifact-arm",
-          "size_in_bytes": 15738033821,
-          "digest": "sha256:cc18df9a9169f62520fd21f52b27105a49a20a07004688c35f1a4c0a4cd1c66f",
-          "expires_at": "2026-10-09T22:36:50Z",
+          "size_in_bytes": 16217698638,
+          "digest": "sha256:51e706c5f85603616ea808eb0a8b8baa9114635bdfd90bcc4135aa591b8d3132",
+          "expires_at": "2026-10-10T08:37:38Z",
           "inner_archive": "artifacts.zip",
           "run_id": 37100793757,
-          "workflow_path": ".github/workflows/build-arm.yml",
-          "run_attempt": 2,
-          "producer_job_id": 111901972002,
-          "producer_job_name": "build / build-12"
+          "workflow_path": ".github/workflows/build-arm.yml"
         }
       }
     }
