@@ -43,7 +43,7 @@ Chromix 在固定版本的 Chromium、ungoogled 核心及平台层之上维护�
 
 选择下面任一种 SDK。SDK 优先使用显式配置的本地可执行文件，否则按**代码内配置的发布通道**下载浏览器并缓存。
 
-> SDK 的 `latest` 是固定版本映射，与 GitHub 的 Latest Release 分开维护。要使用指定版本（例如 `v154.0.8037.57`），请下载对应发布包并设置 `CLOAKBROWSER_BINARY_PATH`，或使用固定版本的 [Docker 镜像](docs/docker.md)。更新 SDK 不会替换显式指定的浏览器。
+> SDK 的 `latest` 是固定版本映射，与 GitHub 的 Latest Release 分开维护。要使用指定版本（例如 `v154.0.8037.97`），请下载对应发布包并设置 `CLOAKBROWSER_BINARY_PATH`，或使用固定版本的 [Docker 镜像](docs/docker.md)。更新 SDK 不会替换显式指定的浏览器。
 
 ### Python
 
@@ -121,14 +121,14 @@ Puppeteer 的启动参数和 context 生命周期与 Playwright 有区别，详�
 
 ### Docker / Linux
 
-容器 `latest` 按架构独立升级：**amd64 使用 `154.0.8037.97`，arm64 保留 `154.0.8037.57`**。Docker 平台 `amd64` 对应发布资产 `linux-x64`，`arm64` 对应 `linux-arm64`。制作镜像时复用现有二进制，无需再次编译 Chromium。
+已发布的 Docker 镜像中，`latest` 与 `154.0.8037.97` 标签为 **amd64 和 arm64 均提供 `154.0.8037.97`**。Docker 平台 `amd64` 对应发布资产 `linux-x64`，`arm64` 对应 `linux-arm64`。制作镜像时复用现有二进制，无需再次编译 Chromium。
 
 ```bash
 docker pull ghcr.io/xiaozhou26/chromix:latest
 docker run --rm ghcr.io/xiaozhou26/chromix:latest --version
 ```
 
-`latest` 为当前双架构入口。`154.0.8037.97` 标签仅含 amd64，原有 `154.0.8037.57` 双架构标签保持不变。镜像提供非 root 浏览器 CLI，SDK 和远程浏览器服务需要另行配置。摘要校验、sandbox 环境要求和 headless 用法见 [Docker 指南](docs/docker.md)。
+`latest` 按架构选择对应的 `154.0.8037.97` 镜像，原有 `154.0.8037.57` 双架构标签保持不变。镜像提供非 root 浏览器 CLI，SDK 和远程浏览器服务需要另行配置。摘要校验、sandbox 环境要求和 headless 用法见 [Docker 指南](docs/docker.md)。
 
 ## 常用配置
 
@@ -183,7 +183,7 @@ Python 使用 `humanize=True`，Node 使用 `humanize: true` 启用 SDK 动作�
 
 ## 下载与平台
 
-从**同一个 Release** 下载浏览器 ZIP 和对应校验文件。**Linux x64 已更新为 [v154.0.8037.97](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97)**。其余五个平台暂时保留 [v154.0.8037.57](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57)，各自新版发布后再更新。
+从**同一个 Release** 下载浏览器 ZIP 和对应校验文件。**Linux x64 和 ARM64 下载均使用 [v154.0.8037.97](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97)**。Windows/macOS 四个平台（各自的 x64 和 ARM64）暂时保留 [v154.0.8037.57](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57)，各自新版发布后再更新。
 
 | 目标平台 | 归档 | 解压后的手动启动入口 |
 |---|---|---|
@@ -196,7 +196,7 @@ Python 使用 `humanize=True`，Node 使用 `humanize: true` 启用 SDK 动作�
 
 各平台独立构建和发布。Windows ARM64 在 `windows-2022` 交叉编译，在 `windows-11-arm` 做原生验证。macOS 包没有 Developer ID 分发签名和公证；Linux 需要兼容的系统库及可工作的 Chromium sandbox。
 
-**校验清单可能按平台拆分。** 该版本 Linux x64 对应 `SHA256SUMS`，Linux ARM64 对应 `SHA256SUMS-linux-arm64`。选择包含你下载的 ZIP 名称的清单；通用清单未必覆盖所有平台。
+**校验清单可能按平台拆分。** `v154.0.8037.97` 的 Linux x64 对应 `SHA256SUMS`，Linux ARM64 对应 `SHA256SUMS-linux-arm64`。选择包含你下载的 ZIP 名称的清单；通用清单未必覆盖所有平台。
 
 Linux x64 下载两份文件后：
 
@@ -234,16 +234,16 @@ export CLOAKBROWSER_BINARY_PATH="/absolute/path/chromix/Chromium.app/Contents/Ma
 
 ### 分清三类版本
 
-Linux x64 的新默认下载配置已随 Python SDK `152.0.7977.82.post1` 和 Node SDK `0.1.1` 发布。使用 `python -m pip install --upgrade chromix` 或 `npm install @xiaoxiaofeihh/chromix@latest` 升级。SDK 包版本与浏览器版本分别管理。
+Python SDK `152.0.7977.82.post2` 和 Node SDK `0.1.2` 已发布，Linux x64 和 ARM64 的 `stable` / `latest` 均映射到 `v154.0.8037.97`；Windows/macOS 保留原有通道。使用 `python -m pip install --upgrade chromix` 或 `npm install @xiaoxiaofeihh/chromix@latest` 升级。SDK 包版本与浏览器版本分别管理。
 
 | 版本来源 | 当前仓库配置 | 含义 |
 |---|---|---|
 | Linux / Windows 源码 | Chromium `154.0.8037.97` | 对应平台工作流要编译的版本 |
 | macOS 源码 | Chromium `152.0.7977.82` | 独立的平台源码基线 |
-| Docker `latest` | amd64 `154.0.8037.97`；arm64 `154.0.8037.57` | 按架构独立更新的发布 ZIP |
-| SDK Linux x64 `stable` / `latest` | [`v154.0.8037.97`](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97) | Linux x64 独立升级后的下载映射 |
-| SDK 其他平台 `stable` | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) | 保留既有映射，使用前核对资产可用性 |
-| SDK 其他平台 `latest` | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) | 保留既有映射，使用前核对资产可用性 |
+| Docker `latest` / `154.0.8037.97` | amd64 / arm64 `154.0.8037.97` | 双架构使用同一发布版本，旧 `.57` 标签保留 |
+| SDK Linux x64 / ARM64 `stable` / `latest` | [`v154.0.8037.97`](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97) | Linux 双架构的自动下载映射 |
+| SDK Windows / macOS `stable` | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) | 保留既有映射，使用前核对资产可用性 |
+| SDK Windows / macOS `latest` | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) | 保留既有映射，使用前核对资产可用性 |
 
 源码配置以 [build/ungoogled-revisions.psd1](build/ungoogled-revisions.psd1) 为准，下载通道见 [Python](sdk/python/chromix/_binary.py) / [Node](sdk/node/_binary.js) 下载器。`CLOAKBROWSER_VERSION` 可选择已配置主版本或四段完整版本；显式通道优先。指定精确版本但该平台资产不存在时会报错，不静默退回其他版本。SDK 版本、浏览器发布版本和源码固定版本分别维护；新原生功能需要相应补丁编译出的浏览器。
 

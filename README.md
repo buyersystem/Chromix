@@ -43,7 +43,7 @@ A **persona** is the browser identity configuration used for a launch. Its repor
 
 Choose a language below. The SDK resolves a locally configured executable first; otherwise it downloads and caches the browser selected by its **configured release channel**.
 
-> The SDK's `latest` channel is a pinned mapping, separate from GitHub's Latest release. For a specific release such as `v154.0.8037.57`, download its package and set `CLOAKBROWSER_BINARY_PATH`, or use the pinned [Docker image](docs/docker.md). Updating an SDK does not replace an explicitly configured browser.
+> The SDK's `latest` channel is a pinned mapping, separate from GitHub's Latest release. For a specific release such as `v154.0.8037.97`, download its package and set `CLOAKBROWSER_BINARY_PATH`, or use the pinned [Docker image](docs/docker.md). Updating an SDK does not replace an explicitly configured browser.
 
 ### Python
 
@@ -121,14 +121,14 @@ Driver-specific options and context ownership are explained in the [Node API gui
 
 ### Docker / Linux
 
-Docker `latest` updates each architecture independently: **amd64 uses `154.0.8037.97`; arm64 retains `154.0.8037.57`**. Docker's `amd64` platform selects the release's `linux-x64` archive; `arm64` selects `linux-arm64`.
+The published Docker release provides **`154.0.8037.97` for both amd64 and arm64** under `latest` and `154.0.8037.97`. Docker's `amd64` platform selects the release's `linux-x64` archive; `arm64` selects `linux-arm64`.
 
 ```bash
 docker pull ghcr.io/xiaozhou26/chromix:latest
 docker run --rm ghcr.io/xiaozhou26/chromix:latest --version
 ```
 
-`latest` selects the current version for your architecture. The `154.0.8037.97` tag contains amd64 only; the existing `154.0.8037.57` tag remains unchanged for both architectures. The image is a non-root browser CLI; SDKs and a remote browser service are separate. See [Docker setup and commands](docs/docker.md) for checksum verification, sandbox requirements and headless use. The image build reuses release binaries rather than compiling Chromium again.
+`latest` selects the matching architecture at `154.0.8037.97`; the existing `154.0.8037.57` tag remains unchanged for both architectures. The image is a non-root browser CLI; SDKs and a remote browser service are separate. See [Docker setup and commands](docs/docker.md) for checksum verification, sandbox requirements and headless use. The image build reuses release binaries rather than compiling Chromium again.
 
 ## Common configurations
 
@@ -183,7 +183,7 @@ Add `humanize=True` in Python or `humanize: true` in Node to enable the SDK's in
 
 ## Downloads and platforms
 
-Download ZIPs and their checksum files from the **same release**. **Linux x64 now uses [v154.0.8037.97](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97)**. The other five platform downloads retain [v154.0.8037.57](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57) until their newer packages are published.
+Download ZIPs and their checksum files from the **same release**. **Linux x64 and ARM64 downloads use [v154.0.8037.97](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97)**. The four Windows/macOS platform downloads (x64 and ARM64 for each OS) retain [v154.0.8037.57](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57) until their newer packages are published.
 
 | Target | Archive | Manual launcher inside the extracted directory |
 |---|---|---|
@@ -196,7 +196,7 @@ Download ZIPs and their checksum files from the **same release**. **Linux x64 no
 
 Platforms build and publish independently. Windows ARM64 cross-compiles on `windows-2022` and uses `windows-11-arm` for native verification. macOS bundles have no Developer ID distribution signature or notarization. Linux needs compatible system libraries and a working Chromium sandbox.
 
-**Checksum files may be platform-specific.** For `v154.0.8037.57`, Linux x64 uses `SHA256SUMS`, while Linux ARM64 uses `SHA256SUMS-linux-arm64`. Select the file containing your exact ZIP name; do not assume the generic manifest lists every platform.
+**Checksum files may be platform-specific.** For `v154.0.8037.97`, Linux x64 uses `SHA256SUMS`, while Linux ARM64 uses `SHA256SUMS-linux-arm64`. Select the file containing your exact ZIP name; do not assume the generic manifest lists every platform.
 
 Linux x64 example, after downloading both files:
 
@@ -234,7 +234,7 @@ Then use the usual SDK launch functions. This environment variable works in both
 
 ### Versions and download channels
 
-Linux x64's new defaults ship in Python SDK `152.0.7977.82.post1` and Node SDK `0.1.1`. Upgrade with `python -m pip install --upgrade chromix` or `npm install @xiaoxiaofeihh/chromix@latest`. SDK package versions remain separate from the browser version.
+Python SDK `152.0.7977.82.post2` and Node SDK `0.1.2` are published, with Linux x64 and ARM64 `stable` / `latest` both mapped to `v154.0.8037.97`; Windows/macOS retain their existing channels. Upgrade with `python -m pip install --upgrade chromix` or `npm install @xiaoxiaofeihh/chromix@latest`. SDK package versions remain separate from the browser version.
 
 These are separate version sources:
 
@@ -242,10 +242,10 @@ These are separate version sources:
 |---|---|---|
 | Linux / Windows source pins | Chromium `154.0.8037.97` | Version compiled by those platform workflows |
 | macOS source pin | Chromium `152.0.7977.82` | Independent macOS source baseline |
-| Container `latest` | amd64 `154.0.8037.97`; arm64 `154.0.8037.57` | Independently updated release ZIPs |
-| SDK Linux x64 `stable` / `latest` | [`v154.0.8037.97`](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97) | Platform-specific automatic download target |
-| SDK other platforms `stable` | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) | Existing mapping retained; check asset availability |
-| SDK other platforms `latest` | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) | Existing mapping retained; check asset availability |
+| Container `latest` / `154.0.8037.97` | amd64 / arm64 `154.0.8037.97` | Both architectures use the same release; the old `.57` tag is retained |
+| SDK Linux x64 / ARM64 `stable` / `latest` | [`v154.0.8037.97`](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97) | Platform-specific automatic download target |
+| SDK Windows / macOS `stable` | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) | Existing mapping retained; check asset availability |
+| SDK Windows / macOS `latest` | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) | Existing mapping retained; check asset availability |
 
 Source pins are authoritative in [build/ungoogled-revisions.psd1](build/ungoogled-revisions.psd1); channel mappings are in the [Python](sdk/python/chromix/_binary.py) and [Node](sdk/node/_binary.js) downloaders. `CLOAKBROWSER_VERSION` accepts a configured major or an exact four-part release version; an explicit channel takes precedence. Exact versions fail if the requested platform asset is absent. A source feature requires a browser built with the corresponding patches; an SDK update alone cannot add it to an older executable.
 
