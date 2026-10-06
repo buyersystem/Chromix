@@ -2,9 +2,10 @@
 
 English | [简体中文](readme_cn.md)
 
-[![Windows x64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml)
-[![Linux x64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml)
-[![Linux ARM64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml)
+[![PyPI](https://img.shields.io/pypi/v/chromix?logo=pypi&label=PyPI)](https://pypi.org/project/chromix/)
+[![npm](https://img.shields.io/npm/v/%40xiaoxiaofeihh%2Fchromix?logo=npm&label=npm)](https://www.npmjs.com/package/@xiaoxiaofeihh/chromix)
+[![License](https://img.shields.io/github/license/xiaozhou26/Chromix)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-GHCR-2496ED?logo=docker&logoColor=white)](docs/docker.md)
 [![Release](https://img.shields.io/github/v/release/xiaozhou26/Chromix?display_name=tag)](https://github.com/xiaozhou26/Chromix/releases)
 
 **A configurable Chromium browser for automation, compatibility testing, and reproducible browser-identity experiments.**
@@ -12,6 +13,16 @@ English | [简体中文](readme_cn.md)
 Chromix combines source-level Chromium patches with Python and Node.js SDKs. Use familiar Playwright objects, keep a stable profile across sessions, and configure language, timezone, display, and other browser-visible properties from one launch configuration. A separate Node entry point supports Puppeteer.
 
 [Project website](https://xiaozhou26.github.io/Chromix/) · [Download browser](https://github.com/xiaozhou26/Chromix/releases) · [Feature guide (中文)](docs/features.md) · [Flag reference](docs/fingerprint-flags.md) · [Build guide](BUILDING.md) · [Report an issue](https://github.com/xiaozhou26/Chromix/issues)
+
+## See Chromix
+
+[![Chromix project website preview](site/assets/homepage-desktop.png)](https://xiaozhou26.github.io/Chromix/)
+
+**Project website walkthrough:** language switching, Python/Node/Docker examples and the feature FAQ. These are recordings of the Chromix website, separate from browser-engine or detection-test results.
+
+[![Chromix website interaction demo](site/assets/homepage-demo.gif)](https://xiaozhou26.github.io/Chromix/assets/homepage-demo.webm)
+
+[Watch the WebM video](https://xiaozhou26.github.io/Chromix/assets/homepage-demo.webm) · [Mobile screenshot](site/assets/homepage-mobile.png) · [Open the website](https://xiaozhou26.github.io/Chromix/)
 
 ## At a glance
 
@@ -112,7 +123,12 @@ Driver-specific options and context ownership are explained in the [Node API gui
 
 The container distribution uses the **existing Linux browser packages from `v154.0.8037.57`**. Docker's `amd64` platform selects the release's `linux-x64` archive; `arm64` selects `linux-arm64`.
 
-See [Docker setup and commands](docs/docker.md) for image tags, checksum verification, sandbox requirements, persistent profiles, and headless use. The image build reuses release binaries rather than compiling Chromium again.
+```bash
+docker pull ghcr.io/xiaozhou26/chromix:154.0.8037.57
+docker run --rm ghcr.io/xiaozhou26/chromix:154.0.8037.57 --version
+```
+
+Both `154.0.8037.57` and `latest` are published multi-architecture tags. The image is a non-root browser CLI; SDKs and a remote browser service are separate. See [Docker setup and commands](docs/docker.md) for checksum verification, sandbox requirements and headless use. The image build reuses release binaries rather than compiling Chromium again.
 
 ## Common configurations
 

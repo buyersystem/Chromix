@@ -2,9 +2,10 @@
 
 [English](README.md) | 简体中文
 
-[![Windows x64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-win-x64-github.yml)
-[![Linux x64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-x64.yml)
-[![Linux ARM64](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml/badge.svg)](https://github.com/xiaozhou26/Chromix/actions/workflows/build-linux-arm64.yml)
+[![PyPI](https://img.shields.io/pypi/v/chromix?logo=pypi&label=PyPI)](https://pypi.org/project/chromix/)
+[![npm](https://img.shields.io/npm/v/%40xiaoxiaofeihh%2Fchromix?logo=npm&label=npm)](https://www.npmjs.com/package/@xiaoxiaofeihh/chromix)
+[![License](https://img.shields.io/github/license/xiaozhou26/Chromix)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-GHCR-2496ED?logo=docker&logoColor=white)](docs/docker.md)
 [![Release](https://img.shields.io/github/v/release/xiaozhou26/Chromix?display_name=tag)](https://github.com/xiaozhou26/Chromix/releases)
 
 **可配置的 Chromium 浏览器，面向自动化、兼容性测试和可复现的浏览器身份实验。**
@@ -12,6 +13,16 @@
 Chromix 在固定版本的 Chromium、ungoogled 核心及平台层之上维护源码补丁，并提供 Python 和 Node.js SDK。你可以继续使用熟悉的 Playwright 页面操作，通过启动配置控制语言、时区、显示等浏览器属性，使用持久化目录保留会话。Node.js 另有独立的 Puppeteer 入口。
 
 [项目主页](https://xiaozhou26.github.io/Chromix/) · [下载浏览器](https://github.com/xiaozhou26/Chromix/releases) · [功能指南](docs/features.md) · [参数表](docs/fingerprint-flags.md) · [构建文档](BUILDING.md) · [问题反馈](https://github.com/xiaozhou26/Chromix/issues)
+
+## 项目预览
+
+[![Chromix 项目主页截图](site/assets/homepage-desktop.png)](https://xiaozhou26.github.io/Chromix/)
+
+**主页操作演示：**切换语言、查看 Python/Node/Docker 示例和展开功能问答。以下内容为 Chromix 主页实录，展示网站使用方式；浏览器引擎的运行结果以对应验收记录为准。
+
+[![Chromix 主页交互演示](site/assets/homepage-demo.gif)](https://xiaozhou26.github.io/Chromix/assets/homepage-demo.webm)
+
+[观看 WebM 视频](https://xiaozhou26.github.io/Chromix/assets/homepage-demo.webm) · [移动端截图](site/assets/homepage-mobile.png) · [打开主页](https://xiaozhou26.github.io/Chromix/)
 
 ## 能做什么
 
@@ -112,7 +123,12 @@ Puppeteer 的启动参数和 context 生命周期与 Playwright 有区别，详�
 
 容器使用 **`v154.0.8037.57` 已发布的 Linux 浏览器包**：Docker 平台 `amd64` 对应发布资产 `linux-x64`，`arm64` 对应 `linux-arm64`。制作镜像时复用现有二进制，无需再次编译 Chromium。
 
-镜像标签、启动命令、sandbox 环境要求、持久化目录和 headless 用法见 [Docker 指南](docs/docker.md)。
+```bash
+docker pull ghcr.io/xiaozhou26/chromix:154.0.8037.57
+docker run --rm ghcr.io/xiaozhou26/chromix:154.0.8037.57 --version
+```
+
+`154.0.8037.57` 和 `latest` 均已发布为双架构标签。镜像提供非 root 浏览器 CLI，SDK 和远程浏览器服务需要另行配置。摘要校验、sandbox 环境要求和 headless 用法见 [Docker 指南](docs/docker.md)。
 
 ## 常用配置
 

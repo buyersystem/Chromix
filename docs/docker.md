@@ -2,7 +2,7 @@
 
 此镜像将 [v154.0.8037.57 已发布 Linux 包](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57) 装入 Ubuntu 24.04，不重新编译 Chromium。提供简单的浏览器 CLI，**不预装 Python/Node SDK、Playwright 或远程浏览器服务**。保留发布包中的字体、资源及许可证，入口通过包内 `chromix` 脚本配置字体。
 
-发布目标（工作流成功发布、管理员设置公共权限之后可用）：
+已发布镜像（[原生双架构构建与匿名拉取验证](https://github.com/xiaozhou26/Chromix/actions/runs/37442214640)）：
 
 - `ghcr.io/xiaozhou26/chromix:154.0.8037.57`
 - `ghcr.io/xiaozhou26/chromix:latest`
@@ -137,4 +137,4 @@ python3 docker/smoke.py chromix:local --apparmor-profile chromix-docker
 4. 可在未登录机器上执行上方 `docker pull`，并检查 `docker buildx imagetools inspect ghcr.io/xiaozhou26/chromix:154.0.8037.57` 显示两个平台。必要时先使用空 `DOCKER_CONFIG` 排除本机凭据掩盖权限问题。
 5. 中间 `build-*` 标签可后续清理，但不要让清理策略删除当前版本/latest 所引用的镜像 digest。
 
-本指南描述发布方式，不代表某次发布已经执行或当前 registry 权限已经配置完毕。
+首次发布已通过两个原生架构的版本、页面 JavaScript、namespace/seccomp sandbox 检查，以及最终标签的匿名拉取检查。后续版本仍以对应工作流和 registry 中实际 manifest 为准。
