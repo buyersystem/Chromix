@@ -71,8 +71,32 @@ class SnapshotValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'identity'):
             self.validate_linux(client)
 
+    def test_failed_manual_run_preserves_verified_checkpoint(self):
+        for arch, prefix in (('x64', 'lx64'), ('arm64', 'larm')):
+            for job_conclusion in ('success', 'failure'):
+                with self.subTest(arch=arch, job_conclusion=job_conclusion):
+                    client = Client(platform='linux', arch=arch)
+                    client.run.update(
+                        name=f'{prefix} profile=fast jobs=auto mode=staged cache=true run= tree=7 attempt=1 artifacts=',
+                        conclusion='failure')
+                    client.jobs[0]['conclusion'] = job_conclusion
+                    client.artifacts = client.artifacts[:1]
+                    report = snapshot.validate(client, REPO, 123, 7, 1, arch, [101], platform='linux')
+                    self.assertEqual(report['job_id'], 456)
+                    self.assertEqual([item['id'] for item in report['artifacts']], [101])
+                    client.jobs[0]['steps'][0]['conclusion'] = 'failure'
+                    with self.assertRaisesRegex(ValueError, 'verified checkpoint'):
+                        snapshot.validate(client, REPO, 123, 7, 1, arch, [101], platform='linux')
+
+    def test_display_title_does_not_override_workflow_path(self):
+        client = Client(platform='linux', arch='x64')
+        client.run['name'] = 'lx64 profile=fast jobs=auto'
+        client.run['path'] = '.github/workflows/build-linux-arm64.yml'
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            snapshot.validate(client, REPO, 123, 7, 1, 'x64', [101, 102], platform='linux')
+
     def test_wrong_origin_platform_or_unfinished_run_rejected(self):
-        for key, value in {'id': 456, 'name': 'build-macos-x64', 'head_branch': 'feature',
+        for key, value in {'id': 456, 'head_branch': 'feature',
                            'path': '.github/workflows/other.yml', 'event': 'pull_request',
                            'head_sha': 'bad\nsha', 'run_attempt': 0, 'status': 'in_progress',
                            'repository': {'full_name': 'foreign/Chromix'},

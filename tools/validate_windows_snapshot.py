@@ -50,8 +50,8 @@ def validate(client, repository: str, run_id: int, stage: int, attempt: int,
         raise ValueError("supply the complete recorded set of snapshot artifact IDs (1-4 unique IDs)")
 
     run = client.get(f"/actions/runs/{run_id}")
+    # run-name is a display title; the workflow path identifies the producer.
     if (not isinstance(run, dict) or type(run.get("id")) is not int or run["id"] != run_id
-            or run.get("name") != WORKFLOW
             or run.get("path") != f".github/workflows/{WORKFLOW}.yml"
             or not isinstance(run.get("head_branch"), str)
             or run["head_branch"] not in ("main", recovery_branch)

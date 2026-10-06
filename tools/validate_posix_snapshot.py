@@ -80,7 +80,8 @@ def validate(client, repository: str, run_id: int, stage: int, attempt: int, arc
         raise ValueError("invalid POSIX snapshot selection")
     workflow = f"build-{platform}-{arch}"
     run = client.get(f"/actions/runs/{run_id}")
-    if (run.get("id") != run_id or run.get("name") != workflow
+    # run-name is a display title; the workflow path identifies the producer.
+    if (run.get("id") != run_id
             or run.get("path") != f".github/workflows/{workflow}.yml"
             or run.get("head_branch") not in ("main", recovery_branch or "main")
             or run.get("event") not in ("push", "workflow_dispatch")

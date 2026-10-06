@@ -86,6 +86,17 @@ class SnapshotValidationTest(unittest.TestCase):
                     client.jobs[0]['conclusion'] = conclusion
                     self.validate(client, recovery_branch=RECOVERY_BRANCH)
 
+    def test_failed_manual_run_with_display_title_preserves_checkpoint(self):
+        client = Client()
+        client.run.update(event='workflow_dispatch',
+                          name='wx64 profile=native jobs=auto cache=true upstream=37100793859')
+        report = self.validate(client)
+        self.assertEqual(report['head_sha'], SHA)
+        self.assertEqual([item['id'] for item in report['artifacts']], ARTIFACT_IDS)
+        client.run['path'] = '.github/workflows/build-win-arm64-github.yml'
+        with self.assertRaisesRegex(ValueError, 'identity'):
+            self.validate(client)
+
     def test_stage_run_sha_and_attempt_are_parameterized(self):
         for stage in (1, 2, 3, 12):
             with self.subTest(stage=stage):
@@ -178,7 +189,6 @@ class SnapshotValidationTest(unittest.TestCase):
     def test_run_identity_types_and_missing_fields(self):
         cases = {
             'id': [None, True, str(RUN_ID), float(RUN_ID), RUN_ID + 1, [], {}],
-            'name': [None, [], {}, 'build-win-arm64-github', 'build-macos-x64', 'build-win-x64'],
             'path': [None, [], '.github/workflows/other.yml',
                      '.github/workflows/build-win-x64-github.yml@refs/heads/main'],
             'head_branch': [None, False, [], {}, '', 'Main', 'refs/heads/main', 'feature'],
