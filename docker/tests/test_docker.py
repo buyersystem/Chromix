@@ -4,9 +4,11 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -14,8 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("docker_smoke", ROOT / "smoke.py")
 smoke = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(smoke)
+VERSIONS = {"amd64": "154.0.8037.97", "arm64": "154.0.8037.57"}
 DIGESTS = {
-    "amd64": ("x64", "SHA256SUMS", "9b769a5b151b0778a42e6883dd12454817fcd0bef0268b1a93008b25052e0669"),
+    "amd64": ("x64", "SHA256SUMS", "dc7dfd45d0dc1c1eea52f36a2dcdc4111e2780540392d30913107c50bf353aa5"),
     "arm64": ("arm64", "SHA256SUMS-linux-arm64", "26be9806543e2957ed82469830c17d4b38bc018b5c85dcaefd434fa2e50c2a60"),
 }
 
@@ -113,7 +116,10 @@ done
                 result = self.download(arch)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 log = (self.root / "log").read_text()
-                self.assertIn(f"/v{smoke.VERSION}/{manifest}\n", log)
+                base = f"https://github.com/xiaozhou26/Chromix/releases/download/v{VERSIONS[arch]}"
+                self.assertEqual(log.splitlines()[:2], [
+                    f"{base}/chromix-linux-{asset_arch}.zip", f"{base}/{manifest}",
+                ])
                 self.assertIn(f"{digest}  chromix-linux-{asset_arch}.zip\n", log)
                 self.assertIn("sha256sum --check --strict -", log)
                 self.assertLess(log.index("sha256sum"), log.index("unzip"))
@@ -147,9 +153,41 @@ done
 
 class SmokeTests(unittest.TestCase):
     def test_version_requires_full_release(self):
-        smoke.check_version(f"Chromium {smoke.VERSION}\n")
-        with self.assertRaises(RuntimeError):
-            smoke.check_version("Chromium 154.0.8037.5")
+        self.assertEqual(smoke.VERSIONS, VERSIONS)
+        for arch, version in VERSIONS.items():
+            with self.subTest(arch=arch):
+                smoke.check_version(f"Chromium {version}\n", arch)
+                other = VERSIONS["arm64" if arch == "amd64" else "amd64"]
+                for invalid in (other, "154.0.8037.5", version + "0", version + ".1"):
+                    with self.assertRaises(RuntimeError):
+                        smoke.check_version(f"Chromium {invalid}", arch)
+
+    def test_image_architecture_and_oci_version(self):
+        for arch, version in VERSIONS.items():
+            metadata = {"Os": "linux", "Architecture": arch, "Config": {
+                "Labels": {"org.opencontainers.image.version": version},
+            }}
+            self.assertEqual(smoke.check_image_metadata(metadata), arch)
+            self.assertEqual(smoke.check_image_metadata(metadata, arch), arch)
+            other = "arm64" if arch == "amd64" else "amd64"
+            with self.assertRaises(RuntimeError):
+                smoke.check_image_metadata(metadata, other)
+            for invalid in (None, {}, {"org.opencontainers.image.version": VERSIONS[other]}):
+                metadata["Config"]["Labels"] = invalid
+                with self.assertRaises(RuntimeError):
+                    smoke.check_image_metadata(metadata)
+        for metadata in ({}, {"Os": "windows", "Architecture": "amd64"},
+                         {"Os": "linux", "Architecture": "ppc64le"}):
+            with self.assertRaises(RuntimeError):
+                smoke.check_image_metadata(metadata)
+
+    def test_dockerfile_selects_architecture_specific_oci_label(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertIn("ARG TARGETARCH\nFROM", dockerfile)
+        self.assertTrue(dockerfile.rstrip().endswith("FROM runtime-${TARGETARCH}"))
+        for arch, version in VERSIONS.items():
+            self.assertIn(f'FROM runtime AS runtime-{arch}\n'
+                          f'LABEL org.opencontainers.image.version="{version}"', dockerfile)
 
     def test_dom_requires_javascript_result(self):
         smoke.check_dom(f"<html>{smoke.MARKER}</html>")
@@ -200,6 +238,75 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(len(clone3), 1)
         self.assertEqual(clone3[0]["errnoRet"], 38)
         self.assertEqual(clone3[0]["action"], "SCMP_ACT_ERRNO")
+
+
+class PublishTests(unittest.TestCase):
+    def setUp(self):
+        self.workflow = (ROOT.parent / ".github/workflows/publish-docker.yml").read_text()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "digests").mkdir()
+        self.digests = {arch: f"sha256:{digit * 64}"
+                        for arch, digit in (("amd64", "a"), ("arm64", "b"))}
+        for arch, digest in self.digests.items():
+            (self.root / "digests" / f"{arch}.txt").write_text(
+                f"ghcr.io/xiaozhou26/chromix@{digest}\n",
+            )
+        self.tags = {VERSIONS["amd64"]: ["amd64"],
+                     f'amd64-{VERSIONS["amd64"]}': ["amd64"],
+                     "latest": ["amd64", "arm64"]}
+        for tag, arches in self.tags.items():
+            self.write_manifest(tag, arches)
+
+    def write_manifest(self, tag, arches):
+        (self.root / f"{tag}.json").write_text(json.dumps({"manifests": [
+            {"platform": {"os": "linux", "architecture": arch}, "digest": self.digests[arch]}
+            for arch in arches
+        ]}))
+
+    def verify_manifests(self):
+        script = re.findall(r"python3 - <<'PYCODE'\n(.*?)          PYCODE",
+                            self.workflow, re.DOTALL)[0]
+        return subprocess.run(
+            ["python3", "-c", textwrap.dedent(script)], cwd=self.root,
+            env={**os.environ, "AMD64_VERSION": VERSIONS["amd64"]},
+            text=True, capture_output=True, check=False,
+        )
+
+    def test_correct_architecture_manifests_pass(self):
+        result = self.verify_manifests()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_release_tag_must_not_include_old_arm64(self):
+        self.write_manifest(VERSIONS["amd64"], ["amd64", "arm64"])
+        self.assertNotEqual(self.verify_manifests().returncode, 0)
+
+    def test_latest_requires_both_architectures_without_duplicates(self):
+        for arches in (["amd64"], ["arm64"], ["amd64", "amd64", "arm64"]):
+            with self.subTest(arches=arches):
+                self.write_manifest("latest", arches)
+                self.assertNotEqual(self.verify_manifests().returncode, 0)
+
+    def test_only_tested_digests_are_accepted(self):
+        for tag in self.tags:
+            with self.subTest(tag=tag):
+                path = self.root / f"{tag}.json"
+                original = path.read_text()
+                path.write_text(original.replace(self.digests["amd64"], "sha256:" + "c" * 64))
+                self.assertNotEqual(self.verify_manifests().returncode, 0)
+                path.write_text(original)
+
+    def test_publish_preserves_old_tag_and_anonymous_checks(self):
+        commands = self.workflow.replace("\\\n", " ")
+        tags = re.findall(r'--tag "([^"\n]+)"', commands)
+        self.assertEqual(tags, ["$IMAGE:$AMD64_VERSION", "$IMAGE:amd64-$AMD64_VERSION", "$IMAGE:latest"])
+        self.assertIn('"${refs[0]}"', commands)
+        self.assertIn("cmp original-57.json preserved-57.json", commands)
+        self.assertIn('docker --config "$config" pull --platform "linux/$arch" "$IMAGE:latest"', commands)
+        self.assertIn('check_image_metadata', commands)
+        self.assertIn('--arch "${{ matrix.arch }}"', commands)
+        self.assertNotIn("--no-sandbox", commands)
 
 
 if __name__ == "__main__":

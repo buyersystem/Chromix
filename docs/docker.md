@@ -1,35 +1,47 @@
 # Linux Docker 镜像
 
-此镜像将 [v154.0.8037.57 已发布 Linux 包](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57) 装入 Ubuntu 24.04，不重新编译 Chromium。提供简单的浏览器 CLI，**不预装 Python/Node SDK、Playwright 或远程浏览器服务**。保留发布包中的字体、资源及许可证，入口通过包内 `chromix` 脚本配置字体。
+此镜像将已发布的 Linux 包装入 Ubuntu 24.04，不重新编译 Chromium。当前固定 **amd64 使用 [v154.0.8037.97](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97)，arm64 继续使用 [v154.0.8037.57](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57)**；尚无 ARM64 `.97` 包，不会将 `.57` 冒充 `.97`。提供简单的浏览器 CLI，**不预装 Python/Node SDK、Playwright 或远程浏览器服务**。保留发布包中的字体、资源及许可证，入口通过包内 `chromix` 脚本配置字体。
 
-已发布镜像（[原生双架构构建与匿名拉取验证](https://github.com/xiaozhou26/Chromix/actions/runs/37442214640)）：
+本次工作流发布的标签策略如下（镜像前缀均为 `ghcr.io/xiaozhou26/chromix`）：
 
-- `ghcr.io/xiaozhou26/chromix:154.0.8037.57`
-- `ghcr.io/xiaozhou26/chromix:latest`
-- 两个标签均为 `linux/amd64` + `linux/arm64` 多架构 manifest；Docker 自动选择本机架构。生产环境建议使用版本标签或镜像 digest。
+| 标签 | `linux/amd64` 浏览器版本 | `linux/arm64` 浏览器版本 | 更新策略 |
+| --- | --- | --- | --- |
+| `154.0.8037.97` | `154.0.8037.97` | **不提供** | 仅 amd64，不包含 ARM64 `.57` |
+| `amd64-154.0.8037.97` | `154.0.8037.97` | **不提供** | 同一 amd64 镜像的明确架构别名 |
+| `latest` | `154.0.8037.97` | `154.0.8037.57` | **混合浏览器版本**的双架构 manifest |
+| `154.0.8037.57` | `154.0.8037.57` | `154.0.8037.57` | 保留原有已发布双架构标签，**不覆盖** |
+
+Docker 按平台选择镜像，`latest` 不代表所有架构具有同一浏览器版本。OCI `org.opencontainers.image.version` 写在各架构镜像配置中：新的 amd64 为 `.97`，arm64 为 `.57`，不会给整个 `latest` 统一标为 `.97`。生产环境建议使用对应平台的版本标签或镜像 digest；ARM64 固定版本仍用 `:154.0.8037.57`。
+
+原 `.57` 双架构发布已有[原生构建与匿名拉取验证](https://github.com/xiaozhou26/Chromix/actions/runs/37442214640)。本次 `.97`/混合 `latest` 的实际发布状态须以新的工作流运行及 registry 检查为准；修改配置不等于已经发布成功。
 
 ## 快速开始
 
 只查看版本不启动渲染进程，不需要额外 sandbox 配置：
 
 ```sh
+# AMD64 原生宿主：新版本标签只提供 linux/amd64。
+docker pull ghcr.io/xiaozhou26/chromix:154.0.8037.97
+docker run --rm ghcr.io/xiaozhou26/chromix:154.0.8037.97 --version
+
+# ARM64 原生宿主：继续使用原已发布版本。
 docker pull ghcr.io/xiaozhou26/chromix:154.0.8037.57
 docker run --rm ghcr.io/xiaozhou26/chromix:154.0.8037.57 --version
 ```
 
-无参数也等价于 `--version`。浏览器报告 Chromium 版本 `154.0.8037.57`。镜像默认以 `chromix` 用户（UID/GID `10001:10001`）运行，参数原样传给浏览器，没有隐式添加 `--no-sandbox` 或 `--disable-setuid-sandbox`。
+无参数也等价于 `--version`。浏览器报告对应架构的 Chromium 版本：amd64 新镜像为 `154.0.8037.97`，arm64 为 `154.0.8037.57`。ARM64 原生拉取 `.97` 标签应报平台不匹配，而不是得到旧版 ARM64 镜像。镜像默认以 `chromix` 用户（UID/GID `10001:10001`）运行，参数原样传给浏览器，没有隐式添加 `--no-sandbox` 或 `--disable-setuid-sandbox`。
 
 ### 默认保留 sandbox 的 headless DOM
 
 Chromium 的非特权 user-namespace sandbox 需要宿主内核允许用户命名空间；Docker 默认 seccomp 常会阻止这些调用。请获取本仓库 `docker/seccomp.json`，不要仅为了启动浏览器就使用 `--privileged`、`--cap-add=SYS_ADMIN` 或 `seccomp=unconfined`。
 
-以下命令从仓库根目录执行：
+以下命令从仓库根目录执行，使用按本机架构选择版本的 `latest`；需要固定版本时请按上表替换标签：
 
 ```sh
 docker run --rm --init --shm-size=1g \
   --cap-drop=ALL --security-opt=no-new-privileges \
   --security-opt="seccomp=$PWD/docker/seccomp.json" \
-  ghcr.io/xiaozhou26/chromix:154.0.8037.57 \
+  ghcr.io/xiaozhou26/chromix:latest \
   --headless --disable-gpu --dump-dom https://example.com
 ```
 
@@ -46,7 +58,7 @@ docker run --rm --init --network=none --shm-size=1g \
   --cap-drop=ALL --security-opt=no-new-privileges \
   --security-opt="seccomp=$PWD/docker/seccomp.json" \
   --mount type=bind,src=/tmp/chromix-pages,dst=/pages,readonly \
-  ghcr.io/xiaozhou26/chromix:154.0.8037.57 \
+  ghcr.io/xiaozhou26/chromix:latest \
   --headless --disable-gpu --dump-dom file:///pages/index.html
 ```
 
@@ -75,14 +87,14 @@ sudo apparmor_parser --replace --skip-cache docker/apparmor.profile
 ```sh
 docker run --rm --init --network=none --shm-size=1g \
   --cap-drop=ALL --security-opt=no-new-privileges \
-  ghcr.io/xiaozhou26/chromix:154.0.8037.57 \
+  ghcr.io/xiaozhou26/chromix:latest \
   --headless --disable-gpu --no-sandbox --dump-dom \
   'data:text/html,<p>isolated-test-only</p>'
 ```
 
 ## 本地构建与验证
 
-构建上下文是 `docker/`，不是整个 Chromium 源码仓库：
+构建上下文是 `docker/`，不是整个 Chromium 源码仓库。默认按本机架构选择下载版本及 OCI 标签，无需手动传版本 build arg：
 
 ```sh
 docker buildx build --load -t chromix:local docker
@@ -99,20 +111,22 @@ python3 docker/smoke.py chromix:local --apparmor-profile chromix-docker
 `smoke.py` 实际启动容器，不以 build 成功代替运行测试，检查：
 
 1. 默认 UID 是 10001；
-2. `--version` 含准确的发布版本；
+2. 本地镜像为受支持的 Linux 架构，OCI `org.opencontainers.image.version` 和 `--version` 均匹配该架构固定版本（amd64 `.97`、arm64 `.57`）；
 3. `--network=none` 下读取只读挂载的本地 HTML，JavaScript 修改 DOM 后必须出现指定标记；
 4. `chrome://sandbox` 必须显示 namespace 和 seccomp-BPF sandbox 均启用。
 
-每次容器调用有超时，异常时也清理容器；不会自动用 `--no-sandbox` 重试。单元测试使用替身验证入口参数、失败退出、摘要核对和 smoke 判定逻辑，**不能替代实际容器 smoke**。在另一架构上构建可指定 `--platform=linux/amd64` 或 `linux/arm64`，但本地模拟执行不是原生架构验收；发布工作流使用两个原生 runner。
+`smoke.py` 默认从本地镜像配置读取架构，也可传 `--arch amd64` 或 `--arch arm64` 强制检查预期平台，防止测错镜像；工作流始终传入原生 runner 的架构。每次容器调用有超时，异常时也清理容器；不会自动用 `--no-sandbox` 重试。单元测试使用替身验证入口参数、失败退出、摘要核对和 smoke 判定逻辑，**不能替代实际容器 smoke**。在另一架构上构建可指定 `--platform=linux/amd64` 或 `linux/arm64`，但本地模拟执行不是原生架构验收；发布工作流使用两个原生 runner。
 
 ## 固定资产与完整性核对
 
-`docker/download.sh` 固定下载版本、资产名与 SHA-256，先检查发布方 manifest 中对应资产的摘要与固定值一致，再实际运行 `sha256sum --check --strict`，通过后才解压。
+`docker/download.sh` 按架构固定下载 release 版本、资产名与 SHA-256，先检查发布方 manifest 中对应资产的摘要与固定值一致，再实际运行 `sha256sum --check --strict`，通过后才解压。
 
-| Docker 架构 | 发布资产 | 校验 manifest | 固定 SHA-256 |
-| --- | --- | --- | --- |
-| `linux/amd64` | `chromix-linux-x64.zip` | `SHA256SUMS` | `9b769a5b151b0778a42e6883dd12454817fcd0bef0268b1a93008b25052e0669` |
-| `linux/arm64` | `chromix-linux-arm64.zip` | `SHA256SUMS-linux-arm64` | `26be9806543e2957ed82469830c17d4b38bc018b5c85dcaefd434fa2e50c2a60` |
+| Docker 架构 | release 版本 | 发布资产 | 校验 manifest | 固定 SHA-256 |
+| --- | --- | --- | --- | --- |
+| `linux/amd64` | `154.0.8037.97` | `chromix-linux-x64.zip` | `SHA256SUMS` | `dc7dfd45d0dc1c1eea52f36a2dcdc4111e2780540392d30913107c50bf353aa5` |
+| `linux/arm64` | `154.0.8037.57` | `chromix-linux-arm64.zip` | `SHA256SUMS-linux-arm64` | `26be9806543e2957ed82469830c17d4b38bc018b5c85dcaefd434fa2e50c2a60` |
+
+AMD64 下载地址为 `https://github.com/xiaozhou26/Chromix/releases/download/v154.0.8037.97/chromix-linux-x64.zip`；ARM64 下载地址仍为 `https://github.com/xiaozhou26/Chromix/releases/download/v154.0.8037.57/chromix-linux-arm64.zip`。校验 manifest 分别从各自 release 下载，不跨版本复用。
 
 主 `SHA256SUMS` 只有 x64，不作为 arm64 的依据。未知架构、下载失败、缺失/重复/不匹配摘要、ZIP 损坏均使 build 失败。基础 Ubuntu 标签和 apt 安全更新未按 digest 锁定，因此是浏览器资产固定，而不是整个镜像逐字节可复现。
 
@@ -125,8 +139,9 @@ python3 docker/smoke.py chromix:local --apparmor-profile chromix-docker
 - 支持 `workflow_dispatch`，仅允许主仓库 `main` 分支执行发布；首次将变更合入 `main` 后即可手动运行。
 - 自动触发仅限 `main` 上的 `docker/**`、`docs/docker.md` 和该工作流本身的变更。
 - `ubuntu-22.04` 构建 `linux/amd64`，`ubuntu-24.04-arm` 构建 `linux/arm64`；不使用 QEMU。
-- 每个 runner 先 build/load，再执行真实的版本、本地页面及 sandbox smoke。仅通过后登录 GHCR，推送**同一个已测试镜像**到带 run ID/attempt/架构的临时标签，并保存 registry digest。
-- 两个架构均成功后，按 digest 合并 `154.0.8037.57` 和 `latest`，检查 manifest 恰好包含这两个 Linux 架构，再使用空 Docker 凭据配置验证匿名拉取。
+- 每个 runner 先 build/load，再检查架构及 OCI version，并执行真实的对应版本、本地页面及 sandbox smoke。仅通过后登录 GHCR，推送**同一个已测试镜像**到带 run ID/attempt/架构的临时标签，并保存 registry digest。
+- 两个架构均成功后，只用 amd64 已测 digest 发布 `154.0.8037.97` 和 `amd64-154.0.8037.97`；用 amd64 `.97` + arm64 `.57` 已测 digest 合并 `latest`。不写入原 `154.0.8037.57` 标签，并比较发布前后的旧标签 manifest 确认未变。
+- 检查 `.97` 两个标签只有 Linux amd64、`latest` 恰好包含两个 Linux 架构，且各 manifest 的 digest 与已测试镜像完全相同。使用空 Docker 凭据配置匿名拉取新版本标签和 `latest` 的两个平台，核对每架构 OCI version，并检查旧 `.57` manifest 仍可匿名访问。合并 runner 不执行跨架构浏览器，实际运行验收仍由前面的原生 runner 完成。
 - 使用 `GITHUB_TOKEN`，发布 jobs 声明 `contents: read` 和 `packages: write`，不需要额外长期 PAT。整个发布并发组串行运行，避免旧任务覆盖新标签。
 
 **包可见性不是 Dockerfile/OCI 标签或 `packages: write` 能自动保证的。仓库管理员需处理：**
@@ -134,7 +149,7 @@ python3 docker/smoke.py chromix:local --apparmor-profile chromix-docker
 1. 确认仓库允许 GitHub Actions 创建/写入 GHCR packages，并允许所用 Docker Actions；已有 `chromix` package 时，在 Package settings → Manage Actions access 授予 `xiaozhou26/Chromix` 写入权限，或正确关联仓库并继承权限。
 2. 首次推送后，在 `ghcr.io/xiaozhou26/chromix` 对应 GitHub Package settings 中把 visibility 改为 **Public**；仓库公开不代表新容器包自动公开。该操作应由有权限的管理员完成。
 3. 工作流最后的匿名 pull 若因首次默认 Private 而失败，已推送的镜像/manifest 不会自动回滚。设置 Public 后重跑工作流并确认匿名检查通过，再宣布发布可用。
-4. 可在未登录机器上执行上方 `docker pull`，并检查 `docker buildx imagetools inspect ghcr.io/xiaozhou26/chromix:154.0.8037.57` 显示两个平台。必要时先使用空 `DOCKER_CONFIG` 排除本机凭据掩盖权限问题。
+4. 可在未登录机器上执行上方 `docker pull`，并用 `docker buildx imagetools inspect` 检查 `ghcr.io/xiaozhou26/chromix:154.0.8037.97` 只有 `linux/amd64`，`:latest` 和保留的 `:154.0.8037.57` 各有两个平台。必要时先使用空 `DOCKER_CONFIG` 排除本机凭据掩盖权限问题。
 5. 中间 `build-*` 标签可后续清理，但不要让清理策略删除当前版本/latest 所引用的镜像 digest。
 
-首次发布已通过两个原生架构的版本、页面 JavaScript、namespace/seccomp sandbox 检查，以及最终标签的匿名拉取检查。后续版本仍以对应工作流和 registry 中实际 manifest 为准。
+原 `.57` 首次发布已通过两个原生架构的版本、页面 JavaScript、namespace/seccomp sandbox 检查，以及最终标签的匿名拉取检查。后续版本仍以对应工作流和 registry 中实际 manifest 为准。

@@ -5,18 +5,20 @@ arch="${1:?usage: download.sh amd64|arm64 destination}"
 destination="${2:?missing destination}"
 case "$arch" in
     amd64)
+        version=154.0.8037.97
         asset=chromix-linux-x64.zip
         manifest=SHA256SUMS
-        digest=9b769a5b151b0778a42e6883dd12454817fcd0bef0268b1a93008b25052e0669
+        digest=dc7dfd45d0dc1c1eea52f36a2dcdc4111e2780540392d30913107c50bf353aa5
         ;;
     arm64)
+        version=154.0.8037.57
         asset=chromix-linux-arm64.zip
         manifest=SHA256SUMS-linux-arm64
         digest=26be9806543e2957ed82469830c17d4b38bc018b5c85dcaefd434fa2e50c2a60
         ;;
     *) echo "Unsupported architecture: $arch" >&2; exit 2 ;;
 esac
-base=https://github.com/xiaozhou26/Chromix/releases/download/v154.0.8037.57
+base="https://github.com/xiaozhou26/Chromix/releases/download/v$version"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 curl --fail --location --retry 5 --connect-timeout 30 --max-time 1800 \

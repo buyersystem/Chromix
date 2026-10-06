@@ -18,7 +18,8 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/xiaozhou26/chromix
-  VERSION: 154.0.8037.57
+  AMD64_VERSION: 154.0.8037.97
+  ARM64_VERSION: 154.0.8037.57
 
 jobs:
   build:
@@ -76,7 +77,7 @@ jobs:
           fi
           python3 docker/smoke.py \
             "$IMAGE:build-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}" \
-            "${options[@]}"
+            --arch "${{ matrix.arch }}" "${options[@]}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -112,6 +113,8 @@ jobs:
       contents: read
       packages: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -126,32 +129,64 @@ jobs:
           path: digests
           merge-multiple: true
 
-      - name: Merge tested native images
+      - name: Publish amd64 release and mixed-version latest
         shell: bash
         run: |
+          docker buildx imagetools inspect --raw "$IMAGE:154.0.8037.57" > original-57.json
           refs=()
           for arch in amd64 arm64; do
             ref="$(cat "digests/$arch.txt")"
             [[ "$ref" =~ ^ghcr.io/xiaozhou26/chromix@sha256:[a-f0-9]{64}$ ]]
             refs+=("$ref")
           done
+          docker buildx imagetools create --prefer-index=true \
+            --tag "$IMAGE:$AMD64_VERSION" --tag "$IMAGE:amd64-$AMD64_VERSION" "${refs[0]}"
           docker buildx imagetools create \
-            --tag "$IMAGE:$VERSION" --tag "$IMAGE:latest" "${refs[@]}"
-          docker buildx imagetools inspect --raw "$IMAGE:$VERSION" > manifest.json
-          python3 - <<'PY'
+            --tag "$IMAGE:latest" "${refs[@]}"
+          for tag in "$AMD64_VERSION" "amd64-$AMD64_VERSION" latest; do
+            docker buildx imagetools inspect --raw "$IMAGE:$tag" > "$tag.json"
+          done
+          docker buildx imagetools inspect --raw "$IMAGE:154.0.8037.57" > preserved-57.json
+          cmp original-57.json preserved-57.json
+          python3 - <<'PYCODE'
           import json
+          import os
           from pathlib import Path
-          manifests = json.loads(Path('manifest.json').read_text())['manifests']
-          platforms = {(item['platform']['os'], item['platform']['architecture']) for item in manifests}
-          assert len(manifests) == 2 and platforms == {('linux', 'amd64'), ('linux', 'arm64')}, manifests
-          print('Verified multiarch manifest:', platforms)
-          PY
+          version = os.environ['AMD64_VERSION']
+          for tag, arches in ((version, {'amd64'}), (f'amd64-{version}', {'amd64'}),
+                              ('latest', {'amd64', 'arm64'})):
+              manifests = json.loads(Path(f'{tag}.json').read_text())['manifests']
+              platforms = {(item['platform']['os'], item['platform']['architecture']) for item in manifests}
+              assert len(manifests) == len(arches) and platforms == {('linux', arch) for arch in arches}, manifests
+              for item in manifests:
+                  arch = item['platform']['architecture']
+                  expected = Path(f'digests/{arch}.txt').read_text().strip().split('@')[1]
+                  assert item['digest'] == expected, (tag, item)
+              print(f'Verified {tag}:', platforms)
+          PYCODE
 
-      - name: Verify anonymous pull access
+      - name: Verify anonymous pull access and per-architecture OCI versions
         shell: bash
         run: |
           config="$(mktemp -d)"
           trap 'rm -rf "$config"' EXIT
           # Package visibility must be set to public by the repository owner.
-          docker --config "$config" pull "$IMAGE:$VERSION"
+          docker --config "$config" pull --platform linux/amd64 "$IMAGE:$AMD64_VERSION"
+          docker --config "$config" pull --platform linux/amd64 "$IMAGE:amd64-$AMD64_VERSION"
           docker --config "$config" manifest inspect "$IMAGE:latest" > /dev/null
+          docker --config "$config" manifest inspect "$IMAGE:154.0.8037.57" > /dev/null
+          for arch in amd64 arm64; do
+            docker --config "$config" pull --platform "linux/$arch" "$IMAGE:latest"
+            docker --config "$config" image inspect "$IMAGE:latest" > image.json
+            python3 - "$arch" <<'PYCODE'
+          import json
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'docker')
+          from smoke import VERSIONS, check_image_metadata
+          arch = check_image_metadata(json.loads(Path('image.json').read_text())[0], sys.argv[1])
+          assert VERSIONS[arch] == os.environ[f'{arch.upper()}_VERSION']
+          print(f'Anonymous pull: linux/{arch}, OCI version {VERSIONS[arch]}')
+          PYCODE
+          done

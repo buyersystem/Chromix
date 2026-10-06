@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+ARG TARGETARCH
 FROM ubuntu:24.04 AS download
 ARG TARGETARCH
 RUN apt-get update \
@@ -7,11 +8,10 @@ RUN apt-get update \
 COPY download.sh /usr/local/bin/download-chromix
 RUN /bin/sh /usr/local/bin/download-chromix "$TARGETARCH" /opt
 
-FROM ubuntu:24.04
+FROM ubuntu:24.04 AS runtime
 LABEL org.opencontainers.image.title="Chromix" \
       org.opencontainers.image.description="Non-root Chromix browser CLI from verified Linux release bundles" \
       org.opencontainers.image.source="https://github.com/xiaozhou26/Chromix" \
-      org.opencontainers.image.version="154.0.8037.57" \
       org.opencontainers.image.licenses="BSD-3-Clause"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -40,3 +40,11 @@ USER 10001:10001
 WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/chromix"]
 CMD ["--version"]
+
+FROM runtime AS runtime-amd64
+LABEL org.opencontainers.image.version="154.0.8037.97"
+
+FROM runtime AS runtime-arm64
+LABEL org.opencontainers.image.version="154.0.8037.57"
+
+FROM runtime-${TARGETARCH}
