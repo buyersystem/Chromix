@@ -82,7 +82,7 @@ def make_run(name="build-linux-x64", run_id=100, **changes):
     return run
 
 
-def write_bundle(path, missing=None, extra=None, corrupt=False, version="1.2.3.4"):
+def write_bundle(path, missing=None, extra=None, corrupt=False, version="1.2.3.4", separator="/"):
     if path.name in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
         members = ["chromix/chromix.cmd", "chromix/chrome.exe"]
         if path.name == "chromix-win-arm64.zip":
@@ -101,7 +101,7 @@ def write_bundle(path, missing=None, extra=None, corrupt=False, version="1.2.3.4
                 if name != missing:
                     payload = (arm64_pe(version=version) if path.name == "chromix-win-arm64.zip"
                                and name.endswith((".exe", ".dll")) else b"fixture")
-                    archive.writestr(zipfile.ZipInfo(name), payload)
+                    archive.writestr(zipfile.ZipInfo(name.replace("/", separator)), payload)
             if extra:
                 archive.writestr(zipfile.ZipInfo(extra[0]), extra[1])
     if corrupt:
@@ -305,7 +305,7 @@ class RunSelectionTest(ReleaseFixtureTest):
             text = (root / filename).read_text()
             for asset in release.ASSETS:
                 with self.subTest(file=filename, asset=asset):
-                    self.assertIn(f"`{asset}` |", text)
+                    self.assertRegex(text, rf"(?:`{re.escape(asset)}`|\[`{re.escape(asset)}`\]\(https://github\.com/xiaozhou26/Chromix/releases/download/[^)]+\)) \|")
             self.assertIn("`windows-2022`", text)
             self.assertIn("`windows-11-arm`", text)
 
@@ -441,6 +441,143 @@ class BundleValidationTest(ReleaseFixtureTest):
                 write_bundle(path, extra=(member, "bad"))
                 with self.assertRaises(ValueError):
                     release.validate_bundle(path)
+
+    def test_windows_backslash_members_are_validated_without_rewriting_or_extracting(self):
+        for asset in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
+            for separator in ("/", "\\"):
+                with self.subTest(asset=asset, separator=separator):
+                    path = self.root / asset
+                    write_bundle(path, separator=separator,
+                                 extra=("chromix\\154.0.8037.97.manifest", b"manifest"))
+                    with zipfile.ZipFile(path, "a") as archive:
+                        archive.writestr("chromix\\locales\\", b"")
+                        archive.writestr("chromix/locales\\en-US.pak", b"locale")
+                    before = path.read_bytes()
+                    with patch.object(zipfile.ZipFile, "extract", side_effect=AssertionError("extract")), \
+                            patch.object(zipfile.ZipFile, "extractall", side_effect=AssertionError("extractall")):
+                        release.validate_bundle(path, "1.2.3.4")
+                    self.assertEqual(path.read_bytes(), before)
+
+    def test_posix_assets_still_reject_backslash_members(self):
+        for asset in sorted(release.ASSETS):
+            if release.ASSET_PLATFORMS[asset] == "windows":
+                continue
+            with self.subTest(asset=asset):
+                path = self.root / asset
+                write_bundle(path, extra=("chromix\\outside", b"bad"))
+                with self.assertRaisesRegex(ValueError, "Unsafe browser ZIP"):
+                    release.validate_bundle(path)
+
+    def test_windows_normalized_duplicate_and_casefold_members_are_rejected(self):
+        for asset in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
+            for separator in ("/", "\\"):
+                for member in ("chromix/chrome.exe", "chromix\\chrome.exe", "chromix\\CHROME.EXE",
+                               "chromix/chrome.exe/", "chromix\\chrome.exe\\"):
+                    with self.subTest(asset=asset, separator=separator, member=member):
+                        path = self.root / asset
+                        write_bundle(path, separator=separator, extra=(member, b"bad"))
+                        with self.assertRaisesRegex(ValueError, "Duplicate ZIP"):
+                            release.validate_bundle(path, "1.2.3.4")
+            write_bundle(path, extra=("chromix/straße", b"first"))
+            with zipfile.ZipFile(path, "a") as archive:
+                archive.writestr("chromix\\STRASSE", b"second")
+            with self.assertRaisesRegex(ValueError, "Duplicate ZIP"):
+                release.validate_bundle(path, "1.2.3.4")
+
+    def test_windows_unsafe_normalized_members_are_rejected(self):
+        members = ("chromix\\..\\outside", "chromix/nested\\..\\outside", "../chromix/chrome.exe",
+                   "/chromix/outside", "\\chromix\\outside", "\\\\server\\share\\chromix\\outside",
+                   "//server/share/chromix/outside", "\\\\?\\C:\\chromix\\outside",
+                   "C:\\chromix\\outside", "C:chromix\\outside", "chromix\\C:\\outside",
+                   "chromix\\chrome.exe:stream", "chromix\\chrome.exe::$DATA",
+                   "chromix\\.\\outside", "chromix\\\\outside", "chromix/\\outside",
+                   "chromix\\outside\\\\", "chromix\\dir.\\outside", "chromix\\dir \\outside",
+                   "chromix\\chrome.exe.", "chromix\\chrome.exe ", "chromix\\bad?name",
+                   "chromix\\bad\nname", "chromix\\NUL", "chromix\\CON.txt", "chromix\\COM1.log")
+        for asset in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
+            path = self.root / asset
+            for member in members:
+                with self.subTest(asset=asset, member=member):
+                    write_bundle(path, separator="\\", extra=(member, b"bad"))
+                    with self.assertRaisesRegex(ValueError, "Unsafe"):
+                        release.validate_bundle(path, "1.2.3.4")
+
+    def test_windows_nul_truncated_member_is_rejected(self):
+        for asset in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
+            path = self.root / asset
+            write_bundle(path, extra=("chromix/badXname", b"bad"))
+            path.write_bytes(path.read_bytes().replace(b"chromix/badXname", b"chromix/bad\0name"))
+            with self.subTest(asset=asset), self.assertRaisesRegex(ValueError, "Unsafe"):
+                release.validate_bundle(path, "1.2.3.4")
+
+    def test_windows_file_directory_conflicts_are_rejected_in_either_order(self):
+        for asset in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
+            for names in (("chromix\\nested", "chromix/NESTED/file"),
+                          ("chromix/NESTED/file", "chromix\\nested")):
+                path = self.root / asset
+                write_bundle(path)
+                with zipfile.ZipFile(path, "a") as archive:
+                    for name in names:
+                        archive.writestr(name, b"bad")
+                with self.subTest(asset=asset, names=names), self.assertRaisesRegex(ValueError, "Ambiguous"):
+                    release.validate_bundle(path, "1.2.3.4")
+
+    def test_windows_special_members_and_ambiguous_directory_metadata_are_rejected(self):
+        for asset in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
+            for mode in (0o120777, 0o010600, 0o020600, 0o060600, 0o140600):
+                path = self.root / asset
+                write_bundle(path)
+                with zipfile.ZipFile(path, "a") as archive:
+                    info = zipfile.ZipInfo("chromix\\special")
+                    info.external_attr = mode << 16
+                    archive.writestr(info, b"bad")
+                with self.subTest(asset=asset, mode=mode), self.assertRaisesRegex(ValueError, "Special Windows ZIP"):
+                    release.validate_bundle(path, "1.2.3.4")
+            for member, attr in (("chromix\\directory", 0o040755 << 16),
+                                 ("chromix\\directory", 0x10),
+                                 ("chromix\\file\\", 0o100644 << 16)):
+                write_bundle(path)
+                with zipfile.ZipFile(path, "a") as archive:
+                    info = zipfile.ZipInfo(member)
+                    info.external_attr = attr
+                    archive.writestr(info, b"bad")
+                with self.subTest(asset=asset, member=member, attr=attr), self.assertRaisesRegex(ValueError, "Ambiguous"):
+                    release.validate_bundle(path, "1.2.3.4")
+
+    def test_windows_backslash_required_members_must_be_present_nonempty_files(self):
+        required = ["chromix/chromix.cmd", "chromix/chrome.exe", "chromix/LICENSE.chromix",
+                    "chromix/LICENSE.chromium"]
+        for asset in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
+            path = self.root / asset
+            members = required + (["chromix/" + name for name in
+                                   ("chrome.dll", "chrome_elf.dll", "libEGL.dll", "libGLESv2.dll")]
+                                  if asset == "chromix-win-arm64.zip" else [])
+            for missing in members:
+                name = missing.replace("/", "\\")
+                for extra in (None, (name, b""), (name + "\\", b"not a file")):
+                    with self.subTest(asset=asset, missing=missing, extra=extra):
+                        write_bundle(path, missing=missing, extra=extra, separator="\\")
+                        with self.assertRaisesRegex(ValueError, "Incomplete"):
+                            release.validate_bundle(path, "1.2.3.4")
+
+    def test_arm64_backslash_paths_preserve_pe_machine_and_version_checks(self):
+        path = self.root / "chromix-win-arm64.zip"
+        for member in ("chrome.exe", "chrome.dll", "1.2.3.4/chrome.dll", "nested/CHROME.EXE"):
+            for payload, error in ((arm64_pe(machine=0x8664), "ARM64 PE"),
+                                   (arm64_pe(version="9.8.7.6"), "PE version does not match"),
+                                   (arm64_pe(product_version="9.8.7.6"), "PE version does not match")):
+                name = "chromix/" + member
+                write_bundle(path, separator="\\", missing=name, extra=(name.replace("/", "\\"), payload))
+                with self.subTest(member=member, error=error), self.assertRaisesRegex(ValueError, error):
+                    release.validate_bundle(path, "1.2.3.4")
+        for member, payload in (("nested\\helper.EXE", b"not a PE"),
+                                ("nested\\helper.DLL", b"not a PE"),
+                                ("nested\\payload.bin", arm64_pe(machine=0x8664))):
+            write_bundle(path, separator="\\", extra=("chromix\\" + member, payload))
+            with self.subTest(member=member), self.assertRaises(ValueError):
+                release.validate_bundle(path, "1.2.3.4")
+        write_bundle(path, separator="\\", extra=("chromix\\nested\\third-party.dll", arm64_pe(version="9.8.7.6")))
+        release.validate_bundle(path, "1.2.3.4")
 
     def test_corruption_is_rejected_even_when_checksum_matches(self):
         self.artifact_errors["chromix-linux-x64"] = "corrupt"

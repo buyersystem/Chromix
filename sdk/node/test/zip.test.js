@@ -114,7 +114,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
   ["darwin", "x64", "mac-x64"], ["darwin", "arm64", "mac-arm64"]]) {
   test(`ZIP download, public API and cache: ${plat}`, async (t) => {
     mockPlatform(t, platform, arch);
-    const tag = ["linux-x64", "linux-arm64"].includes(plat) ? "v154.0.8037.97" : "v151.0.7922.173";
+    const tag = ["linux-x64", "linux-arm64", "win-x64"].includes(plat) ? "v154.0.8037.97" : "v151.0.7922.173";
     const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
     assert.equal(binary.resolvePlatform(), plat);
     assert.equal(api.binaryInfo(options).installed, false);
@@ -135,6 +135,68 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
         assert.equal(statSync(path).mode & 0o7777, 0o755);
       assert.equal(statSync(join(root, "chromix/resources.pak")).mode & 0o777, 0o644);
     }
+  });
+}
+
+for (const [arch, plat] of [["x64", "win-x64"], ["arm64", "win-arm64"]])
+for (const directories of [false, true]) {
+  test(`Windows backslash ZIP download: ${plat}, directories=${directories}`, async (t) => {
+    mockPlatform(t, "win32", arch);
+    let entries = [file("chromix\\chromix.cmd", "launcher", 0), file("chromix\\chrome.exe", "chrome fixture", 0),
+      file("chromix\\locales/en-US.pak", "locale", 0)];
+    if (directories) entries = [file("chromix\\", "", 0), file("chromix\\locales\\", "", 0),
+      file("chromix\\empty\\", "", 0), ...entries];
+    const urls = mockRelease(t, plat, zipFixture(entries));
+    const chrome = await api.ensureBinary(), root = dirname(dirname(chrome));
+    assert.equal(readFileSync(chrome, "utf8"), "chrome fixture");
+    assert.equal(readFileSync(join(root, "chromix", "locales", "en-US.pak"), "utf8"), "locale");
+    if (directories) assert.equal(statSync(join(root, "chromix", "empty")).isDirectory(), true);
+    assert.equal(api.binaryInfo().installed, true);
+    assert.equal(await api.ensureBinary(), chrome);
+    assert.equal(urls.length, 2);
+  });
+}
+
+for (const plat of ["linux-x64", "linux-arm64", "mac-x64", "mac-arm64"]) {
+  test(`POSIX target rejects backslash ZIP even on Windows host: ${plat}`, async (t) => {
+    mockPlatform(t, "win32", "x64");
+    mockRelease(t, plat, zipFixture([...bundle(plat), file("chromix\\helper2")]));
+    await assert.rejects(binary.ensureNative(plat, host, tag), /invalid characters in fileName/);
+    assert.deepEqual(readdirSync(join(cache, tag)), []);
+  });
+}
+
+const windowsUnsafeEntries = {
+  mixedDuplicate: [file("chromix\\chrome.exe")],
+  mixedCaseCollision: [file("chromix\\CHROME.EXE")],
+  directoryCollision: [file("chromix\\", "", 0)],
+  traversal: [file("chromix\\..\\..\\outside")],
+  mixedTraversal: [file("chromix/locales\\../outside")],
+  dot: [file("chromix\\.\\helper")],
+  emptyComponent: [file("chromix\\\\helper")],
+  unc: [file("\\\\server\\chromix\\helper")],
+  absolute: [file("\\chromix\\helper")],
+  drive: [file("C:\\chromix\\helper")],
+  driveRelative: [file("C:chromix\\helper")],
+  ads: [file("chromix\\chrome.exe:stream")],
+  device: [file("chromix\\NUL.txt")],
+  trailingDot: [file("chromix\\helper.")],
+  trailingSpace: [file("chromix\\helper ")],
+  linkEscape: [link("chromix\\link", "../../outside")],
+  linkBackslashEscape: [link("chromix\\link", "..\\..\\outside")],
+  linkUnc: [link("chromix\\link", "\\\\server\\outside")],
+  linkDrive: [link("chromix\\link", "C:\\outside")],
+  linkTraversal: [link("chromix\\link", "../.."), file("chromix\\link/outside")],
+  linkCaseTraversal: [link("chromix\\Link", "../.."), file("chromix/link\\outside")],
+};
+for (const plat of ["win-x64", "win-arm64"])
+for (const [name, entries] of Object.entries(windowsUnsafeEntries)) {
+  test(`Windows backslash ZIP rejects unsafe paths: ${plat} ${name}`, async (t) => {
+    writeFileSync(join(cache, "outside"), "untouched");
+    mockRelease(t, plat, zipFixture([...bundle(plat), ...entries]));
+    await assert.rejects(binary.ensureNative(plat, host, tag));
+    assert.equal(readFileSync(join(cache, "outside"), "utf8"), "untouched");
+    assert.deepEqual(readdirSync(join(cache, tag)), []);
   });
 }
 
@@ -179,7 +241,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
 for (const missing of ["launcher", "binary", "directory", "external-link"]) {
   test(`public API rejects incomplete ${plat} cache: ${missing}`, { skip: missing === "external-link" && process.platform === "win32" }, async (t) => {
     mockPlatform(t, platform, arch);
-    const tag = ["linux-x64", "linux-arm64"].includes(plat) ? "v154.0.8037.97" : "v151.0.7922.173";
+    const tag = ["linux-x64", "linux-arm64", "win-x64"].includes(plat) ? "v154.0.8037.97" : "v151.0.7922.173";
     const root = join(cache, tag, plat);
     const launcher = join(root, binary.ASSETS[plat].launcher), chrome = binary.binaryPath(plat, root);
     mkdirSync(dirname(chrome), { recursive: true });
@@ -201,6 +263,7 @@ for (const [arch, plat, other] of [["x64", "win-x64", "win-arm64"], ["arm64", "w
 for (const failure of ["", "http"]) {
   test(`Windows cache isolation without architecture fallback: ${plat} ${failure || "success"}`, async (t) => {
     mockPlatform(t, "win32", arch);
+    const tag = plat === "win-x64" ? "v154.0.8037.97" : "v151.0.7922.173";
     const otherRoot = join(cache, tag, other);
     mkdirSync(join(otherRoot, "chromix"), { recursive: true });
     writeFileSync(join(otherRoot, "chromix", "chromix.cmd"), "other launcher");
@@ -240,6 +303,7 @@ for (const [arch, plat] of [["x64", "win-x64"], ["arm64", "win-arm64"]]) {
       });
     }
     mockRelease(t, plat, zipFixture(bundle(plat)));
+    const tag = plat === "win-x64" ? "v154.0.8037.97" : "v151.0.7922.173";
     const launch = await api.buildLaunchOptions({ ...options, stealthArgs: false });
     assert.equal(launch.executablePath, join(cache, tag, plat, "chromix", "chrome.exe"));
     assert.deepEqual(launch.args.filter((arg) => arg.startsWith("--uxr-widevine-cdm=")),
@@ -292,7 +356,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
     test(`platform channel, install and CLI agree: ${plat} ${channel || "default"}`, async (t) => {
       mockPlatform(t, platform, arch);
       process.env.CLOAKBROWSER_RELEASE_CHANNEL = channel;
-      const version = ["linux-x64", "linux-arm64"].includes(plat) ? "154.0.8037.97" :
+      const version = ["linux-x64", "linux-arm64", "win-x64"].includes(plat) ? "154.0.8037.97" :
         channel === "latest" ? "152.0.7977.75" : "151.0.7922.173";
       const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
       assert.equal(api.binaryInfo().version, version);
@@ -321,14 +385,14 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
   }
 
   for (const [channel, oldTag] of [["stable", "v151.0.7922.173"], ["latest", "v152.0.7977.75"]]) {
-    test(`Linux channel promotion preserves other platform caches: ${plat} ${channel}`, async (t) => {
+    test(`Platform channel promotion preserves old caches: ${plat} ${channel}`, async (t) => {
       mockPlatform(t, platform, arch);
       const oldRoot = join(cache, oldTag, plat), oldChrome = binary.binaryPath(plat, oldRoot);
       mkdirSync(dirname(oldChrome), { recursive: true });
       writeFileSync(oldChrome, "old browser");
       writeFileSync(join(oldRoot, binary.ASSETS[plat].launcher), "old launcher");
       const urls = mockRelease(t, plat, zipFixture(bundle(plat)));
-      const promoted = ["linux-x64", "linux-arm64"].includes(plat);
+      const promoted = ["linux-x64", "linux-arm64", "win-x64"].includes(plat);
       assert.equal(api.binaryInfo({ releaseChannel: channel }).installed, !promoted);
       const selectedTag = promoted ? "v154.0.8037.97" : oldTag;
       assert.equal(await api.ensureBinary({ releaseChannel: channel }), binary.binaryPath(plat, join(cache, selectedTag, plat)));
@@ -359,7 +423,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
 
   test(`major, invalid selectors and precedence: ${plat}`, async (t) => {
     mockPlatform(t, platform, arch);
-    if (["linux-x64", "linux-arm64"].includes(plat)) assert.equal(api.binaryInfo({ browserVersion: "154" }).version, "154.0.8037.97");
+    if (["linux-x64", "linux-arm64", "win-x64"].includes(plat)) assert.equal(api.binaryInfo({ browserVersion: "154" }).version, "154.0.8037.97");
     else assert.throws(() => api.binaryInfo({ browserVersion: "154" }), /Unsupported browser version/);
     for (const version of ["15", "999", "152.0", "../154.0.8037.97"]) {
       assert.throws(() => api.binaryInfo({ browserVersion: version }), /Unsupported browser version/);
@@ -382,7 +446,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
     process.env.CLOAKBROWSER_BINARY_PATH = local;
     assert.equal(await api.ensureBinary({ browserVersion: "invalid", releaseChannel: "invalid" }), local);
     const info = api.binaryInfo();
-    assert.equal(info.version, ["linux-x64", "linux-arm64"].includes(plat) ? "154.0.8037.97" : "151.0.7922.173");
+    assert.equal(info.version, ["linux-x64", "linux-arm64", "win-x64"].includes(plat) ? "154.0.8037.97" : "151.0.7922.173");
     assert.equal(info.installed, false);
     assert.equal(info.path, null);
     rmSync(local);
@@ -393,7 +457,7 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
     test(`update requires newer platform asset: ${plat} ${scenario}`, async (t) => {
       mockPlatform(t, platform, arch);
       process.env.CLOAKBROWSER_RELEASE_CHANNEL = "latest";
-      const current = ["linux-x64", "linux-arm64"].includes(plat) ? "154.0.8037.97" : "152.0.7977.75";
+      const current = ["linux-x64", "linux-arm64", "win-x64"].includes(plat) ? "154.0.8037.97" : "152.0.7977.75";
       let candidate = scenario === "matching" ? "155.0.1.2" : "154.0.8037.97";
       if (scenario === "older") candidate = "151.0.7922.173";
       if (scenario === "invalid") candidate = "not-a-version";
@@ -408,9 +472,29 @@ for (const [platform, arch, plat] of [["linux", "x64", "linux-x64"], ["linux", "
         updateAvailable: scenario === "matching",
       });
       assert.equal((await api.checkForUpdate({ browserVersion: "155.0.1.2", releaseChannel: "stable" })).currentVersion,
-        ["linux-x64", "linux-arm64"].includes(plat) ? "154.0.8037.97" : "151.0.7922.173");
+        ["linux-x64", "linux-arm64", "win-x64"].includes(plat) ? "154.0.8037.97" : "151.0.7922.173");
     });
   }
+}
+
+for (const [channel, oldTag] of [["stable", "v151.0.7922.173"], ["latest", "v152.0.7977.75"]]) {
+  test(`Windows x64 promotion failure never uses old channel cache: ${channel}`, async (t) => {
+    mockPlatform(t, "win32", "x64");
+    const oldRoot = join(cache, oldTag, "win-x64"), oldChrome = binary.binaryPath("win-x64", oldRoot);
+    mkdirSync(dirname(oldChrome), { recursive: true });
+    writeFileSync(oldChrome, "old browser");
+    writeFileSync(join(oldRoot, "chromix", "chromix.cmd"), "old launcher");
+    const urls = mockRelease(t, "win-x64", Buffer.alloc(0), "http");
+    await assert.rejects(api.ensureBinary({ releaseChannel: channel }), /download failed: 404/);
+    const info = api.binaryInfo({ releaseChannel: channel });
+    assert.equal(info.version, "154.0.8037.97");
+    assert.equal(info.installed, false);
+    assert.equal(info.path, null);
+    assert.equal(await api.ensureBinary({ browserVersion: oldTag }), oldChrome);
+    assert.equal(readFileSync(oldChrome, "utf8"), "old browser");
+    assert.deepEqual(urls, [`${host}/chromix-win-x64.zip`]);
+    assert.deepEqual(readdirSync(join(cache, "v154.0.8037.97")), []);
+  });
 }
 
 test("explicit unavailable release fails without falling back", async (t) => {

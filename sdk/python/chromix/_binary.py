@@ -31,6 +31,10 @@ _PLATFORM_CHANNELS = {
         "stable": {"tag": "v154.0.8037.97"},
         "latest": {"tag": "v154.0.8037.97"},
     },
+    "win-x64": {
+        "stable": {"tag": "v154.0.8037.97"},
+        "latest": {"tag": "v154.0.8037.97"},
+    },
 }
 _CACHE = Path(os.environ.get("CHROMIX_CACHE_DIR",
                              Path.home() / ".cache" / "chromix"))
@@ -141,7 +145,7 @@ def _bundle_complete(plat: str, root: Path) -> bool:
     return True
 
 
-def _extract_zip(archive: Path, root: Path) -> None:
+def _extract_zip(archive: Path, root: Path, plat: str | None = None) -> None:
     """Extract bundle files and internal symlinks, preserving executable bits."""
     with zipfile.ZipFile(archive) as z:
         entries = []
@@ -149,7 +153,10 @@ def _extract_zip(archive: Path, root: Path) -> None:
         links = set()
         for entry in z.infolist():
             filename = entry.orig_filename
-            parts = (filename[:-1] if filename.endswith("/") else filename).split("/")
+            if plat in ("win-x64", "win-arm64"):
+                filename = filename.replace("\\", "/")
+            is_dir = filename.endswith("/")
+            parts = (filename[:-1] if is_dir else filename).split("/")
             name = PurePosixPath(*parts)
             # Reject Windows aliases too, even when extracting on POSIX.
             if (parts[0] != "chromix" or any(
@@ -167,15 +174,15 @@ def _extract_zip(archive: Path, root: Path) -> None:
                 links.add(key)
             elif stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR):
                 raise ValueError(f"Unsupported ZIP entry: {name}")
-            entries.append((entry, name, mode))
-        for _, name, _ in entries:
+            entries.append((entry, name, mode, is_dir))
+        for _, name, _, _ in entries:
             if any(str(parent).lower() in links for parent in name.parents):
                 raise ValueError(f"ZIP entry traverses a symlink: {name}")
-        for entry, name, mode in entries:
+        for entry, name, mode, is_dir in entries:
             target = root.joinpath(*name.parts)
             if stat.S_ISLNK(mode):
                 continue
-            if entry.is_dir():
+            if is_dir:
                 target.mkdir(parents=True, exist_ok=True)
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +190,7 @@ def _extract_zip(archive: Path, root: Path) -> None:
                     shutil.copyfileobj(source, dest)
                 if os.name != "nt":
                     target.chmod(0o755 if mode & 0o111 else 0o644)
-        for entry, name, mode in entries:
+        for entry, name, mode, _ in entries:
             if not stat.S_ISLNK(mode):
                 continue
             target = root.joinpath(*name.parts)
@@ -196,7 +203,7 @@ def _extract_zip(archive: Path, root: Path) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(link)
         bundle = root.resolve(strict=True) / "chromix"
-        for _, name, mode in entries:
+        for _, name, mode, _ in entries:
             if stat.S_ISLNK(mode):
                 try:
                     root.joinpath(*name.parts).resolve(strict=True).relative_to(bundle)
@@ -226,7 +233,7 @@ def _download(plat: str, host: str, tag: str) -> Path:
             sys.stderr.write("[chromix] SHA256 verified\n")
         else:
             sys.stderr.write("[chromix] WARNING: no SHA256SUMS published; skipping verification\n")
-        _extract_zip(archive, stage)
+        _extract_zip(archive, stage, plat)
         if not _bundle_complete(plat, stage):
             raise RuntimeError("bundle extracted but launcher or chrome binary missing")
         if os.name != "nt":

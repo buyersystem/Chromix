@@ -24,6 +24,10 @@ const PLATFORM_CHANNELS = {
     stable: { tag: "v154.0.8037.97" },
     latest: { tag: "v154.0.8037.97" },
   },
+  "win-x64": {
+    stable: { tag: "v154.0.8037.97" },
+    latest: { tag: "v154.0.8037.97" },
+  },
 };
 export const CACHE = process.env.CHROMIX_CACHE_DIR || join(homedir(), ".cache", "chromix");
 export const hostFor = (tag) => process.env.CHROMIX_DOWNLOAD_HOST
@@ -139,9 +143,11 @@ function entryName(entry) {
   return name;
 }
 
-async function extractZip(archive, root) {
+async function extractZip(archive, root, plat) {
   const zip = await promisify(yauzl.open)(archive, {
-    lazyEntries: true, autoClose: false, strictFileNames: true,
+    lazyEntries: true, autoClose: false,
+    // yauzl normalizes Windows separators before validating entry names.
+    strictFileNames: !["win-x64", "win-arm64"].includes(plat),
   });
   try {
     const entries = await zipEntries(zip);
@@ -230,7 +236,7 @@ export async function ensureNative(plat, host, tag) {
       process.stderr.write("[chromix] WARNING: no SHA256SUMS published; skipping verification\n");
     }
 
-    await extractZip(archive, stage);
+    await extractZip(archive, stage, plat);
     if (!bundleComplete(plat, stage))
       throw new Error("bundle extracted but launcher or chrome binary missing");
     if (process.platform !== "win32") {

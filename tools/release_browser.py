@@ -219,15 +219,40 @@ def validate_arm64_pe(stream, size: int, name: str, version: str | None = None) 
 
 def validate_bundle(path: Path, version: str | None = None) -> None:
     with zipfile.ZipFile(path) as archive:
-        names = archive.namelist()
-        if len(set(names)) != len(names):
-            raise ValueError(f"Duplicate ZIP members in {path.name}")
-        for name in names:
-            parts = PurePosixPath(name).parts
-            if (not parts or parts[0] != "chromix" or ".." in parts
+        windows = ASSET_PLATFORMS.get(path.name) == "windows"
+        members = {}
+        identities = {}
+        for info in archive.infolist():
+            name = info.filename.replace("\\", "/") if windows else info.filename
+            is_dir = name.endswith("/")
+            parts = (name[:-1] if is_dir else name).split("/")
+            if (info.orig_filename != info.filename or parts[0] != "chromix"
+                    or any(part in ("", ".", "..") for part in parts)
                     or "\\" in name or ":" in name):
-                raise ValueError(f"Unsafe browser ZIP member: {name}")
-        if path.name in ("chromix-win-x64.zip", "chromix-win-arm64.zip"):
+                raise ValueError(f"Unsafe browser ZIP member: {info.filename}")
+            identity = name.rstrip("/").casefold() if windows else name
+            if identity in identities:
+                raise ValueError(f"Duplicate ZIP members in {path.name}: {info.filename}")
+            if windows:
+                mode = stat.S_IFMT(info.external_attr >> 16)
+                if mode not in (0, stat.S_IFREG, stat.S_IFDIR):
+                    raise ValueError(f"Special Windows ZIP member: {info.filename}")
+                if ((mode == stat.S_IFDIR or info.external_attr & 0x10) and not is_dir
+                        or mode == stat.S_IFREG and is_dir):
+                    raise ValueError(f"Ambiguous Windows ZIP member: {info.filename}")
+                if (any(part.endswith((".", " ")) for part in parts)
+                        or any(ord(char) < 32 or char in '<>"|?*' for char in name)
+                        or any(re.fullmatch(r"CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]|CONIN\$|CONOUT\$",
+                                            part.split(".", 1)[0].rstrip(" "), re.IGNORECASE) for part in parts)):
+                    raise ValueError(f"Unsafe Windows ZIP member: {info.filename}")
+            members[name] = info
+            identities[identity] = is_dir
+        if windows:
+            for identity in identities:
+                for parent in PurePosixPath(identity).parents:
+                    if identities.get(str(parent)) is False:
+                        raise ValueError(f"Ambiguous Windows ZIP file/directory: {identity}")
+        if windows:
             required = {"chromix/chromix.cmd", "chromix/chrome.exe"}
             if path.name == "chromix-win-arm64.zip":
                 required |= {"chromix/chrome.dll", "chromix/chrome_elf.dll", "chromix/libEGL.dll",
@@ -237,28 +262,21 @@ def validate_bundle(path: Path, version: str | None = None) -> None:
         else:
             required = {"chromix/chromix", "chromix/chrome"}
         required |= {"chromix/LICENSE.chromix", "chromix/LICENSE.chromium"}
-        if not required.issubset(names) or any(archive.getinfo(n).file_size == 0 for n in required):
+        if not required.issubset(members) or any(members[n].file_size == 0 for n in required):
             raise ValueError(f"Incomplete browser ZIP: {path.name}")
         if archive.testzip() is not None:
             raise ValueError(f"Corrupt browser ZIP: {path.name}")
         if path.name == "chromix-win-arm64.zip":
             if version is None or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", version):
                 raise ValueError("ARM64 bundle verification requires the source Chromium version")
-            if len({name.casefold() for name in names}) != len(names):
-                raise ValueError("Case-colliding Windows ZIP members")
-            for info in archive.infolist():
-                mode = stat.S_IFMT(info.external_attr >> 16)
-                if mode not in (0, stat.S_IFREG, stat.S_IFDIR):
-                    raise ValueError(f"Special Windows ZIP member: {info.filename}")
-                if any(part.endswith((".", " ")) for part in PurePosixPath(info.filename).parts):
-                    raise ValueError(f"Unsafe Windows ZIP member: {info.filename}")
-                if info.is_dir():
+            for name, info in members.items():
+                if name.endswith("/"):
                     continue
                 with archive.open(info) as stream:
                     is_pe = stream.read(2) == b"MZ"
-                    if is_pe or info.filename.lower().endswith((".exe", ".dll")):
-                        expected = version if PurePosixPath(info.filename).name.lower() in ("chrome.exe", "chrome.dll") else None
-                        validate_arm64_pe(stream, info.file_size, info.filename, expected)
+                    if is_pe or name.lower().endswith((".exe", ".dll")):
+                        expected = version if PurePosixPath(name).name.lower() in ("chrome.exe", "chrome.dll") else None
+                        validate_arm64_pe(stream, info.file_size, name, expected)
 
 
 def collect(repo: str, run: dict, root: Path) -> dict[str, Path]:

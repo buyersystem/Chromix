@@ -38,7 +38,7 @@ class LicenseMetadataRegressionTest(unittest.TestCase):
     def test_node_package_includes_license_and_repository_metadata(self):
         package = json.loads(NODE_PACKAGE.read_text(encoding="utf-8"))
         self.assertEqual(package["name"], "@xiaoxiaofeihh/chromix")
-        self.assertEqual(package["version"], "0.1.2")
+        self.assertEqual(package["version"], "0.1.3")
         self.assertEqual(package["publishConfig"]["access"], "public")
         self.assertEqual(package["license"], "BSD-3-Clause")
         self.assertIn("LICENSE", package["files"])
@@ -46,11 +46,11 @@ class LicenseMetadataRegressionTest(unittest.TestCase):
         self.assertEqual(package["bugs"]["url"], "https://github.com/xiaozhou26/Chromix/issues")
 
     def test_sdk_package_versions_match_runtime_and_lock_metadata(self):
-        python_version = "152.0.7977.82.post2"
+        python_version = "152.0.7977.82.post3"
         self.assertIn(f'version = "{python_version}"', PYPROJECT.read_text(encoding="utf-8"))
         python_init = REPO / "sdk" / "python" / "chromix" / "__init__.py"
         self.assertIn(f'__version__ = "{python_version}"', python_init.read_text(encoding="utf-8"))
-        node_version = "0.1.2"
+        node_version = "0.1.3"
         package = json.loads(NODE_PACKAGE.read_text(encoding="utf-8"))
         lock = json.loads(NODE_PACKAGE.with_name("package-lock.json").read_text(encoding="utf-8"))
         self.assertEqual(package["version"], node_version)
