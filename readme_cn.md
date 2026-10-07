@@ -183,11 +183,11 @@ Python 使用 `humanize=True`，Node 使用 `humanize: true` 启用 SDK 动作�
 
 ## 下载与平台
 
-从**同一个 Release** 下载浏览器 ZIP 和对应校验文件。**Linux x64 和 ARM64 下载均使用 [v154.0.8037.97](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97)**。Windows/macOS 四个平台（各自的 x64 和 ARM64）暂时保留 [v154.0.8037.57](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57)，各自新版发布后再更新。
+从**同一个 Release** 下载浏览器 ZIP 和对应校验文件。**Windows x64 及 Linux x64 / ARM64 下载均使用 [v154.0.8037.97](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97)**。Windows ARM64 与 macOS x64 / ARM64 暂时保留 [v154.0.8037.57](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.57)，各自新版发布后再更新。
 
 | 目标平台 | 归档 | 解压后的手动启动入口 |
 |---|---|---|
-| Windows x64 | `chromix-win-x64.zip` | `chromix/chromix.cmd` |
+| Windows x64 | [`chromix-win-x64.zip`](https://github.com/xiaozhou26/Chromix/releases/download/v154.0.8037.97/chromix-win-x64.zip) | `chromix/chromix.cmd` |
 | Windows ARM64 | `chromix-win-arm64.zip` | `chromix/chromix.cmd` |
 | Linux x64 / Docker amd64 | `chromix-linux-x64.zip` | `chromix/chromix` |
 | Linux ARM64 | `chromix-linux-arm64.zip` | `chromix/chromix` |
@@ -196,7 +196,7 @@ Python 使用 `humanize=True`，Node 使用 `humanize: true` 启用 SDK 动作�
 
 各平台独立构建和发布。Windows ARM64 在 `windows-2022` 交叉编译，在 `windows-11-arm` 做原生验证。macOS 包没有 Developer ID 分发签名和公证；Linux 需要兼容的系统库及可工作的 Chromium sandbox。
 
-**校验清单可能按平台拆分。** `v154.0.8037.97` 的 Linux x64 对应 `SHA256SUMS`，Linux ARM64 对应 `SHA256SUMS-linux-arm64`。选择包含你下载的 ZIP 名称的清单；通用清单未必覆盖所有平台。
+**校验清单可能按平台拆分。** `v154.0.8037.97` 的 Linux x64 对应 `SHA256SUMS`，Linux ARM64 对应 `SHA256SUMS-linux-arm64`。Windows x64 对应 [`SHA256SUMS-win-x64`](https://github.com/xiaozhou26/Chromix/releases/download/v154.0.8037.97/SHA256SUMS-win-x64)，同一 Release 的主清单 [`SHA256SUMS`](https://github.com/xiaozhou26/Chromix/releases/download/v154.0.8037.97/SHA256SUMS) 也包含该 ZIP。选择包含你下载的 ZIP 名称的清单；通用清单未必覆盖所有平台。
 
 Linux x64 下载两份文件后：
 
@@ -234,7 +234,7 @@ export CLOAKBROWSER_BINARY_PATH="/absolute/path/chromix/Chromium.app/Contents/Ma
 
 ### 分清三类版本
 
-Python SDK `152.0.7977.82.post2` 和 Node SDK `0.1.2` 已发布，Linux x64 和 ARM64 的 `stable` / `latest` 均映射到 `v154.0.8037.97`；Windows/macOS 保留原有通道。使用 `python -m pip install --upgrade chromix` 或 `npm install @xiaoxiaofeihh/chromix@latest` 升级。SDK 包版本与浏览器版本分别管理。
+Python SDK `152.0.7977.82.post3` 和 Node SDK `0.1.3` 已发布，Windows x64 及 Linux x64 / ARM64 的 `stable` / `latest` 均映射到 `v154.0.8037.97`。这两个 SDK 版本还兼容 Windows 发布归档中的路径分隔符。Windows ARM64 与 macOS 保留原有通道，也可通过 `CLOAKBROWSER_BINARY_PATH` 指定本地浏览器。使用 `python -m pip install --upgrade chromix` 或 `npm install @xiaoxiaofeihh/chromix@latest` 升级。SDK 包版本与浏览器版本分别管理。
 
 | 版本来源 | 当前仓库配置 | 含义 |
 |---|---|---|
@@ -242,8 +242,9 @@ Python SDK `152.0.7977.82.post2` 和 Node SDK `0.1.2` 已发布，Linux x64 和 
 | macOS 源码 | Chromium `152.0.7977.82` | 独立的平台源码基线 |
 | Docker `latest` / `154.0.8037.97` | amd64 / arm64 `154.0.8037.97` | 双架构使用同一发布版本，旧 `.57` 标签保留 |
 | SDK Linux x64 / ARM64 `stable` / `latest` | [`v154.0.8037.97`](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97) | Linux 双架构的自动下载映射 |
-| SDK Windows / macOS `stable` | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) | 保留既有映射，使用前核对资产可用性 |
-| SDK Windows / macOS `latest` | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) | 保留既有映射，使用前核对资产可用性 |
+| SDK Windows x64 `stable` / `latest` | [`v154.0.8037.97`](https://github.com/xiaozhou26/Chromix/releases/tag/v154.0.8037.97) | 已随 Python `152.0.7977.82.post3` / Node `0.1.3` 发布 |
+| SDK Windows ARM64 / macOS `stable` | [`v151.0.7922.173`](https://github.com/xiaozhou26/Chromix/releases/tag/v151.0.7922.173) | 保留既有映射，使用前核对资产可用性 |
+| SDK Windows ARM64 / macOS `latest` | [`v152.0.7977.75`](https://github.com/xiaozhou26/Chromix/releases/tag/v152.0.7977.75) | 保留既有映射，使用前核对资产可用性 |
 
 源码配置以 [build/ungoogled-revisions.psd1](build/ungoogled-revisions.psd1) 为准，下载通道见 [Python](sdk/python/chromix/_binary.py) / [Node](sdk/node/_binary.js) 下载器。`CLOAKBROWSER_VERSION` 可选择已配置主版本或四段完整版本；显式通道优先。指定精确版本但该平台资产不存在时会报错，不静默退回其他版本。SDK 版本、浏览器发布版本和源码固定版本分别维护；新原生功能需要相应补丁编译出的浏览器。
 
