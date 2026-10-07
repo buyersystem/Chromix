@@ -16,7 +16,7 @@ MediaCapabilities filters can
 only restrict native support, smoothness and power efficiency. GPU templates
 remain synthetic test records rather than a measured full-device pool.
 
-The current series contains **148 patches**. The [public flag contract](../docs/fingerprint-flags.md)
+The current series contains **224 patches**. Patches `0217`–`0224` add explicit seeded Canvas/bounded WebGL pixel noise; see [configuration and verification](../docs/pixel-noise.md) and [GPU identity presentation](../docs/gpu-identity.md). Matching binary rebuild and native runtime verification are required. The [public flag contract](../docs/fingerprint-flags.md)
 documents fixed public defaults, context-bound GPU presentation, independent brand versions,
 quota, third-party cookies, closed author shadow roots, Windows font metrics,
 voice tables, local WebRTC presentation/auto and noise/off semantics. These are
@@ -26,8 +26,8 @@ that previously published packages contain them.
 Canvas patches `0121`–`0124` retain one prepared buffer across async encoding
 and remove random input mutation from the shared image encoder. Persona noise
 is applied once in Canvas readback/buffer preparation; disabling it also keeps
-encoded output free of the downstream legacy transform. GPU readback preserves
-native packing, errors and backend bytes instead of a CPU-only rewrite. These
+encoded output free of the downstream legacy transform. Default GPU readback preserves
+native packing, errors and backend bytes. The new explicit seeded mode has a bounded opaque RGBA8 CPU readback path; unsupported formats and backends remain native, and failed staging reads do not commit noise. These
 changes still require a matching Chromium build and browser verification.
 
 `0147` binds WebGL presentation to the actual context backend and retains native

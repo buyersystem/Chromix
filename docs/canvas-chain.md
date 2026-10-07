@@ -1,12 +1,16 @@
 # Canvas Chain Audit
 
+## Explicit pixel-noise addition
+
+Patches `0217`–`0224` add `--fingerprint-pixel-noise=seeded` as a separate, explicit readback policy. Default native behavior remains unchanged. Explicit seeded readback can retain native GPU identity/capabilities; it does not enable synthetic templates or Bridge. It reuses the Canvas RGB transform and adds a bounded opaque RGBA8 WebGL readback path. PBO, FLOAT, FBO and transparent WebGL paths remain native. See [pixel-noise scope and runnable diagnostics](pixel-noise.md). A rebuilt browser and native runtime validation are still required; the historical evidence below does not validate this addition.
+
 ## Shared Native GPU Policy (2026-09-14)
 
 Patches `0158`–`0164` add `--uxr-gpu-backend=native`: one immutable UXR
 policy now gates Canvas readback/export/text noise, Canvas Bridge, WebGL persona
 capabilities and WebGPU feature negotiation. It overrides conflicting synthetic
-flags without forcing GPU-off or a particular adapter. The current 216-patch
-stack makes native the ordinary default. Explicit compatibility, or synthetic
+flags without forcing GPU-off or a particular adapter. The 216-patch
+baseline makes native the ordinary default. Explicit compatibility, or synthetic
 tests without a policy, keep the earlier behavior below. This is a shared **native contract**, not a
 common cross-platform privacy rasterizer.
 

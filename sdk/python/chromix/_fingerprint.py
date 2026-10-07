@@ -21,6 +21,7 @@ _PREFERENCE_INTEGERS = {"max-touch-points": (0, 16), "timer-resolution": (0, 100
                         "audio-seed": (1, (1 << 64) - 1)}
 _PREFERENCE_ENUMS = {
     "gpu-backend": {"native", "compatibility"},
+    "pixel-noise": {"native", "seeded"},
     "font-policy": {"native", "restricted"},
     "audio-render": {"native", "isolated"},
     "color-scheme": {"dark", "light"},
@@ -69,6 +70,17 @@ def _validate_preferences(args, *, final=False):
                 or any(not entry.strip(" \t") for entry in entries)
                 or re.search(r"[\x00-\x08\x0a-\x1f\x7f]", families)):
             raise ValueError("restricted font-policy requires 1 to 256 comma-separated installed font families")
+    if (final and value("pixel-noise") == "seeded" and not fingerprint_off(args)
+            and switches.get("--fingerprint-noise") != "false"
+            and "--uxr-disable-fingerprint-noise" not in switches):
+        seed = switches.get("--uxr-canvas-seed")
+        if seed is None:
+            if "--fingerprint" not in switches:
+                raise ValueError("seeded pixel-noise requires --fingerprint or a nonzero canvas seed")
+            # Patch 0036 derives absent canvas seeds only with a public fingerprint switch.
+            seed = switches["--fingerprint"] or switches.get("--uxr-fingerprint-seed") or None
+        if seed is not None and (not re.fullmatch(r"[0-9]+", seed) or not 1 <= int(seed) < (1 << 64)):
+            raise ValueError("seeded pixel-noise requires a nonzero uint64 canvas seed")
     if final and value("audio-render") == "isolated" and not fingerprint_off(args):
         seed = value("audio-seed") or switches.get("--uxr-fingerprint-seed")
         if seed is None:

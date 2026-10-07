@@ -778,13 +778,21 @@ def test_real_series_parses_without_donor_execution():
         transformed, entries = arp.transform_patch(raw, set(), [])
         assert transformed == raw
         assert entries
-    assert len(names) == 216
-    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 217)]
+    assert len(names) == 224
+    assert [Path(name).name[:4] for name in names] == [f"{i:04d}" for i in range(1, 225)]
     assert all(Path(name).name[5:].startswith("display-") for name in names[191:213])
     assert [Path(name).name for name in names[213:]] == [
         "0214-animation-clock-quantization.patch",
         "0215-document-timeline-clock-origin.patch",
         "0216-display-native-emulated-regressions.patch",
+        "0217-pixel-noise-helper-build.patch",
+        "0218-pixel-noise-policy-declaration.patch",
+        "0219-pixel-noise-policy-snapshot.patch",
+        "0220-pixel-noise-launch-alias.patch",
+        "0221-pixel-noise-shared-helper.patch",
+        "0222-canvas-readback-shared-noise.patch",
+        "0223-canvas-export-shared-noise.patch",
+        "0224-webgl-seeded-readback-noise.patch",
     ]
 
 

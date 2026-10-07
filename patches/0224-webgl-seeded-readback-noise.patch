@@ -1,0 +1,165 @@
+diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -31,12 +31,14 @@
+ #include <array>
+ #include <cstring>
+ #include <memory>
++#include <optional>
+ #include <utility>
+ #include <vector>
+ 
+ #include "base/bit_cast.h"
+ #include "base/byte_size.h"
+ #include "base/compiler_specific.h"
++#include "base/containers/span.h"
+ #include "base/feature_list.h"
+ #include "base/memory/scoped_refptr.h"
+ #include "base/metrics/histogram_functions.h"
+@@ -44,6 +46,7 @@
+ #include "base/notimplemented.h"
+ #include "base/numerics/checked_math.h"
+ #include "base/uxr_config.h"
++#include "base/uxr_pixel_noise.h"
+ #include "base/strings/stringprintf.h"
+ #include "base/synchronization/lock.h"
+ #include "base/task/single_thread_task_runner.h"
+@@ -215,6 +218,97 @@
+ unsigned WebGLRenderingContextBase::max_active_webgl_contexts_on_worker_ = 0;
+ 
+ namespace {
++
++// A bounded staging read can prove completion only for an opaque, in-bounds
++// default buffer: every alpha byte must change from zero to 255. Transparent
++// buffers need an explicit command-buffer success result instead.
++constexpr size_t kUxrWebGLReadbackLimit = 16 * 1024 * 1024;
++
++struct UxrWebGLReadbackLayout {
++  size_t stride;
++  size_t skip;
++  size_t row_bytes;
++  size_t total;
++};
++
++std::optional<UxrWebGLReadbackLayout> UxrWebGLReadbackLayoutFor(
++    int width,
++    int height,
++    int alignment,
++    int row_length,
++    int skip_pixels,
++    int skip_rows,
++    size_t available) {
++  if (width <= 0 || height <= 0 || row_length < 0 || skip_pixels < 0 ||
++      skip_rows < 0 ||
++      (alignment != 1 && alignment != 2 && alignment != 4 && alignment != 8)) {
++    return std::nullopt;
++  }
++  const uint64_t row_pixels = row_length ? row_length : width;
++  if (static_cast<uint64_t>(skip_pixels) + width > row_pixels ||
++      row_pixels > kUxrWebGLReadbackLimit / 4) {
++    return std::nullopt;
++  }
++  const uint64_t stride =
++      (row_pixels * 4 + alignment - 1) / alignment * alignment;
++  // Bound both products before multiplication, including on 32-bit targets.
++  if (static_cast<uint64_t>(height) > kUxrWebGLReadbackLimit / stride ||
++      static_cast<uint64_t>(skip_rows) > kUxrWebGLReadbackLimit / stride) {
++    return std::nullopt;
++  }
++  const uint64_t skip = stride * skip_rows + uint64_t{4} * skip_pixels;
++  const uint64_t row_bytes = uint64_t{4} * width;
++  const uint64_t total = skip + stride * (height - 1) + row_bytes;
++  if (total > kUxrWebGLReadbackLimit || total > available) {
++    return std::nullopt;
++  }
++  return UxrWebGLReadbackLayout{static_cast<size_t>(stride),
++                               static_cast<size_t>(skip),
++                               static_cast<size_t>(row_bytes),
++                               static_cast<size_t>(total)};
++}
++
++bool UxrWebGLReadbackComplete(base::span<const uint8_t> staging,
++                             const UxrWebGLReadbackLayout& layout,
++                             int height) {
++  for (int row = 0; row < height; ++row) {
++    const auto bytes = staging.subspan(layout.skip + row * layout.stride,
++                                      layout.row_bytes);
++    for (size_t alpha = 3; alpha < bytes.size(); alpha += 4) {
++      if (bytes[alpha] != 255) {
++        return false;
++      }
++    }
++  }
++  return true;
++}
++
++void UxrCommitWebGLReadback(base::span<const uint8_t> staging,
++                          base::span<uint8_t> destination,
++                          const UxrWebGLReadbackLayout& layout,
++                          int x,
++                          int y,
++                          int width,
++                          int height,
++                          int drawing_height,
++                          uint64_t seed) {
++  const uint32_t folded_seed = base::UxrPixelNoiseSeed(seed);
++  for (int row = 0; row < height; ++row) {
++    const size_t start = layout.skip + row * layout.stride;
++    const auto source = staging.subspan(start, layout.row_bytes);
++    auto target = destination.subspan(start, layout.row_bytes);
++    // Match top-left export coordinates, independent of crop and PACK state.
++    const uint32_t top_y = drawing_height - 1 - (y + row);
++    for (int column = 0; column < width; ++column) {
++      const size_t pixel = static_cast<size_t>(column) * 4;
++      for (uint32_t channel = 0; channel < 3; ++channel) {
++        target[pixel + channel] = base::UxrNoiseChannel(
++            folded_seed, x + column, top_y, channel, source[pixel + channel]);
++      }
++      target[pixel + 3] = source[pixel + 3];
++    }
++  }
++}
+ 
+ constexpr char kDefaultWebGLVendor[] = "Google Inc. (Intel)";
+ constexpr char kDefaultWebGLRenderer[] =
+@@ -5736,10 +5830,37 @@
+     if (!binder.Succeeded()) {
+       return;
+     }
++    const auto policy = base::UxrConfig::GetInstance().GpuBackendPolicy();
++    const gfx::Size drawing_size = GetDrawingBuffer()->Size();
++    // PBO overloads never enter this helper. FBO, FLOAT, shared storage,
++    // transparent buffers and clipped reads retain the native path.
++    if (policy.seeded_pixel_noise && policy.canvas_pixel_noise && !framebuffer &&
++        !CreationAttributes().alpha && !pixels->IsShared() &&
++        read_buffer_of_default_framebuffer_ == GL_BACK && format == GL_RGBA &&
++        type == GL_UNSIGNED_BYTE && x >= 0 && y >= 0 && width > 0 && height > 0 &&
++        x <= drawing_size.width() && width <= drawing_size.width() - x &&
++        y <= drawing_size.height() && height <= drawing_size.height() - y) {
++      const auto pack = GetPackPixelStoreParams();
++      const auto layout = UxrWebGLReadbackLayoutFor(
++          width, height, pack.alignment, pack.row_length, pack.skip_pixels,
++          pack.skip_rows, buffer_size.ValueOrDie());
++      if (layout) {
++        std::vector<uint8_t> staging(layout->total, 0);
++        ContextGL()->ReadPixels(x, y, width, height, format, type, staging.data());
++        // ReadPixels returns void. Binder/validation success is insufficient:
++        // failed or partial transfers must never noise a caller's sentinel.
++        if (!isContextLost() &&
++            UxrWebGLReadbackComplete(staging, *layout, height)) {
++          UxrCommitWebGLReadback(
++              staging,
++              pixels->ByteSpanMaybeShared().subspan(offset_in_bytes.ValueOrDie()),
++              *layout, x, y, width, height, drawing_size.height(),
++              policy.pixel_noise_seed);
++        }
++        return;
++      }
++    }
+     ContextGL()->ReadPixels(x, y, width, height, format, type, data);
+-
+-    // Keep native errors, pack layout and readback bytes on every entry point.
+-    // CPU-only rewriting disagrees with PBO, float and encoded readbacks.
+   }
+ }
+ 

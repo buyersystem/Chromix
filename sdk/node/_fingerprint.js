@@ -16,6 +16,7 @@ const PREFERENCE_INTEGERS = new Map([["max-touch-points", [0n, 16n]], ["timer-re
   ["audio-seed", [1n, (1n << 64n) - 1n]]]);
 const PREFERENCE_ENUMS = new Map(Object.entries({
   "gpu-backend": ["native", "compatibility"],
+  "pixel-noise": ["native", "seeded"],
   "font-policy": ["native", "restricted"],
   "audio-render": ["native", "isolated"],
   "color-scheme": ["dark", "light"],
@@ -51,6 +52,19 @@ function validatePreferences(args, final) {
     if (!families || Buffer.byteLength(families, "utf8") > 4096 || entries.length > 256 ||
         entries.some((entry) => !entry.replace(/^[ \t]+|[ \t]+$/g, "")) || /[\x00-\x08\x0a-\x1f\x7f]/.test(families))
       throw new Error("restricted font-policy requires 1 to 256 comma-separated installed font families");
+  }
+  if (final && value("pixel-noise") === "seeded" && !fingerprintOff(args) &&
+      switches.get("--fingerprint-noise") !== "false" && !switches.has("--uxr-disable-fingerprint-noise")) {
+    let seed = switches.get("--uxr-canvas-seed");
+    if (seed === undefined) {
+      if (!switches.has("--fingerprint"))
+        throw new Error("seeded pixel-noise requires --fingerprint or a nonzero canvas seed");
+      // Patch 0036 derives absent canvas seeds only with a public fingerprint switch.
+      seed = switches.get("--fingerprint") || switches.get("--uxr-fingerprint-seed") || undefined;
+    }
+    if (seed !== undefined && (!seed || /[^0-9]/.test(seed) || BigInt(seed) < 1n || BigInt(seed) >= (1n << 64n))) {
+      throw new Error("seeded pixel-noise requires a nonzero uint64 canvas seed");
+    }
   }
   if (final && value("audio-render") === "isolated" && !fingerprintOff(args)) {
     const seed = value("audio-seed") ?? switches.get("--uxr-fingerprint-seed");

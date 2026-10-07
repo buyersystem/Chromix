@@ -1,0 +1,11 @@
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -1028,6 +1028,7 @@
+     "unguessable_token.h",
+     "uxr_config.cc",
+     "uxr_config.h",
++    "uxr_pixel_noise.h",
+     "uuid.cc",
+     "uuid.h",
+     "value_iterators.cc",

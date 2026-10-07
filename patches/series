@@ -215,3 +215,11 @@ patches/0213-display-emulator-reentry.patch
 patches/0214-animation-clock-quantization.patch
 patches/0215-document-timeline-clock-origin.patch
 patches/0216-display-native-emulated-regressions.patch
+patches/0217-pixel-noise-helper-build.patch
+patches/0218-pixel-noise-policy-declaration.patch
+patches/0219-pixel-noise-policy-snapshot.patch
+patches/0220-pixel-noise-launch-alias.patch
+patches/0221-pixel-noise-shared-helper.patch
+patches/0222-canvas-readback-shared-noise.patch
+patches/0223-canvas-export-shared-noise.patch
+patches/0224-webgl-seeded-readback-noise.patch

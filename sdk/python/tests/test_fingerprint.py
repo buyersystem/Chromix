@@ -170,6 +170,157 @@ def test_font_pool_unicode_spaces_and_empty_entries():
             normalize_fingerprint_args([flags[0], '--fingerprint-font-whitelist=' + families])
 
 
+@pytest.mark.parametrize('prefix', ['--fingerprint-', '--uxr-'])
+@pytest.mark.parametrize('mode', ['native', 'seeded'])
+def test_pixel_noise_modes_preserve_backend_and_fonts(prefix, mode):
+    from chromix.api import build_args
+    flag = prefix + 'pixel-noise=' + mode
+    assert normalize_fingerprint_args([flag]) == [flag]
+    for backend in ('native', 'compatibility'):
+        args = ['--fingerprint=42', flag, prefix + 'gpu-backend=' + backend,
+                '--fingerprint-font-policy=restricted', '--fingerprint-font-whitelist=Arial Narrow, ＭＳ ゴシック']
+        assert build_args(False, args) == args
+        synthetic = args + ['--uxr-synthetic-device-tests=true']
+        assert build_args(False, synthetic) == synthetic
+    assert build_args(False, [prefix + 'pixel-noise=native']) == [prefix + 'pixel-noise=native']
+
+
+@pytest.mark.parametrize('prefix', ['--fingerprint-', '--uxr-'])
+@pytest.mark.parametrize('suffix', ['', '=', '=auto', '=noise', '=true', '=false', '=0', '=1',
+                                     '=NATIVE', '=Seeded', '= seeded', '=seeded ', '=native,seeded'])
+@pytest.mark.parametrize('disabled', [[], ['--fingerprint=off'], ['--fingerprint-noise=false']])
+def test_pixel_noise_rejects_invalid_values_even_when_disabled(prefix, suffix, disabled):
+    from chromix.api import build_args
+    args = disabled + [prefix + 'pixel-noise' + suffix]
+    with pytest.raises(ValueError, match='pixel-noise requires one of'):
+        build_args(True, args)
+
+
+@pytest.mark.parametrize('prefix', ['--fingerprint-', '--uxr-'])
+def test_pixel_noise_seed_dependency_after_defaults(prefix):
+    from chromix.api import build_args
+    mode = [prefix + 'pixel-noise=seeded']
+    assert normalize_fingerprint_args(mode) == mode
+    with pytest.raises(ValueError, match='seeded pixel-noise requires'):
+        build_args(False, mode)
+    result = build_args(True, mode)
+    assert mode[0] in result
+    assert any(a.startswith('--fingerprint=') and int(a.split('=')[1]) > 0 for a in result)
+    assert not any('gpu-backend' in a or 'synthetic-device-tests' in a for a in result)
+    for seed in ('1', '42', '18446744073709551615'):
+        for flag in ('--fingerprint=', '--uxr-canvas-seed='):
+            args = mode + [flag + seed]
+            assert build_args(False, args) == args
+    # A bare public fingerprint switch retains the browser's existing seed generation.
+    for flag in ('--fingerprint', '--fingerprint='):
+        assert build_args(False, mode + [flag]) == mode + [flag]
+    with pytest.raises(ValueError, match='seeded pixel-noise requires'):
+        build_args(False, mode + ['--fingerprint-audio-seed=42'])
+    for seed in ('', '0', '-1', '+1', '1.5', ' 42', '42 ', '42\n', '42\r', 'abc', '18446744073709551616'):
+        with pytest.raises(ValueError, match='nonzero uint64 canvas seed'):
+            build_args(True, mode + ['--uxr-canvas-seed=' + seed])
+
+
+@pytest.mark.parametrize('prefix', ['--fingerprint-', '--uxr-'])
+@pytest.mark.parametrize('name, seeds, valid', [
+    ('missing', [], False),
+    ('internal-fingerprint-only', ['--uxr-fingerprint-seed=42'], False),
+    ('canvas-only', ['--uxr-canvas-seed=42'], True),
+    ('canvas-zero', ['--uxr-canvas-seed=0'], False),
+    ('public-seed', ['--fingerprint=42'], True),
+    ('public-with-other-internal', ['--fingerprint=42', '--uxr-fingerprint-seed=99'], True),
+    ('public-ignores-invalid-internal', ['--fingerprint=42', '--uxr-fingerprint-seed=invalid'], True),
+    ('public-ignores-zero-internal', ['--fingerprint=42', '--uxr-fingerprint-seed=0'], True),
+    ('public-ignores-empty-internal', ['--fingerprint=42', '--uxr-fingerprint-seed='], True),
+    ('public-with-canvas', ['--fingerprint=42', '--uxr-canvas-seed=99'], True),
+    ('public-with-zero-canvas', ['--fingerprint=42', '--uxr-canvas-seed=0'], False),
+    ('public-with-empty-canvas', ['--fingerprint=42', '--uxr-canvas-seed='], False),
+    ('public-with-bare-canvas', ['--fingerprint=42', '--uxr-canvas-seed'], False),
+    ('bare-public-random', ['--fingerprint'], True),
+    ('empty-public-random', ['--fingerprint='], True),
+    ('empty-public-inherits-internal', ['--fingerprint=', '--uxr-fingerprint-seed=42'], True),
+    ('empty-public-empty-internal-random', ['--fingerprint=', '--uxr-fingerprint-seed='], True),
+    ('empty-public-zero-internal', ['--fingerprint=', '--uxr-fingerprint-seed=0'], False),
+    ('empty-public-invalid-internal', ['--fingerprint=', '--uxr-fingerprint-seed=invalid'], False),
+    ('empty-public-internal-off', ['--fingerprint=', '--uxr-fingerprint-seed=off'], False),
+    ('empty-public-explicit-canvas', ['--fingerprint=', '--uxr-canvas-seed=42'], True),
+    ('empty-public-zero-canvas', ['--fingerprint=', '--uxr-canvas-seed=0'], False),
+    ('empty-public-empty-canvas', ['--fingerprint=', '--uxr-canvas-seed='], False),
+    ('canvas-wins-over-invalid-internal', ['--uxr-canvas-seed=42', '--uxr-fingerprint-seed=invalid'], True),
+    ('canvas-wins-over-inherited-invalid-internal', ['--fingerprint=', '--uxr-fingerprint-seed=invalid', '--uxr-canvas-seed=42'], True),
+    ('canvas-wins-over-internal-off', ['--fingerprint=', '--uxr-fingerprint-seed=off', '--uxr-canvas-seed=42'], True),
+    ('canvas-invalid-despite-valid-internal', ['--fingerprint=', '--uxr-fingerprint-seed=42', '--uxr-canvas-seed=0'], False),
+    ('canvas-last-valid', ['--uxr-canvas-seed=0', '--uxr-canvas-seed=42'], True),
+    ('canvas-last-invalid', ['--uxr-canvas-seed=42', '--uxr-canvas-seed=0'], False),
+    ('inherited-internal-last-valid', ['--fingerprint=', '--uxr-fingerprint-seed=0', '--uxr-fingerprint-seed=42'], True),
+    ('inherited-internal-last-invalid', ['--fingerprint=', '--uxr-fingerprint-seed=42', '--uxr-fingerprint-seed=0'], False),
+    ('off-without-seed', ['--fingerprint=off'], True),
+    ('off-with-invalid-canvas', ['--fingerprint=off', '--uxr-canvas-seed=0'], True),
+    ('off-with-empty-canvas', ['--fingerprint=off', '--uxr-canvas-seed='], True),
+    ('noise-false-without-seed', ['--fingerprint-noise=false'], True),
+    ('noise-false-with-invalid-canvas', ['--fingerprint-noise=false', '--uxr-canvas-seed=0'], True),
+    ('noise-false-with-invalid-inherited-seed', ['--fingerprint=', '--uxr-fingerprint-seed=invalid', '--fingerprint-noise=false'], True),
+    ('internal-noise-off-with-invalid-canvas', ['--uxr-disable-fingerprint-noise', '--uxr-canvas-seed=0'], True),
+], ids=lambda value: value if isinstance(value, str) else None)
+def test_pixel_noise_canvas_seed_matrix(prefix, name, seeds, valid):
+    from chromix.api import build_args
+    args = [prefix + 'pixel-noise=seeded'] + seeds
+    assert normalize_fingerprint_args(args) == args
+    if valid:
+        expected = list({arg.partition('=')[0]: arg for arg in args}.values())
+        assert build_args(False, args) == expected
+    else:
+        with pytest.raises(ValueError, match='seeded pixel-noise requires.*canvas seed'):
+            build_args(False, args)
+
+
+@pytest.mark.parametrize('seed', ['0', '-1', '+1', '1.5', ' 42', '42 ', '42\n', '42\r', 'abc', '18446744073709551616'])
+def test_pixel_noise_validates_only_effective_canvas_seed(seed):
+    from chromix.api import build_args
+    mode = ['--fingerprint-pixel-noise=seeded', '--uxr-fingerprint-seed=' + seed]
+    assert all(arg in build_args(True, mode) for arg in mode)
+    with pytest.raises(ValueError, match='nonzero uint64 canvas seed'):
+        build_args(False, mode + ['--fingerprint='])
+
+
+@pytest.mark.parametrize('disabled', ['--fingerprint=off', '--fingerprint=FALSE',
+    '--fingerprint-noise=false', '--fingerprint-noise=disabled', '--uxr-disable-fingerprint-noise'])
+@pytest.mark.parametrize('stealth', [False, True])
+def test_pixel_noise_disable_priority_does_not_reenable_seed(disabled, stealth):
+    from chromix.api import build_args
+    mode = ['--fingerprint-pixel-noise=seeded', '--uxr-pixel-noise=seeded']
+    for args in ([disabled] + mode, mode + [disabled]):
+        result = build_args(stealth, args)
+        assert all(flag in result for flag in mode)
+        if disabled.startswith('--fingerprint='):
+            assert '--fingerprint=off' in result
+            assert not any(a.startswith('--fingerprint=') and a != '--fingerprint=off' for a in result)
+        elif not stealth:
+            assert not any(a.startswith('--fingerprint=') for a in result)
+        assert not any('gpu-backend' in a or 'synthetic-device-tests' in a for a in result)
+
+
+def test_pixel_noise_alias_priority_and_default_passthrough():
+    from chromix.api import build_args
+    assert not any('pixel-noise' in a for a in build_args(True, []))
+    assert build_args(False, []) == []
+    for reverse in (False, True):
+        native = ['--fingerprint-pixel-noise=seeded', '--uxr-pixel-noise=native']
+        seeded = ['--fingerprint-pixel-noise=native', '--uxr-pixel-noise=seeded']
+        if reverse:
+            native.reverse()
+            seeded.reverse()
+        assert build_args(False, native) == native
+        with pytest.raises(ValueError, match='seeded pixel-noise requires'):
+            build_args(False, seeded)
+    assert build_args(False, ['--fingerprint-pixel-noise=seeded', '--fingerprint-pixel-noise=native']) == [
+        '--fingerprint-pixel-noise=native']
+    with pytest.raises(ValueError, match='seeded pixel-noise requires'):
+        build_args(False, ['--fingerprint-pixel-noise=native', '--fingerprint-pixel-noise=seeded'])
+    with pytest.raises(ValueError, match='seeded pixel-noise requires'):
+        build_args(False, ['--fingerprint-pixel-noise=seeded', '--fingerprint-noise=false', '--fingerprint-noise=true'])
+
+
 def test_audio_seed_dependency_is_checked_after_launch_defaults():
     from chromix.api import build_args
     mode = ['--fingerprint-audio-render=isolated']

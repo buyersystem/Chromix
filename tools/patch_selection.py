@@ -149,8 +149,8 @@ def select(repo: Path, platform: str | None = None, *, src: Path | None = None,
                 or pins[prefix + "Version"] != VERSION + ("-1.1" if platform == "windows" else "-1")):
             raise SelectionError("Chromium 154 core/platform pins do not match reviewed overrides")
         validate_overrides(repo)
-        if len(names) != 216 or not {"patches/" + name for name in OVERRIDES}.issubset(names):
-            raise SelectionError("Chromium 154 requires the complete 216-patch base series")
+        if len(names) != 224 or not {"patches/" + name for name in OVERRIDES}.issubset(names):
+            raise SelectionError("Chromium 154 requires the complete 224-patch base series")
         selected = [OVERRIDE_ROOT + "/" + Path(name).name if Path(name).name in OVERRIDES else name
                     for name in names]
         selection = {"schema_version": 1, "version": VERSION, "platform": platform,

@@ -1,0 +1,12 @@
+diff --git a/base/uxr_config.h b/base/uxr_config.h
+--- a/base/uxr_config.h
++++ b/base/uxr_config.h
+@@ -45,6 +45,8 @@
+ // GPUs, software paths, formats and color-management implementations.
+ struct BASE_EXPORT UxrGpuBackendPolicy {
+   bool native = true;
++  bool seeded_pixel_noise = false;
++  uint64_t pixel_noise_seed = 0;
+   bool canvas_pixel_noise = false;
+   bool canvas_text_noise = false;
+   bool canvas_bridge = false;

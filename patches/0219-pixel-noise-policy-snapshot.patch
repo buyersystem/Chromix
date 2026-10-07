@@ -1,0 +1,39 @@
+diff --git a/base/uxr_config.cc b/base/uxr_config.cc
+--- a/base/uxr_config.cc
++++ b/base/uxr_config.cc
+@@ -104,7 +104,23 @@
+   }
+   const bool allow_synthetic = !policy->native && synthetic_tests;
+   const bool noise_disabled = cfg.contains("uxr-disable-fingerprint-noise");
+-  policy->canvas_pixel_noise = allow_synthetic && !noise_disabled;
++  if (auto it = cfg.find("uxr-pixel-noise"); it != cfg.end()) {
++    if (it->second != "native" && it->second != "seeded")
++      return false;
++    policy->seeded_pixel_noise = it->second == "seeded" && !noise_disabled;
++  }
++  // Global disable wins even when the explicit mode has no usable seed.
++  if (policy->seeded_pixel_noise && !noise_disabled) {
++    const auto seed = cfg.find("uxr-canvas-seed");
++    if (seed == cfg.end() || seed->second.empty() ||
++        seed->second.find_first_not_of("0123456789") != std::string::npos ||
++        !StringToUint64(seed->second, &policy->pixel_noise_seed) ||
++        policy->pixel_noise_seed == 0) {
++      return false;
++    }
++  }
++  policy->canvas_pixel_noise =
++      (allow_synthetic || policy->seeded_pixel_noise) && !noise_disabled;
+   policy->canvas_text_noise = !policy->native && !noise_disabled;
+   policy->canvas_bridge = allow_synthetic;
+   policy->capability_overrides = !policy->native;
+@@ -312,7 +328,9 @@
+   }
+   UxrGpuBackendPolicy gpu_backend_policy;
+   if (!ParseGpuBackend(cfg, &gpu_backend_policy)) {
+-    validation_error_ = "invalid GPU backend policy";
++    validation_error_ =
++        "invalid GPU backend or pixel noise policy: expected native|seeded pixel "
++        "noise; seeded requires a nonzero decimal uint64 uxr-canvas-seed";
+     return false;
+   }
+   map_ = cfg;

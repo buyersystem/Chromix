@@ -3,6 +3,8 @@
 本页面向使用 Chromix Python / Node SDK 的用户，说明功能、配置入口、默认值和限制。
 描述依据是**当前仓库源码及配套 SDK**，不代表下载到的旧浏览器已包含这些功能，也不代表已发布或通过完整原生验收。需要浏览器补丁的功能必须配合匹配构建；仅升级 SDK 不够。
 
+新增：[显式 Canvas/WebGL 像素噪声](pixel-noise.md) · [GPU 身份配置与诊断](gpu-identity.md)。新噪声功能需要包含 `0217`–`0224` 补丁的浏览器，不能用旧发布包或 SDK 接受参数来证明生效。
+
 导航：[公开指纹参数](fingerprint-flags.md) · [后端策略](backend-policy.md) · [实测设备模式](device-pool.md) · [原生验收](fingerprint-acceptance.md) · [功能跟进与历史证据](functionality-followup.md)。构建及验证状态见 [FINGERPRINT_STATUS.md](../FINGERPRINT_STATUS.md)，安装和完整 SDK 入口见 [Python](../sdk/python/README.md)、[Node](../sdk/node/README.md)。
 
 ## 1. 选择启动方式

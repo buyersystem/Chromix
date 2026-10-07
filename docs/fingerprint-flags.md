@@ -1,8 +1,8 @@
 # Public fingerprint flags
 
-This is the contract of the **current Chromium 152.0.7977.82 source stack**, not
-a claim about previously released binaries. Rebuild the browser and use the
-matching Python/Node SDK checkout. Upstream descriptions saying “148+” or “150+”
+This is the contract of the **current source patch stack**, whose platform versions
+are pinned in `build/ungoogled-revisions.psd1`, not a claim about previously
+released binaries. Rebuild the browser and use the matching Python/Node SDK checkout. Upstream descriptions saying “148+” or “150+”
 do not prove that an older Chromix executable contains these changes.
 
 All flags below work through browser `args`; patch `0036` also normalizes them
@@ -20,7 +20,8 @@ all injected. `--fingerprint=off` disables persona overrides as described below.
 |---|---|
 | `--fingerprint=<seed>` | Nonzero decimal uint64 seed. Bare `--fingerprint` generates a seed. SDK persistent profiles reuse their saved seed; nonpersistent SDK launches generate a seed. |
 | `--fingerprint-platform` | `windows` / `Win32`, `macos` / `MacIntel`, `linux` / `Linux x86_64`. Same-OS generic aliases retain native high-entropy OS fields; cross-OS aliases use declared desktop defaults. |
-| `--fingerprint-gpu-backend` | `native` (ordinary launch default) / `compatibility`. Native shares one Canvas/WebGL/WebGPU policy and suppresses legacy noise, Bridge and capability/identity overrides. Synthetic tests default to compatibility unless native is explicit. |
+| `--fingerprint-gpu-backend` | `native` (ordinary launch default) / `compatibility`. Native suppresses legacy noise, Bridge and capability/identity overrides. Explicit `pixel-noise=seeded` is a separate opt-in readback policy, not an identity override. Synthetic tests default to compatibility unless native is explicit. |
+| `--fingerprint-pixel-noise` | `native` / `seeded`. Explicit seed-stable RGB perturbation for supported Canvas 8-bit paths and bounded opaque default-framebuffer WebGL RGBA8 TypedArray readback. Requires a valid effective canvas seed; off/global noise=false wins. No automatic synthetic mode, Bridge or GPU identity changes. New patches require a rebuilt binary; see [scope and verification](pixel-noise.md). |
 | `--fingerprint-gpu-vendor` | Explicit WebGL `UNMASKED_VENDOR_WEBGL` presentation in **compatibility** mode on nonsuppressed contexts. Native mode and detected software contexts retain real identity. |
 | `--fingerprint-gpu-renderer` | Explicit WebGL `UNMASKED_RENDERER_WEBGL` presentation under the same compatibility/context guards. Public WebGPU keeps its complete native Dawn identity. |
 | `--fingerprint-hardware-concurrency` | `navigator.hardwareConcurrency`, default **8**; SDK accepts integers 1–128. Does not allocate or emulate CPU cores. |
@@ -91,7 +92,7 @@ SIMD/Wasm support or allocation limits.
 The older independently seeded hardware/display and GL-capability test paths
 and GPU identity templates require `--uxr-synthetic-device-tests=true`. They are separate from the
 public fixed defaults above. Legacy font substitutions and Canvas readback/
-export noise also remain synthetic-test opt-ins. WebGL/audio/client-rect
+export noise also remain synthetic-test opt-ins. The separate [explicit pixel-noise mode](pixel-noise.md) enables supported pixel paths without synthetic device settings. WebGL capability/audio/client-rect
 getter-only perturbations have **not** been restored by this compatibility work.
 
 [Measured device mode](device-pool.md) selects evidence-backed whole native

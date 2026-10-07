@@ -1,0 +1,19 @@
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -219,6 +219,7 @@
+     struct Alias { const char* fp; const char* uxr; };
+     static constexpr Alias kAliases[] = {
+       {"fingerprint-gpu-backend",         "uxr-gpu-backend"},
++      {"fingerprint-pixel-noise",         "uxr-pixel-noise"},
+       {"fingerprint-font-policy",         "uxr-font-policy"},
+       {"fingerprint-font-whitelist",      "uxr-font-whitelist"},
+       {"fingerprint-audio-render",        "uxr-audio-render"},
+@@ -470,6 +471,7 @@
+         command_line->RemoveSwitch(k);
+       command_line->AppendSwitchASCII("uxr-fingerprint-off", "true");
+       command_line->RemoveSwitch("fingerprint-platform");
++      command_line->RemoveSwitch("fingerprint-pixel-noise");
+       if (has_timezone)
+         command_line->AppendSwitchASCII("uxr-timezone", timezone);
+       if (has_languages)

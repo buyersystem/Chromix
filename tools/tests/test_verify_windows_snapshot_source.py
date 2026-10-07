@@ -320,8 +320,8 @@ def test_windows_crlf_checkout_representation_does_not_change_identity(fx, monke
     assert fx.run()["status"] == "verified"
 
 
-def test_current_base_has_216_patches_and_no_midl_overlap():
-    assert len(verify.identity._series(ROOT)) == 216
+def test_current_base_has_224_patches_and_no_midl_overlap():
+    assert len(verify.identity._series(ROOT)) == 224
     for name in verify.identity._series(ROOT):
         _, entries = verify.arp.transform_patch((ROOT / name).read_bytes(), set(), [])
         assert verify.MIDL_SOURCE not in {entry[0] for entry in entries}

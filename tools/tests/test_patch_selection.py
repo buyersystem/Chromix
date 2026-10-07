@@ -41,7 +41,7 @@ def set_linux_version(repo: Path, version: str) -> None:
 def test_exact_154_selects_reviewed_override_bytes_for_linux_and_windows():
     linux_identity, linux_patches = selection.select(ROOT, "linux")
     windows_identity, windows_patches = selection.select(ROOT, "windows")
-    assert len(linux_patches) == len(windows_patches) == 216
+    assert len(linux_patches) == len(windows_patches) == 224
     assert linux_identity["selection"] == {
         "schema_version": 1,
         "version": selection.VERSION,
