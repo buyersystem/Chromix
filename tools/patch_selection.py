@@ -42,6 +42,9 @@ OVERRIDES = {
     "0177-audio-graph-isolation.patch": (
         "8afa9f8ee0b8b9f5895183279e99eaf661735fd78052c93143e8da1557918bfc",
         "0a79069deaeda83a20945f393a156c66de1b73ee54ae261f6c8661132bffd068"),
+    "0222-canvas-readback-shared-noise.patch": (
+        "b86ce9d384d17b0ba0d0d0ca4b9dec8b5b2341afccf821c269735cf301a8fd09",
+        "3260831685393468941ba4fb8869ac7ec9441c8ef4033c6c80ee360ddc8a0045"),
 }
 
 

@@ -59,7 +59,7 @@ def integrated_sources(tmp_path_factory):
     if not supplied: pytest.skip('independent pinned GPU policy source root required')
     directory=tmp_path_factory.mktemp('gpu-policy-integrated')
     targets={v['target'] for v in EVIDENCE['patches'].values()}
-    targets.add('components/ungoogled/persona_profile.h')
+    targets.update(('components/ungoogled/persona_profile.h', 'base/uxr_pixel_noise.h'))
     for target,item in EVIDENCE['sources'].items():
         path=Path(supplied)/target;data=path.read_bytes()
         assert hashlib.sha256(data).hexdigest() == item['upstream_sha256']
@@ -68,6 +68,7 @@ def integrated_sources(tmp_path_factory):
     for i,item in enumerate(EVIDENCE['core_inputs']):
         fragment=directory/f'core-{i}.patch';fragment.write_bytes(item['target_fragment'].encode())
         apply(directory,fragment)
+    applied=set()
     for name in (ROOT/'patches/series').read_text().splitlines():
         if not name or name.startswith('#'): continue
         patch=ROOT/name;raw=patch.read_text(encoding='utf-8')
@@ -84,8 +85,11 @@ def integrated_sources(tmp_path_factory):
                 start=section['line']-1
                 assert ''.join(lines[start:start+len(section['text'].splitlines())]) == section['text']
         apply(directory,patch,allow_offsets=int(number)<158)
+        applied.add(number)
         if number in EVIDENCE['patches']:
             assert hashlib.sha256((directory/target).read_bytes()).hexdigest() == EVIDENCE['patches'][number]['output_sha256']
+    assert EVIDENCE['patches'].keys() <= applied
+    assert '0221' in applied
     for target,item in EVIDENCE['sources'].items():
         assert hashlib.sha256((Path(supplied)/target).read_bytes()).hexdigest() == item['upstream_sha256']
     buffer=(directory/'third_party/blink/renderer/modules/webgpu/gpu_buffer.cc').read_text(encoding='utf-8')
@@ -94,7 +98,8 @@ def integrated_sources(tmp_path_factory):
 
 
 def test_independently_acquired_source_and_final_methods(integrated_sources):
-    assert len(integrated_sources) == 8
+    assert len(integrated_sources) == 9
+    assert {'0222', '0223'} <= EVIDENCE['patches'].keys()
 
 
 @pytest.fixture(scope='module')
@@ -246,7 +251,8 @@ def native_canvas_binary(tmp_path_factory,integrated_sources):
     # Keep both actual Create overloads; the dependency shim supplies their
     # declarations, not replacement implementations of the allocation path.
     export=export[:export.index('base::span<const uint8_t> ImageDataBuffer::PixelData()')]+ '// not EOF\n'
-    support=canvas.CPP_SUPPORT.replace('  bool synthetic = true;', '''  bool synthetic = true;
+    support=integrated_sources['base/uxr_pixel_noise.h']+'\n'+canvas.CPP_SUPPORT
+    support=support.replace('  bool synthetic = true;', '''  bool synthetic = true;
   bool native = false;
   struct Policy { bool canvas_pixel_noise; };
   Policy GpuBackendPolicy() const { return {!native && synthetic && !disabled}; }''')

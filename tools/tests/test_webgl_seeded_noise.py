@@ -1,6 +1,7 @@
 """0224 contracts and compiled C++20 CPU checks; not a Chromium/GPU build."""
 from pathlib import Path
 import copy
+import os
 import shutil
 import subprocess
 import tempfile
@@ -352,7 +353,16 @@ class WebGLSeededNoiseTest(unittest.TestCase):
                  "-fsanitize=address,undefined", "-fno-omit-frame-pointer", str(cpp),
                  "-o", str(executable)], capture_output=True, text=True, timeout=90)
             self.assertEqual(0, build.returncode, build.stdout + build.stderr)
-            run = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30)
+            environment = dict(os.environ)
+            if os.name == "nt":
+                resource = subprocess.run([compiler, "-print-resource-dir"],
+                                          capture_output=True, text=True, timeout=10)
+                self.assertEqual(0, resource.returncode, resource.stderr)
+                runtime = Path(resource.stdout.strip()) / "lib/windows"
+                self.assertTrue((runtime / "clang_rt.asan_dynamic-x86_64.dll").is_file())
+                environment["PATH"] = str(runtime) + os.pathsep + environment.get("PATH", "")
+            run = subprocess.run([str(executable)], capture_output=True, text=True,
+                                 timeout=30, env=environment)
             self.assertEqual(0, run.returncode, run.stdout + run.stderr)
             self.assertIn("checks passed", run.stdout)
 

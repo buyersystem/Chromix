@@ -419,7 +419,9 @@ def test_quic_malformed_version_information_fails(mutate):
 
 
 @pytest.mark.parametrize('data', [b'', b'\x40', b'\x04\x01', b'\x04\x02\x40', b'\x0c\x01x',
-    b'\x04\x02\0\0', b'\x11\x01x', b'\x0c\0\x0c\0', b'x' * 65537])
+    b'\x04\x02\0\0', b'\x11\x01x', b'\x0c\0\x0c\0', b'x' * 65537],
+    ids=['empty', 'truncated-id', 'missing-value', 'truncated-value', 'invalid-flag',
+         'noncanonical', 'invalid-version', 'duplicate-flag', 'oversized-block'])
 def test_malformed_quic_parameter_blocks_fail(data):
     with pytest.raises(ValueError):
         quic.parse_transport_parameters(data)

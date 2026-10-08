@@ -152,7 +152,9 @@ def _extract_zip(archive: Path, root: Path, plat: str | None = None) -> None:
         names = set()
         links = set()
         for entry in z.infolist():
-            filename = entry.orig_filename
+            # ZipInfo.filename normalizes Windows separators and truncates at NUL.
+            raw_filename = entry.orig_filename
+            filename = raw_filename
             if plat in ("win-x64", "win-arm64"):
                 filename = filename.replace("\\", "/")
             is_dir = filename.endswith("/")
@@ -164,7 +166,7 @@ def _extract_zip(archive: Path, root: Path, plat: str | None = None) -> None:
                     or re.search(r'[\\\\:\x00-\x1f<>"|?*]', part)
                     or re.match(r"(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", part)
                     for part in parts)):
-                raise ValueError(f"Unsafe ZIP path: {entry.orig_filename}")
+                raise ValueError(f"Unsafe ZIP path: {raw_filename}")
             key = str(name).lower()
             if key in names:
                 raise ValueError(f"Duplicate ZIP path: {name}")

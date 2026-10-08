@@ -39,11 +39,26 @@ def zip_fixture(entries):
     with zipfile.ZipFile(data, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, payload, mode in entries:
             info = zipfile.ZipInfo(name)
+            # Preserve raw names on disk even when ZipInfo normalizes them on Windows.
+            info.filename = name
             info.create_system = 3
             info.external_attr = mode << 16
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, payload)
     return data.getvalue()
+
+
+@pytest.fixture(params=[False, True], ids=["native-host", "windows-host"])
+def zip_name_normalization(request, monkeypatch):
+    if request.param:
+        init = zipfile.ZipInfo.__init__
+
+        def windows_init(self, *args, **kwargs):
+            init(self, *args, **kwargs)
+            self.filename = self.filename.replace("\\", "/")
+
+        monkeypatch.setattr(zipfile.ZipInfo, "__init__", windows_init)
+    return request.param
 
 
 def bundle(plat):
@@ -125,7 +140,7 @@ def test_zip_download_public_api_and_cache(cache, monkeypatch, system, machine, 
 
 @pytest.mark.parametrize("plat", ["win-x64", "win-arm64"])
 @pytest.mark.parametrize("directories", [False, True])
-def test_windows_backslash_zip_download(cache, monkeypatch, plat, directories):
+def test_windows_backslash_zip_download(cache, monkeypatch, plat, directories, zip_name_normalization):
     entries = [file(r"chromix\chromix.cmd", mode=0), file(r"chromix\chrome.exe", b"chrome fixture", mode=0),
                file(r"chromix\locales/en-US.pak", b"locale", mode=0)]
     if directories:
@@ -146,14 +161,34 @@ def test_windows_backslash_zip_download(cache, monkeypatch, plat, directories):
 
 
 @pytest.mark.parametrize("plat", [None, "linux-x64", "linux-arm64", "mac-x64", "mac-arm64"])
-def test_posix_and_default_extraction_reject_backslash(tmp_path, plat):
+@pytest.mark.parametrize("name", [r"chromix\helper", r"chromix/locales\en-US.pak", "chromix\\empty\\"])
+def test_posix_and_default_extraction_reject_backslash(tmp_path, plat, name, zip_name_normalization):
     archive = tmp_path / "input.zip"
-    archive.write_bytes(zip_fixture([file(r"chromix\helper")]))
+    archive.write_bytes(zip_fixture([file(name)]))
+    with zipfile.ZipFile(archive) as z:
+        entry, = z.infolist()
+        assert entry.orig_filename == name
+        if zip_name_normalization or os.sep == "\\":
+            assert entry.filename == name.replace("\\", "/")
     with pytest.raises(ValueError, match="Unsafe ZIP path"):
         if plat is None:
             binary._extract_zip(archive, tmp_path / "output")
         else:
             binary._extract_zip(archive, tmp_path / "output", plat)
+    assert not (tmp_path / "output").exists()
+
+
+@pytest.mark.parametrize("plat", [None, *binary._ASSETS])
+def test_extraction_rejects_nul_before_filename_truncation(tmp_path, plat, zip_name_normalization):
+    archive = tmp_path / "input.zip"
+    name = "chromix/helper\x00hidden"
+    archive.write_bytes(zip_fixture([file(name)]))
+    with zipfile.ZipFile(archive) as z:
+        entry, = z.infolist()
+        assert entry.orig_filename == name
+        assert entry.filename == "chromix/helper"
+    with pytest.raises(ValueError, match="Unsafe ZIP path"):
+        binary._extract_zip(archive, tmp_path / "output", plat)
     assert not (tmp_path / "output").exists()
 
 
@@ -184,7 +219,7 @@ WINDOWS_UNSAFE_ENTRIES = {
 
 @pytest.mark.parametrize("plat", ["win-x64", "win-arm64"])
 @pytest.mark.parametrize("name,entries", WINDOWS_UNSAFE_ENTRIES.items(), ids=WINDOWS_UNSAFE_ENTRIES)
-def test_windows_backslash_zip_rejects_unsafe_paths(cache, monkeypatch, plat, name, entries):
+def test_windows_backslash_zip_rejects_unsafe_paths(cache, monkeypatch, plat, name, entries, zip_name_normalization):
     outside = cache / "outside"
     outside.write_text("untouched")
     mock_release(monkeypatch, plat, zip_fixture(bundle(plat) + entries))

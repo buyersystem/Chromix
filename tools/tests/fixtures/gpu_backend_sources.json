@@ -159,6 +159,46 @@
       ],
       "output_sha256": "eaf92efcdb1b8876bb9c2f5f3c15b4797f726163bb93874990d059b7b8387f8b",
       "created_by_series": false
+    },
+    "0222": {
+      "target": "third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_context_2d.cc",
+      "patch_sha256": "b86ce9d384d17b0ba0d0d0ca4b9dec8b5b2341afccf821c269735cf301a8fd09",
+      "preimage_sha256": "eaf92efcdb1b8876bb9c2f5f3c15b4797f726163bb93874990d059b7b8387f8b",
+      "sections": [
+        {
+          "line": 6,
+          "text": "\n#include \"base/strings/string_number_conversions.h\"\n#include \"base/uxr_config.h\"\n\n#include <algorithm>\n#include <array>\n"
+        },
+        {
+          "line": 771,
+          "text": "  if (ph_config.GpuBackendPolicy().canvas_pixel_noise && !ph_seed_text.empty() &&\n      ph_seed_text.find_first_not_of(\"0123456789\") == std::string::npos &&\n      base::StringToUint64(ph_seed_text, &ph_seed64) && ph_seed64 != 0u) {\n    // SplitMix64's finalizer folds high bits without changing legacy 32-bit seeds.\n    uint64_t high = ph_seed64 >> 32;\n    high = (high ^ (high >> 30)) * 0xbf58476d1ce4e5b9ULL;\n    high = (high ^ (high >> 27)) * 0x94d049bb133111ebULL;\n    high ^= high >> 31;\n    const uint32_t ph_seed = static_cast<uint32_t>(ph_seed64) ^\n                             static_cast<uint32_t>(high) ^\n                             static_cast<uint32_t>(high >> 32);\n    const SkPixmap ph_pm = image_data->GetSkPixmap();\n    const SkColorType ph_ct = ph_pm.colorType();\n    if (ph_pm.addr() && (ph_ct == kRGBA_8888_SkColorType ||\n"
+        },
+        {
+          "line": 799,
+          "text": "                static_cast<uint32_t>(sy) + static_cast<uint32_t>(ph_y);\n            for (uint32_t ch = 0; ch < 3; ++ch) {\n              const size_t index = ph_ct == kBGRA_8888_SkColorType ? 2 - ch : ch;\n              const uint32_t v = ph_pixel[index];\n              uint32_t z = ph_seed ^ (ax * 374761393u) ^ (ay * 668265263u) ^\n                           (ch * 0x9e3779b9u) ^ (v * 2654435761u);\n              z ^= z >> 16;\n              z *= 0x85ebca6bu;\n              z ^= z >> 13;\n              z *= 0xc2b2ae35u;\n              z ^= z >> 16;\n              const int nv = static_cast<int>(v) + ((z & 1u) ? 1 : -1);\n              ph_pixel[index] =\n                  static_cast<uint8_t>(nv < 0 ? 0 : (nv > 255 ? 255 : nv));\n            }\n          }\n        }\n"
+        }
+      ],
+      "output_sha256": "ef2e04546ea777db568580d8b73aa70a25eea1f9dedffe9c1a8394f893a09f7b"
+    },
+    "0223": {
+      "target": "third_party/blink/renderer/platform/graphics/image_data_buffer.cc",
+      "patch_sha256": "5871f21512afe6e7f3708e53c966e5038dacf49a4ef612c751257997a02f273e",
+      "preimage_sha256": "7d0ea5ec0e53466b71b17b209909859f898f6c50b1ad3694c895c9a7fd4e95c5",
+      "sections": [
+        {
+          "line": 36,
+          "text": "#include \"base/memory/ptr_util.h\"\n#include \"base/strings/string_number_conversions.h\"\n#include \"base/uxr_config.h\"\n#include \"third_party/blink/renderer/platform/image-encoders/image_encoder_utils.h\"\n#include \"third_party/blink/renderer/platform/runtime_enabled_features.h\"\n#include \"third_party/blink/renderer/platform/wtf/text/base64.h\"\n"
+        },
+        {
+          "line": 62,
+          "text": "      seed_text.find_first_not_of(\"0123456789\") == std::string::npos &&\n      base::StringToUint64(seed_text, &seed64) && seed64 != 0u &&\n      (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType);\n  // SplitMix64's finalizer folds high bits without changing legacy 32-bit seeds.\n  uint64_t high = seed64 >> 32;\n  high = (high ^ (high >> 30)) * 0xbf58476d1ce4e5b9ULL;\n  high = (high ^ (high >> 27)) * 0x94d049bb133111ebULL;\n  high ^= high >> 31;\n  const uint32_t seed = static_cast<uint32_t>(seed64) ^\n                        static_cast<uint32_t>(high) ^\n                        static_cast<uint32_t>(high >> 32);\n  const bool normalize_alpha = pm.info().alphaType() != kUnpremul_SkAlphaType;\n  // Disabled noise must preserve the native pixmap/encoder alpha path.\n  if (!apply_noise)\n"
+        },
+        {
+          "line": 94,
+          "text": "        continue;\n      for (uint32_t ch = 0; ch < 3; ++ch) {\n        const size_t index = ct == kBGRA_8888_SkColorType ? 2 - ch : ch;\n        const uint32_t v = pixel[index];\n        uint32_t z = seed ^ (static_cast<uint32_t>(x) * 374761393u) ^\n                     (static_cast<uint32_t>(y) * 668265263u) ^\n                     (ch * 0x9e3779b9u) ^ (v * 2654435761u);\n        z ^= z >> 16;\n        z *= 0x85ebca6bu;\n        z ^= z >> 13;\n        z *= 0xc2b2ae35u;\n        z ^= z >> 16;\n        const int nv = static_cast<int>(v) + ((z & 1u) ? 1 : -1);\n        pixel[index] =\n            static_cast<uint8_t>(nv < 0 ? 0 : (nv > 255 ? 255 : nv));\n      }\n    }\n  }\n"
+        }
+      ],
+      "output_sha256": "038ec8b60cd5b8f027574d7095030452a462505c470081b504f70e69ab285c6b"
     }
   },
   "map_async_callback": "void GPUBuffer::OnMapAsyncCallback(\n    ScriptPromiseResolver<IDLUndefined>* resolver,\n    wgpu::MapAsyncStatus status,\n    wgpu::StringView message) {\n  switch (status) {\n    case wgpu::MapAsyncStatus::Success:\n      resolver->Resolve();\n      break;\n    case wgpu::MapAsyncStatus::CallbackCancelled:\n      resolver->RejectWithDOMException(DOMExceptionCode::kAbortError,\n                                       String::FromUtf8(message));\n      break;\n    case wgpu::MapAsyncStatus::Aborted:\n      resolver->RejectWithDOMException(DOMExceptionCode::kAbortError,\n                                       String::FromUtf8(message));\n      break;\n    case wgpu::MapAsyncStatus::Error:\n      resolver->RejectWithDOMException(DOMExceptionCode::kOperationError,\n                                       String::FromUtf8(message));\n      break;\n  }\n  map_async_future_ = std::nullopt;\n}",

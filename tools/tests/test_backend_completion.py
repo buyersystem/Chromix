@@ -73,8 +73,8 @@ def test_independent_source_and_complete_predecessor_chains(tmp_path):
     applied = []
     names = [name for name in (ROOT / 'patches/series').read_text().splitlines()
              if name and not name.startswith('#')]
-    assert {'0214', '0215'} <= EVIDENCE['patches'].keys()
-    assert {str(patch_path(number).relative_to(ROOT)) for number in EVIDENCE['patches']} <= set(names)
+    assert {'0214', '0215', '0220'} <= EVIDENCE['patches'].keys()
+    assert {patch_path(number).relative_to(ROOT).as_posix() for number in EVIDENCE['patches']} <= set(names)
     for name in names:
         patch = ROOT / name
         target = re.search(r'^\+\+\+ b/(.*)$', patch.read_text(), re.M)[1]

@@ -55,7 +55,7 @@ def test_exact_154_selects_reviewed_override_bytes_for_linux_and_windows():
         selected = {entry["path"] for entry in identity["patches"]}
         assert all(path.startswith("patches/chromium154/") or path.startswith("patches/")
                    for path in selected)
-        assert len(selected & {"patches/chromium154/" + name for name in selection.OVERRIDES}) == 6
+        assert len(selected & {"patches/chromium154/" + name for name in selection.OVERRIDES}) == 7
         assert [entry["sha256"] for entry in identity["patches"]] == [
             selection.digest(data) for _, data in patches]
 

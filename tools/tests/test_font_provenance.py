@@ -121,8 +121,8 @@ using SkFontTableTag = uint32_t;
 constexpr uint32_t SkSetFourByteTag(char a,char b,char c,char d){return uint32_t(a)<<24|uint32_t(b)<<16|uint32_t(c)<<8|uint32_t(d);}
 namespace base {
 template<class T> using span = std::span<T>;
-template<size_t N> auto as_byte_span(const char(&v)[N]){return span(reinterpret_cast<const uint8_t*>(v),N);}
-inline auto as_byte_span(std::string_view v){return span(reinterpret_cast<const uint8_t*>(v.data()),v.size());}
+template<size_t N> auto as_byte_span(const char(&v)[N]){return span<const uint8_t>(reinterpret_cast<const uint8_t*>(v),N);}
+inline auto as_byte_span(std::string_view v){return span<const uint8_t>(reinterpret_cast<const uint8_t*>(v.data()),v.size());}
 inline auto U32ToBigEndian(uint32_t v){std::array<uint8_t,4> out{};for(int i=3;i>=0;--i){out[i]=v&255;v>>=8;}return out;}
 inline auto U64ToBigEndian(uint64_t v){std::array<uint8_t,8> out{};for(int i=7;i>=0;--i){out[i]=v&255;v>>=8;}return out;}
 '''
@@ -221,15 +221,24 @@ def test_native_pinned_api_compilation(tmp_path, native_sources, pinned_api, mut
         "byte-span": ("String::FromUtf8(base::HexEncodeLower(result))", "String::FromUtf8(base::span<const uint8_t>(base::HexEncodeLower(result)))"),
         "IsEmpty": ("table_hash.empty()", "table_hash.IsEmpty()"),
     }
+    result, _ = compile_api(tmp_path, pinned_api, source)
+    assert result.returncode == 0, result.stdout + result.stderr
     if mutation:
         before, after = replacements[mutation]
         assert before in source
         source = source.replace(before, after)
-    result, _ = compile_api(tmp_path, pinned_api, source)
-    if mutation:
+        result, _ = compile_api(tmp_path, pinned_api, source)
+        diagnostics = result.stdout + result.stderr
         assert result.returncode != 0, "obsolete API unexpectedly compiled: " + mutation
-    else:
-        assert result.returncode == 0, result.stdout + result.stderr
+        expected = {
+            "getTableTags": r"\bgetTableTags\b",
+            "raw-pointer": r"\bSkSpan\b",
+            "FromUTF8": r"\bFromUTF8\b",
+            "byte-span": r"\bspan\b",
+            "IsEmpty": r"\bIsEmpty\b",
+        }
+        errors = [line for line in diagnostics.splitlines() if re.search(r"\berror:", line)]
+        assert errors and re.search(expected[mutation], errors[0]), diagnostics
 
 
 @pytest.fixture(scope="module")

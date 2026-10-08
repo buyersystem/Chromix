@@ -9,7 +9,7 @@ diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_c
  
  #include <algorithm>
  #include <array>
-@@ -771,14 +772,7 @@
+@@ -773,14 +774,7 @@
    if (ph_config.GpuBackendPolicy().canvas_pixel_noise && !ph_seed_text.empty() &&
        ph_seed_text.find_first_not_of("0123456789") == std::string::npos &&
        base::StringToUint64(ph_seed_text, &ph_seed64) && ph_seed64 != 0u) {
@@ -25,7 +25,7 @@ diff --git a/third_party/blink/renderer/modules/canvas/canvas2d/base_rendering_c
      const SkPixmap ph_pm = image_data->GetSkPixmap();
      const SkColorType ph_ct = ph_pm.colorType();
      if (ph_pm.addr() && (ph_ct == kRGBA_8888_SkColorType ||
-@@ -799,17 +793,8 @@
+@@ -801,17 +795,8 @@
                  static_cast<uint32_t>(sy) + static_cast<uint32_t>(ph_y);
              for (uint32_t ch = 0; ch < 3; ++ch) {
                const size_t index = ph_ct == kBGRA_8888_SkColorType ? 2 - ch : ch;
