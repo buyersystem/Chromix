@@ -29,6 +29,7 @@ except ImportError:
     from platform_pins import OVERRIDES, load_pins
 
 READY = ".chromix-source-ready"
+SOURCE_VERSION = "chrome/VERSION"
 # Existing preparation entry points recognize both blockers.
 TRANSACTION = ".chromix-domain-substitution-in-progress"
 PIN_FILES = ("CHROMIUM_VERSION", "build/ungoogled-revisions.psd1", "build/upstream-cache.json",
@@ -273,10 +274,17 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
     if old_identity["lite"] != identity["lite"] or old_lite != lite:
         raise arp.ApplyError("unsupported lite payload change; migration requires identical lite files/modes")
     old_names, names = _names(old_patches, old_lite), _names(patches, lite)
+    if SOURCE_VERSION in old_names | names:
+        raise arp.ApplyError("patch/lite inputs must not touch immutable chrome/VERSION")
     old_key, key = (source_ready_key(root, platform, arch) for root in (previous, repo))
     _ready(src, old_key)
     previous_identity = _previous_completed(src, old_identity, old_names)
-    before = arp._snapshot(src, old_names | names)
+    before = arp._snapshot(src, old_names | names | {SOURCE_VERSION})
+    try:
+        if arp.patch_selection.source_version(src) != receipt["identity"]["chromium_version"]:
+            raise arp.ApplyError("source chrome/VERSION does not match repository pins")
+    except ValueError as exc:
+        raise arp.ApplyError(str(exc)) from exc
     markers = {name: (_marker(src, name).read_bytes(), _marker(src, name).stat())
                for name in (READY, arp.MARKER, restore.MARKER)}
     # Revalidate after taking the snapshot, before acquiring persistent blockers.
@@ -307,13 +315,16 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
                 os.chmod(path, stat.S_IMODE(info.st_mode))
+        # Selection reads VERSION even when no patch targets it.
+        stage_version = arp._snapshot(stage, {SOURCE_VERSION})
         _reverse(stage, scratch, old_patches, program)
         for name, (data, _) in lite.items():
             if arp._read(stage, name) != data:
                 raise arp.ApplyError(f"old reversed lite content cannot be proven unchanged: {name}")
         arp.run_apply(stage, repo, core, tooling, platform, program)
         arp.run_apply(stage, repo, core, tooling, platform, program, check=True)
-        after = arp._snapshot(stage, old_names | names)
+        after = arp._snapshot(stage, set(before))
+        _unchanged(stage, stage_version)
         _same_inputs(previous, repo, platform)
         _verify_tooling(work, repo, roots, platform)
         if (arp._load(previous, core, tooling, platform) != (old_identity, old_patches, old_lite)
@@ -331,6 +342,8 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
         changed = [name for name in sorted(before) if before[name][0] != after[name][0]
                    or before[name][1] and after[name][1]
                    and stat.S_IMODE(before[name][1].st_mode) != stat.S_IMODE(after[name][1].st_mode)]
+        if SOURCE_VERSION in changed:
+            raise arp.ApplyError("staged immutable chrome/VERSION changed during migration")
         for name in changed:
             path = arp._path(src, name)
             data, info = after[name]
@@ -349,6 +362,7 @@ def migrate(workdir: Path | str, previous_repo: Path | str, repo: Path | str,
         arp.run_apply(src, repo, core, tooling, platform, program, check=True)
         restore.verify_restored(work, platform, arch, repo=repo)
         _ready(src, key)
+        _unchanged(src, {SOURCE_VERSION: before[SOURCE_VERSION]})
         report["changed_files"] = changed
     _marker(src, TRANSACTION).unlink()
     return report
