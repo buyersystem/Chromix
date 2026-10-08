@@ -215,7 +215,7 @@ def test_native_pinned_api_compilation(tmp_path, native_sources, pinned_api, mut
     source = helper + "\nstruct Usage { String table_hash; };\nbool publish(const Usage& value) { return " + condition + "; }\n"
     table_tags = re.search(r"readTableTags\((?:SkSpan<SkFontTableTag>\(tags\.data\(\), tags\.size\(\)\)|tags)\)", helper)[0]
     replacements = {
-        "getTableTags": (table_tags, "getTableTags(tags.data())"),
+        "getTableTags": (table_tags, table_tags.replace("readTableTags", "getTableTags")),
         "raw-pointer": (table_tags, "readTableTags(tags.data())"),
         "FromUTF8": ("String::FromUtf8", "String::FromUTF8"),
         "byte-span": ("String::FromUtf8(base::HexEncodeLower(result))", "String::FromUtf8(base::span<const uint8_t>(base::HexEncodeLower(result)))"),
