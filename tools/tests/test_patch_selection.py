@@ -60,12 +60,7 @@ def test_exact_154_selects_reviewed_override_bytes_for_linux_and_windows():
             selection.digest(data) for _, data in patches]
 
 
-def test_mac152_and_historical153_keep_root_patch_identity(tmp_path):
-    mac_identity, mac_patches = selection.select(ROOT, "macos")
-    assert "selection" not in mac_identity
-    assert all(path.startswith("patches/") and not path.startswith("patches/chromium154/")
-               for path, _ in mac_patches)
-
+def test_historical153_keeps_root_patch_identity(tmp_path):
     repo = clone_repo(tmp_path)
     set_linux_version(repo, "153.0.8010.36")
     identity, patches = selection.select(repo, "linux")

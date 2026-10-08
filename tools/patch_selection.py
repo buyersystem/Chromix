@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select authenticated Chromium 154 overrides without changing the legacy stack."""
+"""Select authenticated version/platform overrides without changing legacy stacks."""
 from __future__ import annotations
 
 import argparse
@@ -48,6 +48,17 @@ OVERRIDES = {
 }
 
 
+MACOS152_VERSION = "152.0.7977.82"
+MACOS152_CORE = "e71b91c6e336d0f25cfc6b9ef09298a9d2506e24"
+MACOS152_PLATFORM = "038db2b41f7aeb00bbceb2f5a56912b26eb5b284"
+MACOS152_OVERRIDE_ROOT = "patches/chromium152"
+MACOS152_OVERRIDES = {
+    "0209-display-native-screen-regressions.patch": (
+        "fb94be385764e9bc6836033744596be85805d44ac9132a113e770da27c723aa1",
+        "d35e08b61cdfbddf12960b670c33bd662e977d84d9aa79ce66e17b30286cead5"),
+}
+
+
 class SelectionError(ValueError):
     """Patch selection cannot establish a complete, matching stack."""
 
@@ -85,17 +96,18 @@ def source_version(src: Path) -> str:
     return ".".join(fields[key] for key in ("MAJOR", "MINOR", "BUILD", "PATCH"))
 
 
-def validate_overrides(repo: Path) -> None:
-    directory = repo / OVERRIDE_ROOT
+def validate_overrides(repo: Path, root: str = OVERRIDE_ROOT,
+                       overrides: dict = OVERRIDES, label: str = "154") -> None:
+    directory = repo / root
     if directory.is_symlink() or not directory.is_dir():
-        raise SelectionError("missing or linked Chromium 154 override directory")
-    if {path.name for path in directory.iterdir()} != set(OVERRIDES):
-        raise SelectionError("partial or unexpected Chromium 154 override inventory")
-    for name, (original, replacement) in OVERRIDES.items():
+        raise SelectionError(f"missing or linked Chromium {label} override directory")
+    if {path.name for path in directory.iterdir()} != set(overrides):
+        raise SelectionError(f"partial or unexpected Chromium {label} override inventory")
+    for name, (original, replacement) in overrides.items():
         if digest(read(repo, "patches/" + name)) != original:
             raise SelectionError("mismatched override predecessor: " + name)
-        if digest(read(repo, OVERRIDE_ROOT + "/" + name)) != replacement:
-            raise SelectionError("changed Chromium 154 override: " + name)
+        if digest(read(repo, root + "/" + name)) != replacement:
+            raise SelectionError(f"changed Chromium {label} override: " + name)
 
 
 def select(repo: Path, platform: str | None = None, *, src: Path | None = None,
@@ -126,18 +138,19 @@ def select(repo: Path, platform: str | None = None, *, src: Path | None = None,
             raise SelectionError(str(exc)) from exc
     elif any((repo / name).exists() or (repo / name).is_symlink() for name in
              ("CHROMIUM_VERSION", "CHROMIUM_LINUX_VERSION", "CHROMIUM_WINDOWS_VERSION",
-              "CHROMIUM_MACOS_VERSION", OVERRIDE_ROOT)):
+              "CHROMIUM_MACOS_VERSION", OVERRIDE_ROOT, MACOS152_OVERRIDE_ROOT)):
         raise SelectionError("patch version selection requires complete repository pins")
     version = pins["ChromiumVersion"] if pins else None
+    macos152 = platform == "macos" and version == MACOS152_VERSION
     if src is not None and version is not None:
         source_version_path = Path(src) / "chrome/VERSION"
-        if version == VERSION or source_version_path.is_symlink():
+        if version == VERSION or macos152 or source_version_path.is_symlink():
             observed = source_version(Path(src))
             if observed != version:
                 raise SelectionError("source version does not match selected repository pins")
     if core is not None and version is not None:
         core_version_path = Path(core) / "chromium_version.txt"
-        if version == VERSION or core_version_path.is_symlink():
+        if version == VERSION or macos152 or core_version_path.is_symlink():
             observed = read(Path(core), "chromium_version.txt").decode("ascii").strip()
             if observed != version:
                 raise SelectionError("core version does not match selected repository pins")
@@ -159,6 +172,20 @@ def select(repo: Path, platform: str | None = None, *, src: Path | None = None,
         selection = {"schema_version": 1, "version": VERSION, "platform": platform,
                      "core_commit": CORE, "platform_commit": PLATFORM_COMMITS[platform],
                      "base_series_sha256": digest(series)}
+    elif macos152:
+        if (pins["UngoogledCommit"] != MACOS152_CORE
+                or pins["UngoogledVersion"] != MACOS152_VERSION + "-1"
+                or pins["UngoogledMacOSCommit"] != MACOS152_PLATFORM
+                or pins["UngoogledMacOSVersion"] != MACOS152_VERSION + "-1.1"):
+            raise SelectionError("Chromium 152 macOS core/platform pins do not match reviewed overrides")
+        validate_overrides(repo, MACOS152_OVERRIDE_ROOT, MACOS152_OVERRIDES, "152 macOS")
+        if len(names) != 224 or not {"patches/" + name for name in MACOS152_OVERRIDES}.issubset(names):
+            raise SelectionError("Chromium 152 macOS requires the complete 224-patch base series")
+        selected = [MACOS152_OVERRIDE_ROOT + "/" + Path(name).name
+                    if Path(name).name in MACOS152_OVERRIDES else name for name in names]
+        selection = {"schema_version": 1, "version": MACOS152_VERSION, "platform": platform,
+                     "core_commit": MACOS152_CORE, "platform_commit": MACOS152_PLATFORM,
+                     "base_series_sha256": digest(series)}
     elif version is not None and version not in LEGACY_VERSIONS:
         raise SelectionError("unsupported Chromium patch version: " + version)
     effective_series = series
@@ -176,7 +203,7 @@ def select(repo: Path, platform: str | None = None, *, src: Path | None = None,
 
 
 def preparation_key(repo: Path, platform: str, style: str) -> str:
-    """Retain historical key encodings; hash selected bytes for Chromium 154."""
+    """Retain historical key encodings; hash selected bytes for reviewed overrides."""
     identity, patches = select(repo, platform)
     hasher = hashlib.sha256()
     if style == "posix":

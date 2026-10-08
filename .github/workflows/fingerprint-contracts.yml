@@ -118,6 +118,7 @@ jobs:
           tools/tests/test_explicit_pixel_noise.py tools/tests/test_webgl_seeded_noise.py
           tools/tests/test_pixel_noise_diagnostic.py tools/tests/test_gpu_identity_diagnostic.py
           tools/tests/test_browser_feature_check.py
+          tools/tests/test_macos152_patch_selection.py
           tools/tests/test_backend_completion.py tools/tests/test_backend_media.py
           tools/tests/test_backend_fonts.py tools/tests/test_backend_capabilities.py
           tools/tests/test_backend_audits.py tools/tests/test_transport_lifecycle.py
