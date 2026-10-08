@@ -17,6 +17,7 @@
 // geoip uses ip-api.com instead of a local GeoLite2 database.
 // Puppeteer has a separate, native-driver entry point at ./puppeteer.
 import { randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { profileSeed } from "./_profile.js";
@@ -345,9 +346,35 @@ const HUMAN_PRESETS = {
              hold: 180, mistype: 0.04, scrollPause: 500 },
 };
 
-export function resolveHumanConfig(preset = "default", humanConfig) {
-  return { ...HUMAN_PRESETS[preset] ?? HUMAN_PRESETS.default, ...(humanConfig || {}) };
+function mergeHumanConfig(base, overrides) {
+  if (overrides === undefined) return { ...base };
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides))
+    throw new TypeError("humanConfig must be an object");
+  const result = { ...base };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!Object.hasOwn(HUMAN_PRESETS.default, key) && key !== "seed")
+      throw new TypeError(`Unsupported humanConfig option: ${key}`);
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 ||
+        (["pauseChance", "overshoot", "mistype"].includes(key) && value > 1) ||
+        (key === "stepsDivisor" && value === 0) ||
+        (key === "minSteps" && (!Number.isInteger(value) || value < 1)) ||
+        (key === "seed" && (!Number.isInteger(value) || value > 0xffffffff)))
+      throw new TypeError(`Invalid humanConfig.${key}`);
+    result[key] = value;
+  }
+  return result;
 }
+
+export function resolveHumanConfig(preset = "default", humanConfig) {
+  if (!Object.hasOwn(HUMAN_PRESETS, preset))
+    throw new TypeError(`Unsupported humanPreset: ${preset}`);
+  return mergeHumanConfig(HUMAN_PRESETS[preset], humanConfig);
+}
+
+const humanPages = new WeakSet();
+const humanContexts = new WeakSet();
+const humanBrowsers = new WeakSet();
+const nativeHumanCall = new AsyncLocalStorage();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ease = (t) => t * t * (3 - 2 * t);
@@ -370,80 +397,178 @@ function bezierPath(p0, p3, steps, rand) {
   return pts;
 }
 
-export function humanizePage(page, cfg) {
-  const rand = mulberry32(cfg.seed ?? Math.floor(Math.random() * 2 ** 31));
+export function humanizePage(page, config = resolveHumanConfig(),
+    { driver = typeof page.browserContext === "function" && typeof page.context !== "function"
+      ? "puppeteer" : "playwright" } = {}) {
+  if (humanPages.has(page)) return page;
+  const base = mergeHumanConfig(HUMAN_PRESETS.default, config);
+  const random = mulberry32(base.seed ?? Math.floor(Math.random() * 2 ** 31));
   const state = { x: 0, y: 0 };
   const mouse = page.mouse, keyboard = page.keyboard;
-  const raw = { move: mouse.move.bind(mouse), wheel: mouse.wheel.bind(mouse),
-                type: keyboard.type.bind(keyboard), press: keyboard.press.bind(keyboard) };
+  const raw = {};
+  for (const name of ["move", "click", "dblclick", "wheel"])
+    if (typeof mouse[name] === "function") raw[name] = mouse[name].bind(mouse);
+  raw.type = keyboard.type.bind(keyboard);
+  raw.press = keyboard.press.bind(keyboard);
+  const native = (fn) => nativeHumanCall.run(page, fn);
+  const callConfig = (opts = {}) => {
+    const { humanConfig, ...options } = opts;
+    const cfg = mergeHumanConfig(base, humanConfig);
+    const rand = humanConfig?.seed === undefined ? random : mulberry32(cfg.seed);
+    return { cfg, rand, options };
+  };
+  const timedOut = () => {
+    const error = new Error("Humanized action timeout exceeded");
+    error.name = "TimeoutError";
+    throw error;
+  };
+  const checkDeadline = (deadline) => {
+    if (performance.now() >= deadline) timedOut();
+  };
+  const wait = async (ms, deadline = Infinity) => {
+    checkDeadline(deadline);
+    const remaining = deadline - performance.now();
+    await sleep(Math.ceil(Math.max(0, Math.min(ms, remaining))));
+    if (ms >= remaining) timedOut();
+    checkDeadline(deadline);
+  };
 
-  async function humanMove(x, y) {
+  async function humanMove(x, y, cfg, rand, deadline = Infinity) {
+    checkDeadline(deadline);
     const dist = Math.hypot(x - state.x, y - state.y);
     if (dist < 1) return;
     const steps = Math.max(cfg.minSteps, Math.floor(dist / cfg.stepsDivisor));
-    const duration = 80 + Math.min(620, dist / 2.5) + rand() * 60; // ms
+    const duration = 80 + Math.min(620, dist / 2.5) + rand() * 60;
     const pts = bezierPath({ x: state.x, y: state.y }, { x, y }, steps, rand);
-    const t0 = Date.now();
+    const t0 = performance.now();
     for (let i = 0; i < pts.length; i++) {
+      checkDeadline(deadline);
       const w = rand() * cfg.wobble;
-      await raw.move(pts[i].x + (rand() * 2 - 1) * w, pts[i].y + (rand() * 2 - 1) * w);
-      const target = t0 + duration * Math.pow((i + 1) / pts.length, 1.15);
-      const wait = target - Date.now();
-      if (wait > 0) await sleep(wait);
+      const px = pts[i].x + (rand() * 2 - 1) * w;
+      const py = pts[i].y + (rand() * 2 - 1) * w;
+      await native(() => raw.move(px, py));
+      state.x = px; state.y = py;
+      const remaining = t0 + duration * Math.pow((i + 1) / pts.length, 1.15) - performance.now();
+      if (remaining > 0) await wait(remaining, deadline);
     }
     if (dist > 60 && rand() < cfg.overshoot) {
-      await raw.move(x + 2 + rand() * 4, y + 2 + rand() * 4);
-      await sleep(20 + rand() * 30);
+      await native(() => raw.move(x + 2 + rand() * 4, y + 2 + rand() * 4));
+      await wait(20 + rand() * 30, deadline);
     }
-    await raw.move(x, y);
+    checkDeadline(deadline);
+    await native(() => raw.move(x, y));
     state.x = x; state.y = y;
   }
 
-  mouse.move = async (x, y, ...rest) => { await humanMove(x, y); };
-  mouse.click = async (x, y, opts = {}) => {
-    await humanMove(x, y);
-    await sleep(cfg.aimDelay * (0.5 + rand()));
-    await mouse.down({ button: opts.button });
-    await sleep(cfg.hold * (0.5 + rand()));
-    await mouse.up({ button: opts.button });
-  };
-  mouse.dblclick = async (x, y, opts = {}) => {
-    await humanMove(x, y);
-    await sleep(cfg.aimDelay * (0.5 + rand()));
-    for (let i = 0; i < 2; i++) {
-      await mouse.down({ button: opts?.button });
-      await sleep(cfg.hold * (0.5 + rand()));
-      await mouse.up({ button: opts?.button });
-      if (i === 0) await sleep(50 + rand() * 50);
+  mouse.move = async (x, y, opts = {}) => {
+    if (nativeHumanCall.getStore() === page) return raw.move(x, y, opts);
+    const { cfg, rand, options } = callConfig(opts);
+    if (Object.keys(options).length) {
+      const result = await native(() => raw.move(x, y, options));
+      state.x = x; state.y = y;
+      return result;
     }
+    await humanMove(x, y, cfg, rand);
   };
-  mouse.wheel = async (dx, dy) => {
+  for (const name of ["click", "dblclick"]) {
+    const click = raw[name] ?? (name === "dblclick" && raw.click
+      ? (x, y, opts) => raw.click(x, y, { ...opts, ...(driver === "puppeteer" ? { count: 2 } : { clickCount: 2 }) }) : null);
+    if (!click) continue;
+    mouse[name] = async (x, y, opts = {}) => {
+      if (nativeHumanCall.getStore() === page) return click(x, y, opts);
+      const { cfg, rand, options } = callConfig(opts);
+      if (Object.keys(options).some(key => key !== "button")) {
+        const result = await native(() => click(x, y, options));
+        state.x = x; state.y = y;
+        return result;
+      }
+      await humanMove(x, y, cfg, rand);
+      await sleep(cfg.aimDelay * (0.5 + rand()));
+      return native(() => click(x, y, { ...options, delay: cfg.hold * (0.5 + rand()) }));
+    };
+  }
+  async function humanWheel(dx, dy, opts) {
+    const { cfg, rand, options } = callConfig(opts);
+    if (Object.keys(options).length)
+      throw new TypeError("Unsupported humanized wheel options");
+    const wheel = (x, y) => native(() => driver === "puppeteer"
+      ? raw.wheel({ deltaX: x, deltaY: y }) : raw.wheel(x, y));
     if (dy) {
       const steps = Math.max(4, Math.floor(Math.abs(dy) / 120));
       let done = 0;
       for (let i = 1; i <= steps; i++) {
-        const target = Math.floor(dy * ease(i / steps));
-        if (target - done) { await raw.wheel(0, target - done); done = target; }
+        const target = i === steps ? dy : Math.trunc(dy * ease(i / steps));
+        if (target - done) { await wheel(0, target - done); done = target; }
         await sleep(rand() < 0.06 ? cfg.scrollPause * (0.6 + rand()) : 20 + rand() * 40);
       }
     }
-    if (dx) await raw.wheel(dx, 0);
-  };
+    if (dx) await wheel(dx, 0);
+  }
+  mouse.wheel = driver === "puppeteer"
+    ? (opts = {}) => {
+      if (nativeHumanCall.getStore() === page) return raw.wheel(opts);
+      const { deltaX = 0, deltaY = 0, ...rest } = opts;
+      return humanWheel(deltaX, deltaY, rest);
+    }
+    : (dx, dy, opts = {}) => nativeHumanCall.getStore() === page
+      ? raw.wheel(dx, dy) : humanWheel(dx, dy, opts);
   keyboard.type = async (text, opts = {}) => {
+    if (nativeHumanCall.getStore() === page) return raw.type(text, opts);
+    const { cfg, rand, options } = callConfig(opts);
+    if (Object.keys(options).length) return native(() => raw.type(text, options));
     for (const ch of String(text)) {
       if (/[a-z]/i.test(ch) && rand() < cfg.mistype) {
-        await raw.type("qwertyuiopasdfghjklzxcvbnm"[Math.floor(rand() * 26)], { delay: 0 });
+        await native(() => raw.type("qwertyuiopasdfghjklzxcvbnm"[Math.floor(rand() * 26)], { delay: 0 }));
         await sleep(150 + rand() * 250);
-        await raw.press("Backspace");
+        await native(() => raw.press("Backspace"));
         await sleep(80 + rand() * 120);
       }
-      await raw.type(ch, { delay: 0 });
+      await native(() => raw.type(ch, { delay: 0 }));
       let d = cfg.typingDelay + (rand() * 2 - 1) * cfg.typingSpread;
       if (rand() < cfg.pauseChance) d += 400 + rand() * 600;
-      await sleep(Math.max(d, 10));
+      await sleep(Math.max(d, 0));
     }
   };
-  keyboard.press = async (...a) => { await sleep(30 + rand() * 40); await raw.press(...a); };
+  keyboard.press = async (key, opts = {}) => {
+    if (nativeHumanCall.getStore() === page) return raw.press(key, opts);
+    const { cfg, rand, options } = callConfig(opts);
+    if (!Object.keys(options).length) await sleep(cfg.aimDelay * (0.5 + rand()));
+    return native(() => raw.press(key, options));
+  };
+
+  // Native trial and final dispatch retain Playwright's hit testing and retry semantics.
+  if (driver === "playwright") for (const name of ["click", "dblclick"]) {
+    if (typeof page[name] !== "function") continue;
+    const action = page[name].bind(page);
+    page[name] = async (selector, opts = {}) => {
+      const { cfg, rand, options } = callConfig(opts);
+      if (Object.keys(options).some(key => !["timeout", "strict"].includes(key)))
+        return native(() => action(selector, options));
+      if (options.timeout !== undefined && (typeof options.timeout !== "number" ||
+          !Number.isFinite(options.timeout) || options.timeout < 0))
+        throw new TypeError("timeout must be a nonnegative finite number");
+      const deadline = options.timeout ? performance.now() + options.timeout : Infinity;
+      const remainingOptions = () => {
+        checkDeadline(deadline);
+        return { ...options, ...(Number.isFinite(deadline)
+          ? { timeout: Math.max(1, deadline - performance.now()) } : {}) };
+      };
+      await native(() => action(selector, { ...remainingOptions(), trial: true }));
+      const handle = await page.$(selector, { strict: options.strict });
+      try {
+        const box = await handle?.boundingBox();
+        if (box) await humanMove(box.x + box.width / 2, box.y + box.height / 2, cfg, rand, deadline);
+      } finally { await handle?.dispose(); }
+      await wait(cfg.aimDelay * (0.5 + rand()), deadline);
+      const delay = cfg.hold * (0.5 + rand());
+      if (delay >= deadline - performance.now()) {
+        await wait(deadline - performance.now(), deadline);
+        checkDeadline(deadline);
+      }
+      return native(() => action(selector, { ...remainingOptions(), delay }));
+    };
+  }
+  humanPages.add(page);
   return page;
 }
 
@@ -457,16 +582,29 @@ function mulberry32(seed) {
   };
 }
 
-export async function humanizeBrowser(browser, cfg = resolveHumanConfig()) {
-  const origNewPage = browser.newPage.bind(browser);
-  const origNewContext = browser.newContext.bind(browser);
-  browser.newPage = async (...a) => humanizePage(await origNewPage(...a), cfg);
-  const humanContext = (ctx) => {
-    const np = ctx.newPage.bind(ctx);
-    ctx.newPage = async (...a) => humanizePage(await np(...a), cfg);
-    return ctx;
-  };
-  browser.newContext = async (...a) => humanContext(await origNewContext(...a));
+async function humanizeContext(context, cfg, driver = "playwright") {
+  if (humanContexts.has(context)) return context;
+  const prepare = page => humanizePage(page, cfg, { driver });
+  for (const page of await context.pages()) prepare(page);
+  const newPage = context.newPage.bind(context);
+  context.newPage = async (...args) => prepare(await newPage(...args));
+  if (driver === "playwright") context.on?.("page", prepare);
+  humanContexts.add(context);
+  return context;
+}
+
+export async function humanizeBrowser(browser, config = resolveHumanConfig()) {
+  if (humanBrowsers.has(browser)) return browser;
+  const cfg = mergeHumanConfig(HUMAN_PRESETS.default, config);
+  const driver = typeof browser.newContext === "function" ? "playwright" : "puppeteer";
+  const contexts = driver === "playwright" ? browser.contexts() : browser.browserContexts();
+  for (const context of contexts) await humanizeContext(context, cfg, driver);
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async (...args) => humanizePage(await newPage(...args), cfg, { driver });
+  const method = driver === "playwright" ? "newContext" : "createBrowserContext";
+  const newContext = browser[method].bind(browser);
+  browser[method] = async (...args) => humanizeContext(await newContext(...args), cfg, driver);
+  humanBrowsers.add(browser);
   return browser;
 }
 
@@ -482,6 +620,7 @@ async function loadChromium() {
 }
 
 export async function launch(options = {}) {
+  if (options.humanize) resolveHumanConfig(options.humanPreset, options.humanConfig);
   options = { ...options };
   const chromium = await loadChromium();
   const launchOpts = await buildLaunchOptions(options);
@@ -504,6 +643,7 @@ export async function launch(options = {}) {
 }
 
 export async function launchContext(options = {}) {
+  if (options.humanize) resolveHumanConfig(options.humanPreset, options.humanConfig);
   if (Object.hasOwn(options, "devicePool")) {
     measuredOptions(options);
     return launchMeasured(await loadChromium(), await ensureBinary(options), options);
@@ -515,9 +655,7 @@ export async function launchContext(options = {}) {
   try { ctx = await browser.newContext(buildContextOptions(options)); }
   catch (error) { await browser.close(); throw error; }
   if (options.humanize) {
-    const cfg = resolveHumanConfig(options.humanPreset, options.humanConfig);
-    const np = ctx.newPage.bind(ctx);
-    ctx.newPage = async (...a) => humanizePage(await np(...a), cfg);
+    await humanizeContext(ctx, resolveHumanConfig(options.humanPreset, options.humanConfig));
   }
   const origClose = ctx.close.bind(ctx);
   ctx.close = async (...a) => { try { await origClose(...a); } finally { await browser.close(); } };
@@ -525,6 +663,7 @@ export async function launchContext(options = {}) {
 }
 
 export async function launchPersistentContext(options = {}) {
+  if (options.humanize) resolveHumanConfig(options.humanPreset, options.humanConfig);
   if (Object.hasOwn(options, "devicePool")) {
     if (!options.userDataDir) throw new Error("launchPersistentContext requires options.userDataDir");
     measuredOptions(options);
@@ -544,10 +683,7 @@ export async function launchPersistentContext(options = {}) {
   const launchOpts = { ...(await buildLaunchOptions(prepared)), ...buildContextOptions(prepared) };
   const ctx = await chromium.launchPersistentContext(options.userDataDir, launchOpts);
   if (options.humanize) {
-    const cfg = resolveHumanConfig(options.humanPreset, options.humanConfig);
-    for (const p of ctx.pages()) humanizePage(p, cfg);
-    const np = ctx.newPage.bind(ctx);
-    ctx.newPage = async (...a) => humanizePage(await np(...a), cfg);
+    await humanizeContext(ctx, resolveHumanConfig(options.humanPreset, options.humanConfig));
   }
   return ctx;
 }

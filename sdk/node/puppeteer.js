@@ -1,6 +1,6 @@
 // Native Puppeteer adapter. No Playwright driver or page fingerprint injection.
 import { buildLaunchOptions as buildSharedLaunchOptions, buildContextOptions,
-  humanizePage, resolveHumanConfig } from "./index.js";
+  humanizeBrowser, resolveHumanConfig } from "./index.js";
 import { profileSeed } from "./_profile.js";
 import { splitProxy, lookupProxy } from "./_network.js";
 import { nativeSocksConfig, hasNativeSocksEnv } from "./_socks_auth.js";
@@ -23,6 +23,7 @@ async function loadPuppeteer() {
 }
 
 function validate(options) {
+  if (options.humanize) resolveHumanConfig(options.humanPreset, options.humanConfig);
   if (hasNativeSocksEnv(options.launchOptions?.env))
     throw new Error("Use proxy for native SOCKS5 credentials, not a raw authentication environment variable");
   if (Object.hasOwn(options, "devicePool"))
@@ -91,35 +92,9 @@ export async function buildLaunchOptions(options = {}) {
   return result;
 }
 
-const humanized = new WeakSet();
-function preparePage(page, config) {
-  if (!config || humanized.has(page)) return page;
-  const wheel = page.mouse.wheel.bind(page.mouse);
-  page.mouse.wheel = (dx, dy) => wheel({ deltaX: dx, deltaY: dy });
-  humanizePage(page, config);
-  const humanWheel = page.mouse.wheel;
-  page.mouse.wheel = ({ deltaX = 0, deltaY = 0 } = {}) => humanWheel(deltaX, deltaY);
-  humanized.add(page);
-  return page;
-}
-
-async function prepareContext(context, config) {
-  if (!config) return context;
-  for (const page of await context.pages()) preparePage(page, config);
-  const newPage = context.newPage.bind(context);
-  context.newPage = async (...args) => preparePage(await newPage(...args), config);
-  return context;
-}
-
 async function prepareBrowser(browser, options) {
   if (!options.humanize) return browser;
-  const config = resolveHumanConfig(options.humanPreset, options.humanConfig);
-  for (const context of browser.browserContexts()) await prepareContext(context, config);
-  const newPage = browser.newPage.bind(browser);
-  browser.newPage = async (...args) => preparePage(await newPage(...args), config);
-  const createContext = browser.createBrowserContext.bind(browser);
-  browser.createBrowserContext = async (...args) => prepareContext(await createContext(...args), config);
-  return browser;
+  return humanizeBrowser(browser, resolveHumanConfig(options.humanPreset, options.humanConfig));
 }
 
 export async function launch(options = {}) {
@@ -161,6 +136,7 @@ export async function launchPersistentContext(options = {}) {
 }
 
 export async function connect(options = {}) {
+  if (options.humanize) resolveHumanConfig(options.humanPreset, options.humanConfig);
   for (const key of ["args", "proxy", "timezone", "timezoneId", "locale", "geoip", "devicePool", "stealthArgs",
     "userDataDir", "launchOptions", "contextOptions", "headless", "executablePath", "browserVersion", "releaseChannel",
     "extensionPaths", "fontsDir", "startMaximized", "viewport", "colorScheme", "userAgent", "env", "channel"])

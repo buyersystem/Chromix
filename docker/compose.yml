@@ -1,0 +1,28 @@
+services:
+  chromix:
+    build:
+      context: .
+    image: chromix:local
+    command: ["serve"]
+    init: true
+    user: "10001:10001"
+    shm_size: "2gb"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp.json
+    ports:
+      - "127.0.0.1:${CHROMIX_HOST_PORT:-9222}:9222"
+    volumes:
+      - profile:/home/chromix/profile
+    healthcheck:
+      test: ["CMD", "python3", "/usr/local/lib/chromix/server.py", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 10s
+
+volumes:
+  profile:

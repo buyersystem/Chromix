@@ -495,6 +495,19 @@ async def launch_async(headless: bool = True,
             patch_page(page, resolve_human_config(human_preset, human_config))
             return page
         browser.new_page = new_page
+        orig_nc = browser.new_context
+
+        async def new_context(*a, **kw3):
+            ctx = await orig_nc(*a, **kw3)
+            orig_ctx_np = ctx.new_page
+
+            async def context_new_page(*a, **kw4):
+                page = await orig_ctx_np(*a, **kw4)
+                patch_page(page, resolve_human_config(human_preset, human_config))
+                return page
+            ctx.new_page = context_new_page
+            return ctx
+        browser.new_context = new_context
     return browser
 
 
@@ -750,6 +763,14 @@ async def launch_persistent_context_async(**kw: Any) -> Any:
         for page in ctx.pages:
             patch_page(page, resolve_human_config(kw.get("human_preset", "default"),
                                                   kw.get("human_config")))
+        orig_np = ctx.new_page
+
+        async def new_page(*a, **kw3):
+            page = await orig_np(*a, **kw3)
+            patch_page(page, resolve_human_config(kw.get("human_preset", "default"),
+                                                  kw.get("human_config")))
+            return page
+        ctx.new_page = new_page
     return ctx
 
 

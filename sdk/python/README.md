@@ -355,6 +355,58 @@ Common launch options include `headless`, `proxy`, `args`, `stealth_args`,
 - `user_agent` emulation can disagree with UA Client Hints. Prefer coherent native
   fingerprint settings rather than an arbitrary UA string.
 
+### Paced input: supported subset
+
+`humanize=True` installs instance-level wrappers, with matching sync/async
+behavior. Each wrapped call accepts `human_config={...}`; it merges into a fresh
+copy of the page's launch preset and does not modify later calls or other pages.
+For example, `page.type("#name", "Ada", human_config={"typing_delay": 100})`
+uses a slower delay for that call only (use `await` on async pages).
+
+| Wrapped API | Behavior |
+|---|---|
+| `page.mouse.move/click/dblclick` | Paced cursor movement; native click count/button events; explicit `steps` and click `delay` are honored |
+| `page.mouse.wheel` | Paced wheel deltas, including fractional horizontal/vertical totals |
+| `page.keyboard.type/press` | Character pacing or a short pre-key pause; native press options are forwarded |
+| `page.click/hover` | Waits for visible, enabled, stable targets; native trial checks, optional cursor approach, then the original native action |
+| `page.type` | Waits for visible, enabled, stable targets; original native typing with one sampled inter-key delay per call |
+| `page.fill` | Waits for visible, enabled, stable, editable targets; original native fill, **not** character-by-character typing |
+
+Selector calls share one timeout budget across waits, pacing and the final native
+action. Omitted timeouts inherit Playwright's page/context default; `timeout=0`
+disables the deadline. Explicit `delay` wins over configured timing. `force=True`
+and `trial=True` delegate directly to the original native method without extra
+pacing or waits, preserving Playwright's semantics (trial can still scroll or
+apply modifiers). Custom click/hover `position` is passed through without an
+extra center-target approach. Other native options are forwarded, and unsupported
+keywords raise rather than disappearing. Detached targets during the additional
+preparation may fail; the wrapper does not promise Locator-style retries.
+
+The supported config fields are `typing_delay`, `typing_delay_spread`,
+`typing_pause_chance`, `mistype_chance`, `mouse_wobble_max`,
+`mouse_overshoot_chance`, `mouse_min_steps`, `mouse_steps_divisor`,
+`click_aim_delay`, `click_hold`, `scroll_pause`, and `seed`.
+Only relevant fields affect each operation: typo correction and random typing
+pauses apply to `keyboard.type`, not selector `page.type/fill`.
+Unknown fields (including upstream idle/advanced-behavior settings) now raise
+`ValueError`; this is not the full CloakBrowser configuration schema.
+
+**Not wrapped:** `Locator`, `Frame`, `FrameLocator`, `ElementHandle`, other page
+methods (including `page.dblclick/press/check`), and other keyboard/mouse methods.
+Patching `page.mouse` alone does not affect `locator.click()`; those operations
+remain native and do not accept this extra `human_config` argument. There is no
+`page._original` compatibility alias. Coordinate input has no element
+actionability checks or timeout option. Serialize input calls on a page; concurrent
+input sequences can interleave even though their configurations are isolated.
+
+Launch helpers cover explicitly created `browser.new_page()` and
+`browser.new_context().new_page()` pages, context-helper `new_page()` calls, and
+persistent initial/new pages. Popups and pages created by the browser itself are
+not automatically patched; `chromix.humanize.patch_page(page, cfg)` can patch
+such a page explicitly and detects sync versus async input methods. Repatching
+an already patched page is a no-op. These are SDK input conveniences, not a
+claim about detection outcomes or advanced behavioral simulation.
+
 ## Advanced options
 
 ### Fingerprint and viewport defaults

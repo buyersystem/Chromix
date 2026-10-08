@@ -113,6 +113,10 @@ def main() -> None:
     )
     check_sandbox(sandbox)
     print("Non-root + namespace sandbox + seccomp-BPF sandbox: passed", flush=True)
+    from cdp_smoke import run_cdp_smoke
+
+    check_version(run_cdp_smoke(args.image, args.apparmor_profile), arch)
+    print("CDP health + host discovery + WebSocket + JavaScript + SIGTERM: passed", flush=True)
 
 
 if __name__ == "__main__":

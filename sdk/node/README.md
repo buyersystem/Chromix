@@ -287,6 +287,101 @@ Important differences from the Playwright entry point:
 - Humanized wheel calls retain Puppeteer's `{ deltaX, deltaY }` API. Humanization
   does not imply coverage of every Puppeteer operation or a detection guarantee.
 
+## Humanized interactions (limited subset)
+
+This optional timing layer is for ordinary UI automation. It does not claim full
+CloakBrowser behavior coverage or detection avoidance. Configuration keys remain
+camelCase in this Node SDK; the upstream snake_case config examples are not aliases.
+
+```javascript
+import { launch } from '@xiaoxiaofeihh/chromix';
+
+const browser = await launch({
+  humanize: true,
+  humanPreset: 'careful',
+  humanConfig: { mistype: 0, typingDelay: 60 },
+});
+try {
+  const page = await browser.newPage();
+  await page.setContent('<button id="save">Save</button>');
+  await page.click('#save', { timeout: 3000, humanConfig: { aimDelay: 0, hold: 0 } });
+} finally {
+  await browser.close();
+}
+```
+
+Each supported call merges `humanConfig` into a snapshot of the page's launch
+configuration. It never changes a preset, caller object, sibling page or subsequent
+call's configuration. Calls do not share temporary override state; input actions
+on the same page should still be awaited sequentially. Unknown keys, invalid
+values and unknown presets throw instead of being silently ignored.
+
+| Supported configuration | Meaning |
+|---|---|
+| `typingDelay`, `typingSpread`, `aimDelay`, `hold`, `scrollPause` | Nonnegative timing values in milliseconds |
+| `pauseChance`, `overshoot`, `mistype` | Probabilities from 0 to 1 |
+| `wobble` | Nonnegative pointer variation in pixels |
+| `minSteps`, `stepsDivisor` | Positive integer minimum steps; positive distance divisor |
+| `seed` | Optional uint32 timing random seed; a per-call seed resets only that call's generator |
+
+### Supported calls and option semantics
+
+- **Playwright `page.click` / `page.dblclick`:** with only `timeout`, `strict`
+  and/or `humanConfig`, first perform a native trial (visible, enabled, stable,
+  in-viewport and receiving events), move toward the target, then dispatch a
+  native action that repeats its checks and retries if the DOM changed. Temporary
+  element handles are disposed. This is a selector-page subset, not a Locator patch.
+- An explicit positive `timeout` is a shared budget across checks, pointer pacing,
+  aim delay and final native dispatch. `timeout: 0` disables that budget. Without
+  an explicit timeout, each native phase uses the driver's configured default;
+  extra movement/aim time is not covered by that default's single-call deadline.
+- **`force`, `trial`, `position`, `button`, `modifiers`, `delay`, `clickCount`,
+  `noWaitAfter` and other extra page-click options:** skip additional pacing and
+  pass the original options to the native method, removing only `humanConfig`.
+  In particular, `trial` does not click, and `force` does not acquire extra waits.
+- **Both drivers:** `mouse.move`, `mouse.click`, `mouse.dblclick`, `keyboard.type`
+  and `keyboard.press` accept `humanConfig` in the options object. Explicit native
+  options such as `steps`, `delay` or click count bypass pacing and pass through;
+  mouse-click `button` alone can retain pacing. Native click implementations
+  preserve actual multi-click event counts. Typing without native options uses
+  the configured per-character timing and optional correction behavior.
+- **Wheel:** Playwright uses `mouse.wheel(dx, dy, { humanConfig })`; Puppeteer uses
+  `mouse.wheel({ deltaX, deltaY, humanConfig })`. Totals are preserved. Unsupported
+  extra wheel keys throw.
+
+`humanizePage(page, config)` and `humanizeBrowser(browser, config)` accept the
+resolved configuration directly (for example `resolveHumanConfig('careful', {...})`)
+and are idempotent: a second application does not stack wrappers or reconfigure
+the object. The browser helper recognizes Playwright `newContext` versus Puppeteer
+`createBrowserContext`, and wraps existing pages and pages returned by its browser
+and context factories. Playwright context page events also cover popups and
+persistent initial pages. Puppeteer popups/externally-created targets are not
+covered automatically; apply `humanizePage` explicitly when needed.
+
+**Not implemented:** per-call `humanConfig` for `page.fill`, `page.type`, `page.hover`,
+Locator, Frame or ElementHandle methods; Puppeteer selector-level actionability;
+upstream idle options, snake_case aliases or `page._original`. Those higher-level
+APIs remain driver-owned; do not pass SDK-only options to them. Puppeteer methods
+may use the low-level wrappers internally, but this is not complete high-level
+coverage. Low-level coordinate actions have no element actionability checks.
+
+### Tests
+
+From `sdk/node`, run `npm test` for unit tests. The real-browser test is opt-in and
+uses an isolated SDK copy, a preinstalled driver, and local `setContent` fixtures;
+it neither downloads a binary nor contacts a detection service:
+
+```bash
+CHROMIX_TEST_CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
+CHROMIX_TEST_PLAYWRIGHT=/tmp/chromix-node-local/node_modules/playwright-core \
+CLOAKBROWSER_WIDEVINE=0 node --test test/humanize-local.test.mjs
+```
+
+`CHROMIX_TEST_PLAYWRIGHT` is an absolute path to a `playwright-core` package
+folder. Replace both paths as appropriate. Real Puppeteer browser execution is
+not part of this fixture; its adapter and wheel/options compatibility have unit
+coverage.
+
 ## Cookies and session state
 
 Choose the mechanism that matches your task:

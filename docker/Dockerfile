@@ -10,12 +10,12 @@ RUN /bin/sh /usr/local/bin/download-chromix "$TARGETARCH" /opt
 
 FROM ubuntu:24.04 AS runtime
 LABEL org.opencontainers.image.title="Chromix" \
-      org.opencontainers.image.description="Non-root Chromix browser CLI from verified Linux release bundles" \
+      org.opencontainers.image.description="Non-root Chromix browser CLI and opt-in CDP server from verified Linux release bundles" \
       org.opencontainers.image.source="https://github.com/xiaozhou26/Chromix" \
       org.opencontainers.image.licenses="BSD-3-Clause"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates fontconfig fonts-liberation \
+        ca-certificates fontconfig fonts-liberation python3 socat \
         libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 \
         libcairo2 libcups2t64 libdbus-1-3 libdrm2 libexpat1 libgbm1 \
         libglib2.0-0t64 libgtk-3-0t64 libnspr4 libnss3 libpango-1.0-0 \
@@ -24,9 +24,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 chromix \
     && useradd --uid 10001 --gid chromix --create-home --shell /bin/sh chromix \
-    && install -d -o chromix -g chromix /home/chromix/.cache /home/chromix/.config /work
+    && install -d -o chromix -g chromix /home/chromix/.cache /home/chromix/.config \
+        /home/chromix/profile /work
 COPY --from=download /opt/chromix /opt/chromix
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/chromix
+COPY server.py /usr/local/lib/chromix/server.py
 # Use the unprivileged user-namespace sandbox, not a setuid helper.
 RUN chown -R root:root /opt/chromix \
     && chmod 0755 /opt/chromix/chromix /opt/chromix/chrome \

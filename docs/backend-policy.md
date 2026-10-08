@@ -1,15 +1,19 @@
 # 后端策略与验收
 
-当前 Chromium **152.0.7977.82** 补丁栈共 **191 个补丁**。`0166`–`0191`
-补齐能力查询、CSS/input、时钟、音频图、codec 和字体池的后端接线。配置按浏览器
-启动固定，并传给 renderer/Worker；同一进程内的 BrowserContext 不拥有独立策略。
-更新 SDK 不会让旧浏览器获得这些功能，需要重新构建。
+本文的主要实现与历史测试记录来自 Chromium **152.0.7977.82 / 191-patch** 批次。
+当前源码序列已有 **224 个补丁**，各平台版本以 `build/ungoogled-revisions.psd1` 为准。
+`0166`–`0191` 接入能力查询、CSS/input、时钟、音频图、codec 和字体池的后端策略。
+新增 `0217`–`0224` 提供独立的显式 [pixel-noise](pixel-noise.md)，覆盖受支持的
+Canvas 与有限 WebGL 读回；它不代表完整跨后端等价，仍需新二进制编译验证。
+配置按浏览器启动固定，并传给 renderer/Worker；同一进程内的 BrowserContext
+不拥有独立原生策略。更新 SDK 不会让旧浏览器获得这些功能，需要重新构建。
+以下历史 191-patch 验证结果不自动覆盖新增补丁。
 
 ## 默认行为与可选策略
 
 | 范围 | 当前实现 | 仍需验证或实现 |
 |---|---|---|
-| Canvas / WebGL / WebGPU | 普通启动默认采用共享 `native` 策略；Canvas 噪声、Bridge 和 GPU 能力/名称覆盖不生效。显式 `compatibility` 保留旧行为，synthetic 测试未指定策略时仍沿用兼容模式。SDK 不再自动传入 `--ignore-gpu-blocklist`。 | 共同的跨 API 隐私 rasterizer、跨 profile 像素隔离、实体设备矩阵。原生默认保证一致性，不保证像素唯一性。 |
+| Canvas / WebGL / WebGPU | 普通启动默认采用共享 `native` 策略；未显式开启时 Canvas 噪声、Bridge 和 GPU 能力/名称覆盖不生效。新 `pixel-noise=seeded` 独立允许受支持的像素读回扰动，不自动修改 GPU 名称或能力。显式 `compatibility` 保留旧行为，synthetic 测试未指定策略时仍沿用兼容模式。SDK 不再自动传入 `--ignore-gpu-blocklist`。 | 共同的跨 API 隐私 rasterizer、跨 profile 像素隔离、实体设备矩阵。原生默认保证一致性，不保证像素唯一性。 |
 | WebAuthn / PDF / 语音 / 键盘 | 普通使用查询真实认证器、PDF viewer、语音库存和键盘后端，保留异步回调、权限拒绝和错误。伪造能力/语音表与固定美式映射只允许显式 synthetic 测试。 | 实体认证器操作、实际 PDF 显示、语音合成、物理按键布局。 |
 | CSS / input | 偏好、强制颜色、触摸点数和 pointer/hover 写入 WebPreferences，再发布 settings；旧的 MediaValues 单独返回值覆盖已移除。 | 控件/滚动条、DevTools emulation 优先级和实体设备切换的匹配构建验收。HDR 保留真实 ScreenInfo。 |
 | 时钟 | `Date` / Temporal wall clock 和 Blink TimeClamper 使用同一毫秒量化配置；Performance、事件、RAF、Idle 的公开值沿用其原生调用链。内部调度时钟不变。 | 原生 Worker、BFCache、冻结恢复和更多时区/历法矩阵。 |
@@ -108,7 +112,7 @@ Linux 专用对象图检查不能在此运行，set-ID 夹具的权限修改被�
 门禁。具体批次、剩余失败和跳过情况记录在
 [FINGERPRINT_STATUS.md](../FINGERPRINT_STATUS.md)，不声称全仓库测试通过。
 
-尚无匹配 191 个补丁的可执行 Chromium。已执行的 Python/OpenSSL、aioquic
+在该历史批次记录时，尚无匹配 191 个补丁的可执行 Chromium。已执行的 Python/OpenSSL、aioquic
 真实回环交换不等于新增浏览器探针的 native 验收。跨平台 CI 已接入新源码清单和
 回归入口，本地没有运行该 CI。实体设备矩阵仍是 **0 reviewed devices / 33
 unsampled cells**，不得用这些工具测试补填。
